@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="zh">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>PaperWiki</title>
+  <link rel="stylesheet" href="/vendor/katex.css" />
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">📚 PaperWiki</div>
+    <input id="search" type="search" placeholder="搜索标题/摘要/总结/笔记/标签…" />
+    <select id="filter-status"><option value="">全部状态</option><option value="ready">已就绪</option><option value="unread">未读</option><option value="reading">在读</option><option value="done">已读</option><option value="error">出错</option><option value="pending">处理中</option></select>
+    <select id="filter-tag"><option value="">全部标签</option></select>
+    <label class="star"><input id="filter-starred" type="checkbox" /> 仅看星标</label>
+    <button id="btn-scan" title="手动扫描文件夹">⟳ 扫描</button>
+    <span id="stats" class="stats"></span>
+  </header>
+
+  <main class="layout">
+    <aside class="list-pane">
+      <ul id="paper-list" class="paper-list"></ul>
+    </aside>
+
+    <section id="detail" class="detail-pane">
+      <div class="empty">从左侧选择一篇论文</div>
+    </section>
+  </main>
+
+  <script src="/vendor/marked.js"></script>
+  <script src="/vendor/dompurify.js"></script>
+  <script src="/vendor/katex.js"></script>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>
