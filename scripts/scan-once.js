@@ -2,7 +2,7 @@
 // 用法：npm run scan   或   node scripts/scan-once.js
 const path = require('path');
 const fs = require('fs');
-const { loadStore, saveStore, mergeTags } = require('../lib/store');
+const { loadStore, saveStore, mergeTags, mergeTopics, mergeConcepts } = require('../lib/store');
 const { createScanner } = require('../lib/scanner');
 const parser = require('../lib/parser');
 const arxiv = require('../lib/arxiv');
@@ -20,7 +20,7 @@ const { cleanFilenameToTitle, createRateLimiter } = require('../lib/util');
     ai, config,
     rateLimitArxiv: createRateLimiter((config.arxiv && config.arxiv.minIntervalMs) || 3000),
     saveStore: (s) => saveStore(storePath, s),
-    mergeTags,
+    mergeTags, mergeTopics, mergeConcepts,
   };
   const scanner = createScanner({
     store, storePath,

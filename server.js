@@ -2,7 +2,7 @@ const http = require('http');
 const fs = require('fs');
 const fsp = require('fs/promises');
 const path = require('path');
-const { loadStore, saveStore, mergeTags } = require('./lib/store');
+const { loadStore, saveStore, mergeTags, mergeTopics, mergeConcepts } = require('./lib/store');
 const { createScanner } = require('./lib/scanner');
 const parser = require('./lib/parser');
 const arxiv = require('./lib/arxiv');
@@ -13,6 +13,7 @@ const { createApiRouter } = require('./lib/api');
 const MIME = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8',
+  '.mjs': 'text/javascript; charset=utf-8',
   '.pdf': 'application/pdf', '.png': 'image/png', '.svg': 'image/svg+xml',
   '.woff2': 'font/woff2', '.ttf': 'font/ttf', '.woff': 'font/woff',
 };
@@ -23,6 +24,12 @@ const VENDOR_MAP = {
   '/vendor/dompurify.js': ['dompurify', 'dist/purify.min.js'],
   '/vendor/katex.js': ['katex', 'dist/katex.min.js'],
   '/vendor/katex.css': ['katex', 'dist/katex.min.css'],
+  // pdf.js 主库 + worker（浏览器侧用 ES module）
+  '/vendor/pdfjs.js': ['pdfjs-dist', 'build/pdf.min.mjs'],
+  '/vendor/pdfjs.worker.js': ['pdfjs-dist', 'build/pdf.worker.min.mjs'],
+  // pdf.js viewer 组件（PDFViewer/PDFPageView/AnnotationEditorLayer 等）+ 配套样式
+  '/vendor/pdfjs-viewer.js': ['pdfjs-dist', 'web/pdf_viewer.mjs'],
+  '/vendor/pdfjs-viewer.css': ['pdfjs-dist', 'web/pdf_viewer.css'],
 };
 
 function loadConfig() {
@@ -33,11 +40,11 @@ function loadConfig() {
   return JSON.parse(fs.readFileSync(p, 'utf8'));
 }
 
-async function serveStatic(req, res, filePath) {
+async function serveStatic(req, res, filePath, extraHeaders) {
   let st;
   try { st = await fsp.stat(filePath); }
   catch { res.writeHead(404); return res.end('Not found'); }
-  if (st.isDirectory()) return serveStatic(req, res, path.join(filePath, 'index.html'));
+  if (st.isDirectory()) return serveStatic(req, res, path.join(filePath, 'index.html'), extraHeaders);
   const type = MIME[path.extname(filePath).toLowerCase()] || 'application/octet-stream';
   const range = req.headers.range;
   if (range) {
@@ -48,10 +55,11 @@ async function serveStatic(req, res, filePath) {
     res.writeHead(206, {
       'Content-Range': `bytes ${start}-${end}/${st.size}`,
       'Accept-Ranges': 'bytes', 'Content-Length': end - start + 1, 'Content-Type': type,
+      ...extraHeaders,
     });
     fs.createReadStream(filePath, { start, end }).pipe(res);
   } else {
-    res.writeHead(200, { 'Content-Length': st.size, 'Content-Type': type });
+    res.writeHead(200, { 'Content-Length': st.size, 'Content-Type': type, ...extraHeaders });
     fs.createReadStream(filePath).pipe(res);
   }
 }
@@ -73,7 +81,7 @@ async function main() {
     parser, arxiv: { ...arxiv, cleanFilenameToTitle }, ai,
     config, rateLimitArxiv,
     saveStore: (s) => saveStore(storePath, s),
-    mergeTags,
+    mergeTags, mergeTopics, mergeConcepts,
   };
   const scanner = createScanner({
     store, storePath, papersDir, deps,
@@ -108,6 +116,11 @@ async function main() {
           const rel = pathname.slice('/vendor/fonts/'.length);
           return serveStatic(req, res, path.join(NM, 'katex', 'dist', 'fonts', rel));
         }
+        // pdf.js viewer（pdf_viewer.css 里 url(images/...) 相对解析为 /vendor/images/...）
+        if (pathname.startsWith('/vendor/images/')) {
+          const rel = pathname.slice('/vendor/images/'.length);
+          return serveStatic(req, res, path.join(NM, 'pdfjs-dist', 'web', 'images', rel));
+        }
         res.writeHead(404); return res.end('Not found');
       }
 
@@ -117,10 +130,10 @@ async function main() {
         return router.handle(req, res, body);
       }
 
-      // 静态前端
+      // 静态前端：前端源码（html/js/css）禁缓存，避免浏览器用旧 JS 导致改动不生效（本地开发工具，资源极小）
       let fp = pathname === '/' ? path.join(PUBLIC_DIR, 'index.html') : path.join(PUBLIC_DIR, pathname);
       if (!fp.startsWith(PUBLIC_DIR)) { res.writeHead(400); return res.end('Bad path'); }
-      return serveStatic(req, res, fp);
+      return serveStatic(req, res, fp, { 'Cache-Control': 'no-cache, must-revalidate' });
     } catch (e) {
       log('server error', e.message);
       if (!res.headersSent) {
@@ -135,7 +148,21 @@ async function main() {
     log(`PaperWiki listening on http://${config.host || '0.0.0.0'}:${config.port || 8888}`);
   });
 
-  const shutdown = () => { scanner.stop(); server.close(() => process.exit(0)); };
+  // 优雅关停：停定时器 → 等当前论文处理完落盘（drain，最多 5s）→ 关 HTTP → 兜底强制退出。
+  // pm2 的 kill_timeout（见 ecosystem.config.cjs）必须 > drain+server.close 的耗时，否则会被 SIGKILL。
+  let closing = false;
+  const shutdown = async () => {
+    if (closing) return;
+    closing = true;
+    scanner.stop();
+    try {
+      await scanner.drain(5000);
+      log('shutdown: drained in-flight pipeline');
+    } catch (e) { log('shutdown drain error', e && e.message); }
+    server.close(() => process.exit(0));
+    // 兜底：即便 server.close 因 keep-alive 连接卡住，也确保最终退出
+    setTimeout(() => process.exit(0), 8000).unref();
+  };
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
 }

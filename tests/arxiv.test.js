@@ -58,3 +58,60 @@ test('searchArxiv 用注入的 fetch 并解析', async () => {
   const { entries } = await searchArxiv('survey', fakeFetch, 0);
   assert.strictEqual(entries.length, 2);
 });
+
+test('searchArxiv 向后兼容数字第三参（minIntervalMs=0）', async () => {
+  const fakeFetch = async () => ({ ok: true, text: async () => SAMPLE });
+  const { entries, query } = await searchArxiv('survey', fakeFetch, 0);
+  assert.strictEqual(entries.length, 2);
+  assert.strictEqual(query, 'survey');
+});
+
+test('searchArxiv 对 5xx 重试，最终成功', async () => {
+  let calls = 0;
+  const fakeFetch = async () => {
+    calls++;
+    if (calls < 3) return { ok: false, status: 503, text: async () => 'err' };
+    return { ok: true, text: async () => SAMPLE };
+  };
+  const { entries } = await searchArxiv('survey', fakeFetch, { maxRetries: 3 });
+  assert.strictEqual(calls, 3);            // 前 2 次 503 + 第 3 次成功
+  assert.strictEqual(entries.length, 2);
+});
+
+test('searchArxiv 对持续失败重试 maxRetries 次后抛错', async () => {
+  let calls = 0;
+  const fakeFetch = async () => {
+    calls++;
+    // 模拟网络层错误（fetch reject），全部可重试
+    throw new TypeError('network error');
+  };
+  await assert.rejects(
+    () => searchArxiv('survey', fakeFetch, { maxRetries: 2 }),
+    /network error/,
+  );
+  assert.strictEqual(calls, 3);            // maxRetries + 1 次
+});
+
+test('searchArxiv 对不可重试的 4xx 立即抛错，不重试', async () => {
+  let calls = 0;
+  const fakeFetch = async () => {
+    calls++;
+    return { ok: false, status: 400, text: async () => 'bad request' };
+  };
+  await assert.rejects(
+    () => searchArxiv('survey', fakeFetch, { maxRetries: 3 }),
+    /arxiv HTTP 400/,
+  );
+  assert.strictEqual(calls, 1);            // 4xx 不重试，只调一次
+});
+
+test('searchArxiv 加 AbortSignal.timeout 超时信号', async () => {
+  // 超时后会 abort，fetchImpl 收到 signal 应观察到 signal 存在
+  let sawSignal = false;
+  const fakeFetch = async (url, opt) => {
+    sawSignal = !!(opt && opt.signal);
+    return { ok: true, text: async () => SAMPLE };
+  };
+  await searchArxiv('survey', fakeFetch, { timeoutMs: 15000 });
+  assert.ok(sawSignal, 'fetch 调用应带上 signal');
+});

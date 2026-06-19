@@ -4,33 +4,245 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>PaperWiki</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%234f46e5'/%3E%3Ctext x='32' y='39' text-anchor='middle' font-family='Arial,sans-serif' font-size='20' font-weight='700' fill='white'%3EPW%3C/text%3E%3C/svg%3E" />
   <link rel="stylesheet" href="/vendor/katex.css" />
+  <link rel="stylesheet" href="/vendor/pdfjs-viewer.css" />
   <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
+  <!-- 顶栏 -->
   <header class="topbar">
-    <div class="brand">📚 PaperWiki</div>
-    <input id="search" type="search" placeholder="搜索标题/摘要/总结/笔记/标签…" />
-    <select id="filter-status"><option value="">全部状态</option><option value="ready">已就绪</option><option value="unread">未读</option><option value="reading">在读</option><option value="done">已读</option><option value="error">出错</option><option value="pending">处理中</option></select>
-    <select id="filter-tag"><option value="">全部标签</option></select>
-    <label class="star"><input id="filter-starred" type="checkbox" /> 仅看星标</label>
-    <button id="btn-scan" title="手动扫描文件夹">⟳ 扫描</button>
-    <span id="stats" class="stats"></span>
+    <div class="brand"><span class="logo">PW</span><span>PaperWiki</span></div>
+    <div class="search-wrap">
+      <input id="search" type="search" placeholder="搜索标题、摘要、总结、笔记、标签、主题…" autocomplete="off" />
+      <span class="search-kbd">Ctrl K</span>
+    </div>
+    <div class="filter-strip" aria-label="筛选条件">
+      <select id="filter-status" title="状态筛选">
+        <option value="">全部状态</option>
+        <option value="ready">已就绪</option>
+        <option value="unread">未读</option>
+        <option value="reading">在读</option>
+        <option value="done">已读</option>
+        <option value="error">出错</option>
+        <option value="pending">处理中</option>
+      </select>
+      <select id="filter-topic" title="主题筛选"><option value="">全部主题</option></select>
+      <select id="filter-tag" title="标签筛选"><option value="">全部标签</option></select>
+      <label class="star-filter"><input id="filter-starred" type="checkbox" /> 仅星标</label>
+    </div>
+    <div class="top-actions">
+      <button id="btn-concepts" class="btn ghost" title="查看 AI 维护的概念清单">概念</button>
+      <button id="btn-prompt" class="btn ghost" title="编辑总结提示词">提示词</button>
+      <button id="btn-scan" class="btn" title="扫描 papers/ 目录">扫描</button>
+      <span id="stats" class="stats"></span>
+    </div>
   </header>
+  <div id="toast-root" class="toast-root" aria-live="polite" aria-atomic="true"></div>
 
-  <main class="layout">
-    <aside class="list-pane">
-      <ul id="paper-list" class="paper-list"></ul>
+  <!-- 主布局：侧栏 + 列表 + 详情 -->
+  <main class="layout" id="library-view">
+    <aside class="pane sidebar" id="sidebar">
+      <div class="side-section">
+        <div class="side-title">
+          <span>视图</span>
+          <span class="side-actions">
+            <button class="side-icon-btn" id="btn-new-folder" title="新建收藏夹" aria-label="新建收藏夹"><span>+</span></button>
+            <button class="side-icon-btn" id="btn-collapse" title="收起侧栏" aria-label="收起侧栏"><span>‹</span></button>
+          </span>
+        </div>
+        <div class="side-item active" data-folder="" data-mode="all"><span class="ico">🗂️</span><span>全部论文</span><span class="count" id="cnt-all"></span></div>
+        <div class="side-item" data-folder="" data-mode="starred"><span class="ico">⭐</span><span>星标</span><span class="count" id="cnt-star"></span></div>
+        <div class="side-item" data-folder="" data-mode="unread"><span class="ico">📘</span><span>未读</span><span class="count" id="cnt-unread"></span></div>
+      </div>
+      <div class="side-section">
+        <div class="side-title">收藏夹</div>
+        <div id="folder-list"></div>
+        <div id="folder-empty" class="side-item" style="color:var(--muted2);cursor:default;">（无收藏夹）</div>
+      </div>
     </aside>
+    <!-- 侧栏收起后展开用的细条 -->
+    <button class="sidebar-rail" id="btn-expand" title="展开侧栏" aria-label="展开侧栏">
+      <span class="rail-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="9" y1="4" x2="9" y2="20"/></svg>
+      </span>
+      <span class="rail-text">展开视图</span>
+    </button>
 
-    <section id="detail" class="detail-pane">
-      <div class="empty">从左侧选择一篇论文</div>
+    <section class="list-pane">
+      <div class="list-toolbar">
+        <span class="list-kicker" id="list-kicker">论文列表</span>
+        <select id="sort" title="排序">
+          <option value="addedDesc">最近添加</option>
+          <option value="updatedDesc">最近更新</option>
+          <option value="titleAsc">标题</option>
+        </select>
+        <button class="btn subtle sm" id="btn-compact" title="紧凑视图（一行一篇，仅 3 标签）">≐</button>
+        <button class="btn subtle sm" id="btn-pick" title="多选论文以追加概念">多选</button>
+      </div>
+      <ul id="paper-list" class="paper-list"></ul>
+      <div class="bulk-bar" id="bulk-bar">
+        <span class="sel-count" id="sel-count">已选 0 篇</span>
+        <span class="spacer" style="flex:1"></span>
+        <button class="btn ghost sm" id="btn-pick-cancel">取消</button>
+        <button class="btn sm" id="btn-pick-concepts">🧠 抽取并追加概念</button>
+      </div>
+    </section>
+
+    <div class="pane-splitter" id="list-detail-splitter" role="separator" aria-orientation="vertical" aria-label="调整论文列表宽度" tabindex="0">
+      <span></span>
+    </div>
+
+    <section id="detail" class="pane detail-pane">
+      <div class="empty"><span class="big">📚</span>从左侧选择一篇论文<br/>查看 AI 总结、笔记与元数据</div>
     </section>
   </main>
 
+  <!-- 概念清单视图 -->
+  <main class="pane page-view" id="concepts-view" style="display:none;">
+    <div class="concepts-head">
+      <div>
+        <h2>概念清单</h2>
+        <p>跨论文归并的术语与解释，用来做二次检索和复盘。</p>
+      </div>
+      <input id="concept-q" type="search" placeholder="搜索概念…" />
+      <a class="btn ghost sm" href="/api/concepts.md" target="_blank">下载 Markdown</a>
+      <button class="btn ghost sm" id="btn-concepts-close">← 返回</button>
+    </div>
+    <div id="concepts-grid" class="concepts-grid"></div>
+  </main>
+
+  <!-- 提示词编辑视图 -->
+  <main class="pane page-view" id="prompt-view" style="display:none;">
+    <div class="concepts-head">
+      <div>
+        <h2>总结提示词</h2>
+        <p>保存后会写入 store，下次重新总结时使用。</p>
+      </div>
+      <span class="spacer" style="flex:1"></span>
+      <button class="btn ghost sm" id="btn-prompt-default">恢复默认</button>
+      <button class="btn ghost sm" id="btn-prompt-close">← 返回</button>
+    </div>
+    <div class="prompt-panel">
+      <p class="save-hint">留空则使用内置默认；如果你在本页修改了提示词，记得保存后再回到论文详情重跑总结。</p>
+      <textarea id="prompt-edit" placeholder="正在加载…"></textarea>
+      <div class="editor-actions">
+        <button class="btn" id="btn-prompt-save">保存</button>
+        <span class="save-hint" id="prompt-hint"></span>
+      </div>
+      <details>
+        <summary class="save-hint">查看内置默认提示词（参考）</summary>
+        <pre id="prompt-default-pre" class="md"></pre>
+      </details>
+    </div>
+  </main>
+
+  <!-- PDF 阅读器（全屏，默认隐藏） -->
+  <div id="reader-view">
+    <div class="reader-bar">
+      <!-- 左：返回 + 标题 -->
+      <div class="rb-group rb-left">
+        <button class="rb-back" id="reader-back" title="返回（Esc）">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+          <span>返回</span>
+        </button>
+        <span class="rb-title" id="reader-title"></span>
+      </div>
+
+      <!-- 中：翻页 + 缩放 -->
+      <div class="rb-group rb-center">
+        <div class="rb-cluster" role="group" aria-label="翻页">
+          <button class="rb-icon" id="reader-prev" title="上一页（←）">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+          </button>
+          <span class="rb-page">
+            <input id="reader-page-input" type="number" min="1" value="1" aria-label="页码" />
+            <span id="reader-page-total" class="rb-total">/ -</span>
+          </span>
+          <button class="rb-icon" id="reader-next" title="下一页（→）">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+          </button>
+        </div>
+        <div class="rb-cluster" role="group" aria-label="缩放">
+          <button class="rb-icon" id="reader-zoom-out" title="缩小（-）">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M5 12h14"/></svg>
+          </button>
+          <button class="rb-zoom" id="reader-zoom-label" title="点击适应宽度">100%</button>
+          <button class="rb-icon" id="reader-zoom-in" title="放大（+）">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+          </button>
+          <button class="rb-icon" id="reader-zoom-fit" title="适应宽度（双页全宽）">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9V5a2 2 0 0 1 2-2h4M21 9V5a2 2 0 0 0-2-2h-4M3 15v4a2 2 0 0 0 2 2h4M21 15v4a2 2 0 0 1-2 2h-4"/></svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- 右：视图 + 批注工具 + 颜色 + 状态 -->
+      <div class="rb-group rb-right">
+        <button class="rb-toggle active" id="reader-spread" title="切换单页 / 双页">双页</button>
+        <span class="rb-sep" aria-hidden="true"></span>
+        <div class="rb-tools" role="group" aria-label="批注工具">
+          <button class="rb-tool active" id="reader-tool-cursor" title="浏览（退出批注）">
+            <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M4 3l7 17 2.5-7L20 10.5 4 3z"/></svg>
+          </button>
+          <button class="rb-tool" id="reader-tool-highlight" title="高亮：选中文字着色">
+            <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M15 3l6 6-9 9H6v-6l9-9z"/><path d="M14 4l6 6"/><path d="M4 21h16" stroke-width="2.4"/></svg>
+          </button>
+          <button class="rb-tool" id="reader-tool-note" title="便签：点击添加文字备注">
+            <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M4 4h16v12l-4 4H4V4z"/><path d="M8 9h8M8 13h5"/></svg>
+          </button>
+          <button class="rb-tool" id="reader-tool-ink" title="手写：自由绘制">
+            <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21c4-1 6-5 9-9 2-3 5-4 8-2-2 4-4 7-9 8-3 .5-5 2-8 3z"/><path d="M14 7l3 3"/></svg>
+          </button>
+        </div>
+        <span class="reader-colors" id="reader-colors" title="批注颜色">
+          <span class="reader-color active" data-color="#fde68a" style="--c:#fde68a"></span>
+          <span class="reader-color" data-color="#bbf7d0" style="--c:#bbf7d0"></span>
+          <span class="reader-color" data-color="#bfdbfe" style="--c:#bfdbfe"></span>
+          <span class="reader-color" data-color="#ddd6fe" style="--c:#ddd6fe"></span>
+          <span class="reader-color" data-color="#fbcfe8" style="--c:#fbcfe8"></span>
+          <span class="reader-color" data-color="#fecdd3" style="--c:#fecdd3"></span>
+          <span class="reader-color" data-color="#a5f3fc" style="--c:#a5f3fc"></span>
+        </span>
+        <span class="rb-status" id="reader-saved"></span>
+      </div>
+    </div>
+    <div class="reader-canvas-wrap pane" id="reader-canvas-wrap">
+      <div class="reader-loading" id="reader-loading">
+        <span class="rdr-spinner" aria-hidden="true"></span>
+        <span class="rdr-loading-text">正在加载 PDF…</span>
+      </div>
+      <!-- pdf.js PDFViewer 挂载点：内部自动生成 .page > canvas/textLayer/annotationEditorLayer -->
+      <div id="viewer" class="pdfViewer"></div>
+    </div>
+  </div>
+
+  <!-- 新建/编辑收藏夹 模态 -->
+  <div class="modal-mask" id="folder-modal">
+    <div class="modal">
+      <h3 id="folder-modal-title">新建收藏夹</h3>
+      <div class="row">
+        <label>名称</label>
+        <input type="text" id="folder-name-input" placeholder="例如：精读 / 待复现 / 综述" />
+      </div>
+      <div class="row">
+        <label>颜色</label>
+        <div class="color-picks" id="folder-color-picks"></div>
+      </div>
+      <div class="actions">
+        <button class="btn ghost danger sm" id="folder-modal-delete">删除</button>
+        <span class="spacer"></span>
+        <button class="btn ghost sm" id="folder-modal-cancel">取消</button>
+        <button class="btn sm" id="folder-modal-save">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 依赖 -->
   <script src="/vendor/marked.js"></script>
   <script src="/vendor/dompurify.js"></script>
   <script src="/vendor/katex.js"></script>
+  <script type="module" src="/reader.js"></script>
   <script type="module" src="/app.js"></script>
 </body>
 </html>

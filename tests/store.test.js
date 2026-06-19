@@ -3,7 +3,11 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
-const { loadStore, saveStore, upsertPaper, patchPaper, mergeTags } = require('../lib/store');
+const {
+  loadStore, saveStore, upsertPaper, patchPaper, mergeTags,
+  mergeTopics, mergeConcepts, deleteConcept, addFolder, deleteFolder,
+  conceptIdFor, conceptsToMarkdown, migrateStore,
+} = require('../lib/store');
 
 function tmpStorePath() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pw-'));
@@ -54,4 +58,97 @@ test('saveStore 串行化并发写不交错', async () => {
   ]);
   const final = await loadStore(p);
   assert.strictEqual(final.tags.length, 1);
+});
+
+test('loadStore 遇到损坏的 JSON 时备份并返回空 store，不抛错', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pw-corrupt-'));
+  const p = path.join(dir, 'papers.json');
+  fs.writeFileSync(p, 'this is not json {{', 'utf8');
+  const store = await loadStore(p); // 不应抛错
+  assert.deepStrictEqual(store.papers, {});
+  assert.deepStrictEqual(store.tags, []);
+  assert.ok(!fs.existsSync(p), '原损坏文件应已被重命名备份');
+  const bak = fs.readdirSync(dir).find((f) => f.startsWith('papers.json.corrupt-'));
+  assert.ok(bak, '应有 .corrupt- 备份');
+});
+
+test('loadStore 遇到「合法 JSON 但非对象」（如被写成路径字符串）时同样恢复', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pw-str-'));
+  const p = path.join(dir, 'papers.json');
+  // 复现真实事故：文件内容是一个 JSON 字符串字面量（合法 JSON，但不是对象）
+  fs.writeFileSync(p, JSON.stringify(p), 'utf8');
+  const store = await loadStore(p);
+  assert.deepStrictEqual(store.papers, {});
+  assert.strictEqual(store.version, 2);
+});
+
+test('migrateStore 把 v1 数据补齐为 v2（topics/folders/concepts + 论文字段）', () => {
+  const v1 = { version: 1, tags: ['x'], papers: { a: { id: 'a', title: 'T', tags: ['x'], status: 'ready' } } };
+  const m = migrateStore(v1);
+  assert.strictEqual(m.version, 2);
+  assert.deepStrictEqual(m.topics, []);
+  assert.deepStrictEqual(m.folders, []);
+  assert.deepStrictEqual(m.concepts, []);
+  assert.deepStrictEqual(m.papers.a.topics, []);
+  assert.deepStrictEqual(m.papers.a.folders, []);
+  assert.strictEqual(m.papers.a.readProgress, null);
+  assert.deepStrictEqual(m.papers.a.conceptIds, []);
+});
+
+test('mergeTopics 大小写不敏感去重并保留首次写法', () => {
+  const store = { version: 2, topics: ['强化学习'] };
+  mergeTopics(store, ['强化学习', '推理', '数据选择']);
+  assert.deepStrictEqual(store.topics.sort(), ['强化学习', '推理', '数据选择'].sort());
+});
+
+test('conceptIdFor 对同一归一化 term 返回稳定 id', () => {
+  assert.strictEqual(conceptIdFor('RLHF'), conceptIdFor('rlhf'));
+  assert.strictEqual(conceptIdFor('Attention'), conceptIdFor('attention '));
+  assert.ok(conceptIdFor('foo').startsWith('c_'));
+});
+
+test('mergeConcepts 首次写入新增，重复 term 仅追加 paperId', () => {
+  const store = { version: 2, concepts: [], papers: { p1: { id: 'p1', title: 'A' } } };
+  const new1 = mergeConcepts(store, [{ term: 'RLHF', definition: '人类反馈强化学习' }], 'p1');
+  assert.strictEqual(new1.length, 1);
+  assert.strictEqual(store.concepts.length, 1);
+  assert.strictEqual(store.concepts[0].paperIds.length, 1);
+  // 第二篇带相同 term：不应新增，但 paperIds 应合并、definition 不被空值覆盖
+  const new2 = mergeConcepts(store, [{ term: 'rlhf', definition: '' }], 'p2');
+  assert.strictEqual(new2.length, 0);
+  assert.strictEqual(store.concepts.length, 1);
+  assert.strictEqual(store.concepts[0].paperIds.length, 2);
+  assert.strictEqual(store.concepts[0].definition, '人类反馈强化学习');
+});
+
+test('deleteConcept 从清单移除并清理 paper.conceptIds', () => {
+  const store = { version: 2, concepts: [], papers: { p1: { id: 'p1', title: 'A', conceptIds: [] } } };
+  const [id] = mergeConcepts(store, [{ term: 'PPO', definition: 'd' }], 'p1');
+  store.papers.p1.conceptIds = [id];
+  assert.ok(deleteConcept(store, id));
+  assert.strictEqual(store.concepts.length, 0);
+  assert.deepStrictEqual(store.papers.p1.conceptIds, []);
+  assert.strictEqual(deleteConcept(store, id), false); // 已删除
+});
+
+test('addFolder / deleteFolder 管理收藏夹并解绑论文', () => {
+  const store = { version: 2, folders: [], papers: { p1: { id: 'p1', folders: [] } } };
+  const f = addFolder(store, '精读', '#2563eb');
+  assert.strictEqual(store.folders.length, 1);
+  store.papers.p1.folders = [f.id];
+  deleteFolder(store, f.id);
+  assert.strictEqual(store.folders.length, 0);
+  assert.deepStrictEqual(store.papers.p1.folders, []);
+});
+
+test('conceptsToMarkdown 按首字母分组且空清单有提示', () => {
+  const empty = conceptsToMarkdown({ version: 2, concepts: [], papers: {} });
+  assert.ok(empty.includes('暂无概念'));
+  const md = conceptsToMarkdown({ version: 2, concepts: [
+    { term: 'Attention', definition: '注意力机制', paperIds: ['p1'] },
+  ], papers: { p1: { id: 'p1', title: 'A 论文' } } });
+  assert.ok(md.includes('# 概念清单'));
+  assert.ok(md.includes('### Attention'));
+  assert.ok(md.includes('注意力机制'));
+  assert.ok(md.includes('A 论文'));
 });

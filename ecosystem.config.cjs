@@ -8,6 +8,7 @@ module.exports = {
     exec_mode: 'fork',
     env: { NODE_ENV: 'production' },
     max_memory_restart: '512M',
+    kill_timeout: 8000,            // 给 scanner.drain(5s) + saveStore + server.close 留足时间，避免 SIGKILL 在 rename 前打断写盘
     error_file: './logs/err.log',
     out_file: './logs/out.log',
     merge_logs: true,
