@@ -165,10 +165,25 @@ function compactChipList(p, limit = 4) {
 }
 
 function renderStats(stats) {
+  // 处理中时，把当前在跑的阶段从 state.papers 聚合出来，让批量首扫不再是黑盒
+  let processingHtml = '';
+  if (stats.processing > 0) {
+    const stageCount = {};
+    for (const p of state.papers) {
+      if (['pending', 'parsing', 'enriching', 'summarizing'].includes(p.status)) {
+        const label = statusLabel(p.status);
+        stageCount[label] = (stageCount[label] || 0) + 1;
+      }
+    }
+    const detail = Object.entries(stageCount)
+      .map(([k, v]) => `${k} ${v}`).join(' · ');
+    processingHtml = `<span class="stat-pill busy" title="${escapeHtml(detail || '处理中')}">
+      <span class="pulse"></span>${stats.processing} 处理中${detail ? ' · ' + escapeHtml(detail) : ''}</span>`;
+  }
   $('stats').innerHTML = `
     <span class="stat-pill good">${stats.ready}/${stats.total} 就绪</span>
-    <span class="stat-pill">${stats.processing} 处理中</span>
-    <span class="stat-pill ${stats.error ? 'bad' : ''}">${stats.error} 错误</span>
+    ${processingHtml}
+    ${stats.error ? `<span class="stat-pill bad">${stats.error} 错误</span>` : ''}
     <span class="stat-pill">${stats.concepts} 概念</span>`;
 }
 
@@ -298,7 +313,26 @@ function renderList() {
   $('btn-compact').classList.toggle('ghost', !state.compact);
   $('btn-compact').classList.toggle('subtle', state.compact);
   if (!state.papers.length) {
-    ul.innerHTML = '<li class="paper-item empty-list">暂无匹配论文。可以调整筛选，或把 PDF 放入 papers/ 后点击「扫描」。</li>';
+    const f = state.filter;
+    const hasFilter = f.q || f.status || f.readStatus || f.tag || f.topic || f.starred || f.folder || f.mode;
+    if (!hasFilter) {
+      // 真正的空库：给新手引导，而不是一句干巴巴的"暂无论文"
+      ul.innerHTML = `<li class="paper-item empty-guide">
+        <div class="eg-card">
+          <div class="eg-emoji">📚</div>
+          <h3>欢迎来到 PaperWiki</h3>
+          <p class="eg-sub">把 arXiv 论文 PDF 丢进来，AI 帮你读、总结、抽概念、打标签。</p>
+          <ol class="eg-steps">
+            <li><b>1.</b> 把 PDF 放进程序的 <code>papers/</code> 文件夹</li>
+            <li><b>2.</b> 点右上角「扫描」，等待 AI 处理（可在顶栏看进度）</li>
+            <li><b>3.</b> 左侧列表选一篇，看总结 · 双击或回车打开 PDF 做高亮笔记</li>
+          </ol>
+          <p class="eg-tip">💡 首次使用记得在「提示词」里配置你的 AI 接口（config.json）。</p>
+        </div>
+      </li>`;
+    } else {
+      ul.innerHTML = '<li class="paper-item empty-list">暂无匹配论文。可以调整筛选，或把 PDF 放入 papers/ 后点击「扫描」。</li>';
+    }
     return;
   }
   for (const p of state.papers) {
@@ -313,17 +347,20 @@ function renderList() {
     if (state.compact) {
       const meta = escapeHtml(`${(p.authors || [])[0] || '未知作者'}${p.year ? ' · ' + p.year : ''}`);
       const chips = compactChipList(p, 4);
+      const isBusy = ['pending', 'parsing', 'enriching', 'summarizing'].includes(p.status);
       li.innerHTML = `
         <div class="compact-row">
           <span class="compact-pick-slot ${state.pickMode ? 'on' : ''}">${state.pickMode ? sel : ''}</span>
-          <span class="dot ${statusDot(p)}" title="${statusLabel(p.status)}"></span>
+          <span class="dot ${statusDot(p)}${isBusy ? ' busy' : ''}" title="${statusLabel(p.status)}"></span>
           <div class="compact-main">
             <div class="compact-title-line">
               <span class="compact-title">${title}</span>
-              <span class="read-chip">${read}</span>
-              ${p.conceptCount ? `<span class="mini-metric">${p.conceptCount}</span>` : ''}
+              ${isBusy ? `<span class="busy-tag">${statusLabel(p.status)}</span>` : `<span class="read-chip">${read}</span>`}
+              ${progress != null && progress > 0 ? `<span class="mini-metric">📖 ${progress}%</span>` : ''}
+              ${!isBusy && p.conceptCount ? `<span class="mini-metric">${p.conceptCount}</span>` : ''}
             </div>
             <div class="compact-meta">${meta}</div>
+            ${progress != null && progress > 0 && progress < 100 ? `<div class="progress-row thin"><div class="progress-bar"><i style="width:${progress}%"></i></div></div>` : ''}
             ${chips ? `<div class="compact-chips">${chips}</div>` : ''}
           </div>
         </div>`;
@@ -331,16 +368,19 @@ function renderList() {
       // 舒适：原完整布局
       const topics = chipList(p.topics, 'topic', 3, topicClass);
       const tags = chipList(p.tags, 'tag', 4);
+      const isBusy = ['pending', 'parsing', 'enriching', 'summarizing'].includes(p.status);
+      const contHint = (!isBusy && progress != null && progress > 0 && progress < 100) ? ' · 双击继续阅读' : '';
       li.innerHTML = `
         ${state.pickMode ? `<span class="pick" style="font-size:14px;">${sel}</span>` : ''}
-        <div class="pt"><span class="dot ${statusDot(p)}" title="${statusLabel(p.status)}"></span>${title}</div>
+        <div class="pt"><span class="dot ${statusDot(p)}${isBusy ? ' busy' : ''}" title="${statusLabel(p.status)}"></span>${title}</div>
         <div class="pm">
           <span>${escapeHtml(shortAuthors(p))}${p.year ? ' · ' + p.year : ''}</span>
-          <span class="read-chip">${read}</span>
+          ${isBusy ? `<span class="busy-tag">${statusLabel(p.status)}</span>` : `<span class="read-chip">${read}</span>`}
           ${p.conceptCount ? `<span class="mini-metric">${p.conceptCount} 概念</span>` : ''}
+          ${progress != null && progress >= 100 ? '<span class="read-chip done">读完</span>' : ''}
         </div>
         <div class="chips">${topics}${tags}</div>
-        ${progress != null ? `<div class="progress-row"><div class="progress-bar"><i style="width:${progress}%"></i></div><span>${progress}%</span></div>` : ''}`;
+        ${progress != null ? `<div class="progress-row"><div class="progress-bar"><i style="width:${progress}%"></i></div><span title="${escapeHtml('读到 ' + progress + '%' + contHint)}">${progress}%</span></div>` : ''}`;
     }
     li.onclick = () => state.pickMode ? togglePick(p.id) : select(p.id);
     li.ondblclick = () => openReader(p);
@@ -413,6 +453,7 @@ function renderDetail() {
         <div class="dh-actions">
           <button class="btn sm" id="b-open-pdf">打开 PDF</button>
           <button class="btn ${p.starred ? '' : 'ghost'} sm" id="b-star">${p.starred ? '★ 已收藏' : '☆ 收藏'}</button>
+          <button class="btn ghost sm" id="b-read" title="切换阅读状态">${p.readStatus === 'done' ? '✓ 已读' : '标记已读'}</button>
           <button class="btn ghost sm" id="b-resume" title="重新总结（含主题/概念）">重新总结</button>
         </div>
       </div>
@@ -429,6 +470,11 @@ function renderDetail() {
   $('b-star').onclick = async () => {
     await patch(p.id, { starred: !p.starred });
     toast(p.starred ? '已取消收藏' : '已收藏');
+  };
+  $('b-read').onclick = async () => {
+    const next = p.readStatus === 'done' ? 'unread' : 'done';
+    await patch(p.id, { readStatus: next });
+    toast(next === 'done' ? '已标记为已读' : '已标记为未读');
   };
   $('b-resume').onclick = async () => {
     const btn = $('b-resume');
@@ -584,8 +630,17 @@ async function patch(id, fields, silent) {
 
 // ---- 阅读器 ----
 let reader = null;
-function openReader(paper) {
+// 双击列表项打开时，p 来自 summaryView（不含 annotations 字段）；详情页打开时含。
+// 这里统一兜底：annotations 缺失就懒拉一次 detailView 取 annotations，确保高亮/便签能正确回显。
+async function openReader(paper) {
   if (!window.PaperReader) { toast('阅读器尚未加载', 'error'); return; }
+  // summaryView 不含 annotations；detialView 才有。缺失时补拉，否则 reader.open 收到 undefined 会跳过回显。
+  if (paper.annotations === undefined) {
+    try {
+      const { data: full } = await jget('/api/papers/' + encodeURIComponent(paper.id));
+      if (full) paper = { ...paper, annotations: full.annotations || null, readProgress: full.readProgress || paper.readProgress };
+    } catch (e) { /* 拉取失败不阻塞阅读，只是无法回显已存批注 */ }
+  }
   if (!reader) {
     reader = new window.PaperReader({
       view: $('reader-view'),
@@ -601,7 +656,14 @@ function openReader(paper) {
       colorsEl: $('reader-colors'),
       title: $('reader-title'), saved: $('reader-saved'),
       onClose: () => { flushPendingNotes(); setTimeout(refresh, 200); },
-      onSaveProgress: async (id, payload) => { await PATCH('/api/papers/' + encodeURIComponent(id), { readProgress: payload }); },
+      onSaveProgress: async (id, payload) => {
+        // 阅读进度 ≥ 95% 自动判为已读，免去手动改状态；首次进入(reading)也一起带上
+        const patchBody = { readProgress: payload };
+        const pct = (payload && payload.total) ? payload.page / payload.total : 0;
+        if (pct >= 0.95) patchBody.readStatus = 'done';
+        else if (pct > 0.02) patchBody.readStatus = 'reading';
+        await PATCH('/api/papers/' + encodeURIComponent(id), patchBody);
+      },
       onSaveAnnotations: async (id, payload) => { await PATCH('/api/papers/' + encodeURIComponent(id), { annotations: payload }); },
     });
   }
@@ -930,6 +992,24 @@ function bind() {
       if (e.key === 'ArrowRight') { e.preventDefault(); reader.scrollToPage(Math.min(reader.total, reader.page + 1)); return; }
       if (e.key === '=' || e.key === '+') { e.preventDefault(); reader.scale = Math.min(3, +(reader.scale + 0.2).toFixed(2)); reader.rerender(); return; }
       if (e.key === '-' || e.key === '_') { e.preventDefault(); reader.scale = Math.max(0.5, +(reader.scale - 0.2).toFixed(2)); reader.rerender(); return; }
+    }
+    // 列表键盘导航：仅在不输入、不开阅读器、不开模态时生效
+    if (!$('reader-view').classList.contains('active')
+        && !$('folder-modal').classList.contains('active')
+        && !['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName)
+        && state.papers.length) {
+      const curIdx = state.papers.findIndex((p) => p.id === state.current);
+      const move = (d) => {
+        const next = state.papers[Math.max(0, Math.min(state.papers.length - 1, (curIdx < 0 ? 0 : curIdx) + d))];
+        if (next && next.id !== state.current) select(next.id);
+      };
+      if (e.key === 'ArrowDown') { e.preventDefault(); move(1); return; }
+      if (e.key === 'ArrowUp') { e.preventDefault(); move(-1); return; }
+      if (e.key === 'Enter' && state.current) { e.preventDefault(); openReader(state.papers.find((p) => p.id === state.current)); return; }
+      if (e.key.toLowerCase() === 's' && state.current) {
+        const cp = state.papers.find((p) => p.id === state.current);
+        if (cp) { e.preventDefault(); patch(cp.id, { starred: !cp.starred }); toast(cp.starred ? '已取消收藏' : '已收藏'); return; }
+      }
     }
     if (e.key === 'Escape') {
       if ($('reader-view').classList.contains('active') && reader) reader.close();

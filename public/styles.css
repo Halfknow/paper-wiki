@@ -328,6 +328,49 @@ body.is-resizing { cursor:col-resize; user-select:none; }
 .dot.busy { animation:pulse-dot 1.3s ease-in-out infinite; }
 @keyframes pulse-dot { 0%,100% { opacity:1; } 50% { opacity:.45; } }
 
+/* === 产品优化：处理可见化 / 进度 / 键盘提示 / 空库引导 === */
+/* 处理中标签（列表项 + 详情）—— 替代普通 read-chip，强调"正在跑" */
+.busy-tag {
+  display:inline-flex; align-items:center; gap:4px;
+  padding:1px 7px; font-size:11px; line-height:1.5; border-radius:6px;
+  color:var(--amber); background:var(--amber-soft); border:1px solid #fcd34d;
+}
+.busy-tag::before {
+  content:''; width:6px; height:6px; border-radius:50%; background:var(--amber);
+  animation:pulse-dot 1.3s ease-in-out infinite;
+}
+/* 顶栏"处理中"pill：带脉冲点，hover 展开当前阶段明细 */
+.stat-pill.busy { color:var(--amber); background:var(--amber-soft); border-color:#fcd34d; display:inline-flex; align-items:center; gap:6px; }
+.stat-pill.busy .pulse { width:7px; height:7px; border-radius:50%; background:var(--amber); animation:pulse-dot 1.3s ease-in-out infinite; flex:0 0 auto; }
+.stat-pill.busy { max-width:260px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+/* 紧凑视图里的细进度条（无百分比文字，更省空间） */
+.progress-row.thin { margin-top:5px; }
+.progress-row.thin .progress-bar { height:2px; }
+/* 列表工具栏键盘提示 */
+.kbd-hint { color:var(--muted2); font-size:11px; margin-left:2px; }
+.kbd-hint { display:none; }   /* 默认隐藏，宽屏再显示，避免小屏拥挤 */
+@media (min-width:1100px) { .kbd-hint { display:inline; } }
+/* 读完徽标 */
+.read-chip.done { color:var(--green); background:var(--green-soft); border-color:#bbf7d0; }
+
+/* 空库引导卡片 */
+.empty-guide { cursor:default !important; padding:8px 4px !important; }
+.empty-guide:hover { background:transparent !important; }
+.eg-card {
+  margin:32px auto 0; max-width:520px; text-align:center;
+  padding:36px 28px; background:var(--panel); border:1px solid var(--border);
+  border-radius:14px; box-shadow:var(--shadow);
+}
+.eg-emoji { font-size:42px; line-height:1; margin-bottom:10px; }
+.eg-card h3 { margin:0 0 6px; font-size:18px; color:var(--text); }
+.eg-sub { margin:0 0 18px; color:var(--muted); font-size:13px; }
+.eg-steps { margin:0 auto 16px; padding:16px 20px 16px 14px; max-width:380px; text-align:left;
+  list-style:none; background:var(--panel2); border:1px solid var(--border); border-radius:10px; counter-reset:none; }
+.eg-steps li { padding:5px 0; color:var(--text); font-size:13px; }
+.eg-steps b { color:var(--accent); margin-right:4px; }
+.eg-steps code { background:var(--panel3); padding:1px 6px; border-radius:4px; font-size:12px; color:var(--accent-strong); }
+.eg-tip { margin:10px 0 0; color:var(--muted2); font-size:12px; }
+
 /* ---------- 详情面板 ---------- */
 .empty { color:var(--muted); text-align:center; margin-top:38vh; font-size:14px; }
 .empty .big { font-size:40px; display:block; margin-bottom:8px; opacity:.5; }

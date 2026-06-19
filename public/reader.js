@@ -124,7 +124,9 @@ import '/vendor/pdfjs-viewer.js';
       this.view.classList.add('active');
       document.body.style.overflow = 'hidden';
       // 重开前彻底拆除上一篇：清空旧画布(避免闪现上一篇PDF)+ 移除上次的监听器(避免叠加泄漏)
-      this._teardown(false);
+      // await：teardown 现在是 async（save=false 时内部只 await 一个已 resolve 的 promise，开销可忽略），
+      // 确保 viewer/doc 销毁完成后再加载新 PDF。
+      await this._teardown(false);
       this.setStatus('加载中…', true);
       // 显示加载遮罩（旧画布已清，期间只见底色+spinner，不再有旧PDF）
       const loadingEl = this.wrap.querySelector('#reader-loading');
@@ -626,16 +628,24 @@ import '/vendor/pdfjs-viewer.js';
       } catch { return null; }
     }
 
-    async saveAnnotations() {
+    async saveAnnotations(force = false) {
       if (!this.paper || !this.doc) return;
       const now = Date.now();
-      if (now - this.lastSavedAnnotAt < 2000) return;
+      // 2 秒限频仅防高频拖拽产生的抖动写入；close() 时 force=true 绕过，保证最后一次落盘不丢
+      if (!force && now - this.lastSavedAnnotAt < 2000) return;
       const payload = this.serializeAnnotations();
-      console.log('[PaperWiki] 保存批注: items=', payload && payload.items ? payload.items.length : 0, 'payload=', payload);
       if (!payload) return;
-      // 仅在批注非空或上次非空时写（避免反复写空）
       this.lastSavedAnnotAt = now;
-      try { await this.onSaveAnnotations(this.paper.id, payload); } catch {}
+      try {
+        await this.onSaveAnnotations(this.paper.id, payload);
+        // 给一个可见的「已保存」反馈，避免用户怀疑高亮没存住（呼应刚修的保存丢失 bug）
+        const n = (payload && payload.items && payload.items.length) || 0;
+        this.setStatus(n ? ('✓ 批注已保存（' + n + '）') : '✓ 批注已清空');
+      } catch (e) {
+        // 保存失败要可见反馈，否则用户以为存了实际没存
+        console.warn('[PaperWiki] 批注保存失败', e && e.message);
+        this.setStatus('批注保存失败，请重试', true);
+      }
     }
 
     /** 灌回批注：按 pageIndex 分组缓存，等每页渲染后经 layer.deserialize 重建可视 editor。
@@ -667,19 +677,18 @@ import '/vendor/pdfjs-viewer.js';
       const builder = pv && pv.annotationEditorLayer;
       const layer = builder && builder.annotationEditorLayer;
       // layer 未就绪：保留待下次（pagerendered 会重试）
-      if (!layer || !layer.deserialize) {
-        console.warn('[PaperWiki] 回显: page', pageIndex, 'layer 未就绪, builder=', !!builder, 'layer=', !!layer);
-        return;
-      }
-      this._annotByPage.delete(pageIndex);   // 确认可回显后才清，避免就绪前误删
-      console.log('[PaperWiki] 回显: page', pageIndex, 'items=', items.length, '开始 deserialize');
+      if (!layer || !layer.deserialize) return;
+      // 关键：deserialize 全部成功后再 delete，否则某条抛错时整页批注会从缓存丢失，重试也补不回来
+      let allOk = true;
       for (const it of items) {
         try {
           const ed = await layer.deserialize(it);
-          console.log('[PaperWiki] 回显: deserialize 结果', ed);
-          if (ed && layer.add) { layer.add(ed); console.log('[PaperWiki] 回显: 已 add'); }
-        } catch (e) { console.error('[PaperWiki] 回显失败', e); }
+          if (ed && layer.add) layer.add(ed); else allOk = false;
+        } catch (e) {
+          allOk = false;
+        }
       }
+      if (allOk) this._annotByPage.delete(pageIndex);
     }
 
     /** 扫描所有未回显的页，对已就绪的 layer 补回显（解决 drawLayer 异步就绪竞态）。 */
@@ -714,10 +723,14 @@ import '/vendor/pdfjs-viewer.js';
 
     /** 彻底拆除当前会话：保存(可选)、移除所有监听器、销毁 viewer/doc、清空画布 DOM。
      *  close() 与 open() 复用它——open() 开头调用可保证重开时：①不残留上一篇画布(否则会闪现旧PDF)
-     *  ②不叠加泄漏监听器(wheel/scroll/pointer 等)。save 仅在用户主动关闭时为 true。 */
-    _teardown(save) {
+     *  ②不叠加泄漏监听器(wheel/scroll/pointer 等)。save 仅在用户主动关闭时为 true。
+     *  返回一个 Promise：save=true 时它包含「批注保存」的网络落盘——调用方应 await 后再销毁 doc。 */
+    async _teardown(save) {
+      // 先发起强制保存（绕过限频，确保最后一次批注不丢），但要在销毁 doc 前就把内容序列化好
+      // （serializeAnnotations 同步读取 doc.annotationStorage，故这一步必须在 destroy 之前完成）。
+      const saveP = save ? this.saveAnnotations(true) : Promise.resolve();
       if (this.savingTimer) { clearTimeout(this.savingTimer); if (save) this.saveProgress(); this.savingTimer = null; }
-      if (this.savingAnnotTimer) { clearTimeout(this.savingAnnotTimer); if (save) this.saveAnnotations(); this.savingAnnotTimer = null; }
+      if (this.savingAnnotTimer) { clearTimeout(this.savingAnnotTimer); this.savingAnnotTimer = null; }
       if (this._statusTimer) { clearTimeout(this._statusTimer); this._statusTimer = null; }
       if (this._resizeTimer) { clearTimeout(this._resizeTimer); this._resizeTimer = null; }
       if (this._annotRetry) { clearTimeout(this._annotRetry); this._annotRetry = null; }
@@ -739,6 +752,8 @@ import '/vendor/pdfjs-viewer.js';
       this._onTouchStart = this._onTouchMove = this._onTouchEnd = null;
       this.hideSelectionPopup();
       if (this._pop) { this._pop.remove(); this._pop = null; }
+      // 等批注/进度落盘完成后再销毁 doc，避免网络尚未返回就被 destroy 打断
+      try { await saveP; } catch {}
       try { if (this.viewer) this.viewer.cleanup(); } catch {}
       try { if (this.doc) this.doc.destroy(); } catch {}
       this.doc = null;
@@ -751,8 +766,8 @@ import '/vendor/pdfjs-viewer.js';
       if (this.wrap) this.wrap.scrollTop = 0;
     }
 
-    close() {
-      this._teardown(true);
+    async close() {
+      await this._teardown(true);
       this.view.classList.remove('active');
       document.body.style.overflow = '';
       this.onClose();
