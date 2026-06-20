@@ -74,7 +74,7 @@ test('searchArxiv 对 5xx 重试，最终成功', async () => {
     return { ok: true, text: async () => SAMPLE };
   };
   const { entries } = await searchArxiv('survey', fakeFetch, { maxRetries: 3 });
-  assert.strictEqual(calls, 3);            // 前 2 次 503 + 第 3 次成功
+  assert.strictEqual(calls, 3); // 前 2 次 503 + 第 3 次成功
   assert.strictEqual(entries.length, 2);
 });
 
@@ -85,11 +85,8 @@ test('searchArxiv 对持续失败重试 maxRetries 次后抛错', async () => {
     // 模拟网络层错误（fetch reject），全部可重试
     throw new TypeError('network error');
   };
-  await assert.rejects(
-    () => searchArxiv('survey', fakeFetch, { maxRetries: 2 }),
-    /network error/,
-  );
-  assert.strictEqual(calls, 3);            // maxRetries + 1 次
+  await assert.rejects(() => searchArxiv('survey', fakeFetch, { maxRetries: 2 }), /network error/);
+  assert.strictEqual(calls, 3); // maxRetries + 1 次
 });
 
 test('searchArxiv 对不可重试的 4xx 立即抛错，不重试', async () => {
@@ -98,11 +95,8 @@ test('searchArxiv 对不可重试的 4xx 立即抛错，不重试', async () => 
     calls++;
     return { ok: false, status: 400, text: async () => 'bad request' };
   };
-  await assert.rejects(
-    () => searchArxiv('survey', fakeFetch, { maxRetries: 3 }),
-    /arxiv HTTP 400/,
-  );
-  assert.strictEqual(calls, 1);            // 4xx 不重试，只调一次
+  await assert.rejects(() => searchArxiv('survey', fakeFetch, { maxRetries: 3 }), /arxiv HTTP 400/);
+  assert.strictEqual(calls, 1); // 4xx 不重试，只调一次
 });
 
 test('searchArxiv 加 AbortSignal.timeout 超时信号', async () => {

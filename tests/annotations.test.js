@@ -20,9 +20,9 @@ test('前提复现：Float32Array 经 JSON 往返退化为对象，pdf.js 循环
 test('isDenseArrayLike：识别 {0:..,1:..} 稠密数字键对象', () => {
   assert.strictEqual(isDenseArrayLike({ 0: 1, 1: 2, 2: 3 }), true);
   assert.strictEqual(isDenseArrayLike({}), false);
-  assert.strictEqual(isDenseArrayLike([1, 2, 3]), false);     // 真数组不算
+  assert.strictEqual(isDenseArrayLike([1, 2, 3]), false); // 真数组不算
   assert.strictEqual(isDenseArrayLike({ 0: 1, 2: 3 }), false); // 有空洞不算
-  assert.strictEqual(isDenseArrayLike({ id: 1 }), false);      // 非数字键不算
+  assert.strictEqual(isDenseArrayLike({ id: 1 }), false); // 非数字键不算
   assert.strictEqual(isDenseArrayLike(null), false);
 });
 
@@ -41,19 +41,35 @@ test('repairArrayLike：直接把 TypedArray 转普通数组（序列化侧）',
 test('repairArrayLike：递归修复嵌套（手写 inkLists / 嵌套坐标）', () => {
   const corrupted = JSON.parse(JSON.stringify({ points: [new Float32Array([1, 2]), new Float32Array([3, 4])] }));
   const fixed = repairArrayLike(corrupted);
-  assert.deepStrictEqual(fixed, { points: [[1, 2], [3, 4]] });
+  assert.deepStrictEqual(fixed, {
+    points: [
+      [1, 2],
+      [3, 4],
+    ],
+  });
 });
 
 test('normalizeAnnotations：修复 highlight item 使 deserialize 循环可执行', () => {
   const stored = {
-    items: [{
-      id: null, annotationType: 9, color: [187, 247, 208], opacity: 1, thickness: 12,
-      quadPoints: JSON.parse(JSON.stringify(new Float32Array([
-        265.7, 660.4, 329.3, 660.4, 265.7, 649.5, 329.3, 649.5,
-        236.6, 626.8, 358.2, 626.8, 236.6, 614.3, 358.2, 614.3,
-      ]))),
-      pageIndex: 0, rect: [69.6, 524.2, 525.4, 664.1],
-    }],
+    items: [
+      {
+        id: null,
+        annotationType: 9,
+        color: [187, 247, 208],
+        opacity: 1,
+        thickness: 12,
+        quadPoints: JSON.parse(
+          JSON.stringify(
+            new Float32Array([
+              265.7, 660.4, 329.3, 660.4, 265.7, 649.5, 329.3, 649.5, 236.6, 626.8, 358.2, 626.8, 236.6, 614.3, 358.2,
+              614.3,
+            ]),
+          ),
+        ),
+        pageIndex: 0,
+        rect: [69.6, 524.2, 525.4, 664.1],
+      },
+    ],
     updatedAt: 123,
   };
   const out = normalizeAnnotations(stored);

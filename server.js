@@ -2,7 +2,7 @@ const http = require('http');
 const fs = require('fs');
 const fsp = require('fs/promises');
 const path = require('path');
-const { loadStore, saveStore, mergeTags, mergeTopics, mergeConcepts } = require('./lib/store');
+const { loadStore, saveStore, backupStore, mergeTags, mergeTopics, mergeConcepts } = require('./lib/store');
 const { createScanner } = require('./lib/scanner');
 const parser = require('./lib/parser');
 const arxiv = require('./lib/arxiv');
@@ -11,11 +11,17 @@ const { cleanFilenameToTitle, createRateLimiter, log } = require('./lib/util');
 const { createApiRouter } = require('./lib/api');
 
 const MIME = {
-  '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
-  '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8',
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
   '.mjs': 'text/javascript; charset=utf-8',
-  '.pdf': 'application/pdf', '.png': 'image/png', '.svg': 'image/svg+xml',
-  '.woff2': 'font/woff2', '.ttf': 'font/ttf', '.woff': 'font/woff',
+  '.pdf': 'application/pdf',
+  '.png': 'image/png',
+  '.svg': 'image/svg+xml',
+  '.woff2': 'font/woff2',
+  '.ttf': 'font/ttf',
+  '.woff': 'font/woff',
 };
 
 // node_modules 中的浏览器库 → /vendor/* 映射
@@ -42,8 +48,12 @@ function loadConfig() {
 
 async function serveStatic(req, res, filePath, extraHeaders) {
   let st;
-  try { st = await fsp.stat(filePath); }
-  catch { res.writeHead(404); return res.end('Not found'); }
+  try {
+    st = await fsp.stat(filePath);
+  } catch {
+    res.writeHead(404);
+    return res.end('Not found');
+  }
   if (st.isDirectory()) return serveStatic(req, res, path.join(filePath, 'index.html'), extraHeaders);
   const type = MIME[path.extname(filePath).toLowerCase()] || 'application/octet-stream';
   const range = req.headers.range;
@@ -54,7 +64,9 @@ async function serveStatic(req, res, filePath, extraHeaders) {
     if (start > end) [start, end] = [end, start];
     res.writeHead(206, {
       'Content-Range': `bytes ${start}-${end}/${st.size}`,
-      'Accept-Ranges': 'bytes', 'Content-Length': end - start + 1, 'Content-Type': type,
+      'Accept-Ranges': 'bytes',
+      'Content-Length': end - start + 1,
+      'Content-Type': type,
       ...extraHeaders,
     });
     fs.createReadStream(filePath, { start, end }).pipe(res);
@@ -78,14 +90,22 @@ async function main() {
 
   const rateLimitArxiv = createRateLimiter((config.arxiv && config.arxiv.minIntervalMs) || 3000);
   const deps = {
-    parser, arxiv: { ...arxiv, cleanFilenameToTitle }, ai,
-    config, rateLimitArxiv,
+    parser,
+    arxiv: { ...arxiv, cleanFilenameToTitle },
+    ai,
+    config,
+    rateLimitArxiv,
     saveStore: (s) => saveStore(storePath, s),
-    mergeTags, mergeTopics, mergeConcepts,
+    mergeTags,
+    mergeTopics,
+    mergeConcepts,
   };
   const scanner = createScanner({
-    store, storePath, papersDir, deps,
-    scanIntervalMs: (config.scanIntervalMinutes || 5) * 60 * 1000,
+    store,
+    storePath,
+    papersDir,
+    deps,
+    scanIntervalMs: (config.scanIntervalMinutes ?? 5) * 60 * 1000,
   });
   const router = createApiRouter({ store, save: (s) => saveStore(storePath, s), scanner, config });
 
@@ -101,7 +121,10 @@ async function main() {
       if (pathname.startsWith('/papers/')) {
         const rel = pathname.slice('/papers/'.length);
         const abs = path.resolve(papersDir, rel);
-        if (!abs.startsWith(papersDir)) { res.writeHead(400); return res.end('Bad path'); }
+        if (!abs.startsWith(papersDir)) {
+          res.writeHead(400);
+          return res.end('Bad path');
+        }
         return serveStatic(req, res, abs);
       }
 
@@ -121,7 +144,8 @@ async function main() {
           const rel = pathname.slice('/vendor/images/'.length);
           return serveStatic(req, res, path.join(NM, 'pdfjs-dist', 'web', 'images', rel));
         }
-        res.writeHead(404); return res.end('Not found');
+        res.writeHead(404);
+        return res.end('Not found');
       }
 
       // API
@@ -131,21 +155,30 @@ async function main() {
       }
 
       // 静态前端：前端源码（html/js/css）禁缓存，避免浏览器用旧 JS 导致改动不生效（本地开发工具，资源极小）
-      let fp = pathname === '/' ? path.join(PUBLIC_DIR, 'index.html') : path.join(PUBLIC_DIR, pathname);
-      if (!fp.startsWith(PUBLIC_DIR)) { res.writeHead(400); return res.end('Bad path'); }
+      const fp = pathname === '/' ? path.join(PUBLIC_DIR, 'index.html') : path.join(PUBLIC_DIR, pathname);
+      if (!fp.startsWith(PUBLIC_DIR)) {
+        res.writeHead(400);
+        return res.end('Bad path');
+      }
       return serveStatic(req, res, fp, { 'Cache-Control': 'no-cache, must-revalidate' });
     } catch (e) {
       log('server error', e.message);
       if (!res.headersSent) {
+        const isProd = process.env.NODE_ENV === 'production';
         res.writeHead(500, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ ok: false, error: e.message }));
+        // 生产模式不回传内部错误细节（可能含路径/栈信息），只回通用错误
+        res.end(JSON.stringify({ ok: false, error: isProd ? 'Internal Server Error' : e.message }));
       }
     }
   });
 
   scanner.start();
+  // 每日定时备份 papers.json（每 6 小时检查一次，backupStore 内部按天去重）
+  const backupTimer = setInterval(() => backupStore(storePath).catch(() => {}), 6 * 60 * 60 * 1000);
+  backupTimer.unref();
+  backupStore(storePath).catch(() => {}); // 启动即备一次
   const port = process.env.PORT || config.port || 8888;
-  const host = process.env.HOST || config.host || '0.0.0.0';
+  const host = process.env.HOST || config.host || '127.0.0.1';
   server.listen(port, host, () => {
     log(`PaperWiki listening on http://${host}:${port}`);
   });
@@ -160,7 +193,9 @@ async function main() {
     try {
       await scanner.drain(5000);
       log('shutdown: drained in-flight pipeline');
-    } catch (e) { log('shutdown drain error', e && e.message); }
+    } catch (e) {
+      log('shutdown drain error', e && e.message);
+    }
     server.close(() => process.exit(0));
     // 兜底：即便 server.close 因 keep-alive 连接卡住，也确保最终退出
     setTimeout(() => process.exit(0), 8000).unref();
@@ -169,6 +204,10 @@ async function main() {
   process.on('SIGTERM', shutdown);
 }
 
-if (require.main === module) main().catch((e) => { console.error(e); process.exit(1); });
+if (require.main === module)
+  main().catch((e) => {
+    console.error(e);
+    process.exit(1);
+  });
 
 module.exports = { loadConfig, serveStatic, MIME };

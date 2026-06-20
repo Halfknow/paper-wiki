@@ -1,0 +1,8 @@
+node_modules/
+public/
+package-lock.json
+data/
+papers/
+logs/
+tests/fixtures/
+*.md

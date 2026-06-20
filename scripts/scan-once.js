@@ -17,15 +17,20 @@ const { cleanFilenameToTitle, createRateLimiter } = require('../lib/util');
   const deps = {
     parser,
     arxiv: { ...arxiv, cleanFilenameToTitle },
-    ai, config,
+    ai,
+    config,
     rateLimitArxiv: createRateLimiter((config.arxiv && config.arxiv.minIntervalMs) || 3000),
     saveStore: (s) => saveStore(storePath, s),
-    mergeTags, mergeTopics, mergeConcepts,
+    mergeTags,
+    mergeTopics,
+    mergeConcepts,
   };
   const scanner = createScanner({
-    store, storePath,
+    store,
+    storePath,
     papersDir: path.resolve(root, config.papersDir || 'papers'),
-    deps, scanIntervalMs: 0,
+    deps,
+    scanIntervalMs: 0,
   });
   const r = await scanner.scan();
   console.log('scan result:', r);
@@ -37,7 +42,8 @@ const { cleanFilenameToTitle, createRateLimiter } = require('../lib/util');
     const busy = Object.values(store.papers).filter((p) => BUSY.includes(p.status));
     if (busy.length === 0 || Date.now() > deadline) {
       const counts = Object.values(store.papers).reduce((acc, p) => {
-        acc[p.status] = (acc[p.status] || 0) + 1; return acc;
+        acc[p.status] = (acc[p.status] || 0) + 1;
+        return acc;
       }, {});
       console.log('done, status counts:', counts);
       process.exit(0);
@@ -45,4 +51,7 @@ const { cleanFilenameToTitle, createRateLimiter } = require('../lib/util');
     setTimeout(check, 2000);
   };
   setTimeout(check, 2000);
-})().catch((e) => { console.error(e); process.exit(1); });
+})().catch((e) => {
+  console.error(e);
+  process.exit(1);
+});

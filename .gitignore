@@ -21,3 +21,8 @@ Thumbs.db
 # 编辑器
 .vscode/
 .idea/
+
+# Playwright 产物
+playwright-report/
+test-results/
+

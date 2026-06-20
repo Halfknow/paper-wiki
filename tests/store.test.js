@@ -4,9 +4,19 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const {
-  loadStore, saveStore, upsertPaper, patchPaper, mergeTags,
-  mergeTopics, mergeConcepts, deleteConcept, addFolder, deleteFolder,
-  conceptIdFor, conceptsToMarkdown, migrateStore,
+  loadStore,
+  saveStore,
+  upsertPaper,
+  patchPaper,
+  mergeTags,
+  mergeTopics,
+  mergeConcepts,
+  deleteConcept,
+  addFolder,
+  deleteFolder,
+  conceptIdFor,
+  conceptsToMarkdown,
+  migrateStore,
 } = require('../lib/store');
 
 function tmpStorePath() {
@@ -144,9 +154,11 @@ test('addFolder / deleteFolder 管理收藏夹并解绑论文', () => {
 test('conceptsToMarkdown 按首字母分组且空清单有提示', () => {
   const empty = conceptsToMarkdown({ version: 2, concepts: [], papers: {} });
   assert.ok(empty.includes('暂无概念'));
-  const md = conceptsToMarkdown({ version: 2, concepts: [
-    { term: 'Attention', definition: '注意力机制', paperIds: ['p1'] },
-  ], papers: { p1: { id: 'p1', title: 'A 论文' } } });
+  const md = conceptsToMarkdown({
+    version: 2,
+    concepts: [{ term: 'Attention', definition: '注意力机制', paperIds: ['p1'] }],
+    papers: { p1: { id: 'p1', title: 'A 论文' } },
+  });
   assert.ok(md.includes('# 概念清单'));
   assert.ok(md.includes('### Attention'));
   assert.ok(md.includes('注意力机制'));

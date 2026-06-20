@@ -480,7 +480,7 @@ function renderTabBody() {
       <p class="save-hint" style="margin-top:18px;">由 ${escapeHtml(p.summaryModel || 'AI')} 生成${p.summaryAt ? ' · ' + new Date(p.summaryAt).toLocaleString() : ''}</p>`;
   } else if (state.tab === 'notes') {
     body.innerHTML = `<div class="notes-grid">
-      <textarea id="notes-edit" placeholder="用 Markdown 记笔记，右侧实时预览（支持 \$公式\$）…">${escapeHtml(p.notes || '')}</textarea>
+      <textarea id="notes-edit" placeholder="用 Markdown 记笔记，右侧实时预览（支持 $公式$）…">${escapeHtml(p.notes || '')}</textarea>
       <div class="md md-preview" id="notes-preview"></div></div>
       <p class="save-hint" id="notes-hint" style="margin-top:6px;"></p>`;
     const te = $('notes-edit'), pv = $('notes-preview'), hint = $('notes-hint');

@@ -1,0 +1,41 @@
+{
+  "root": true,
+  "env": {
+    "node": true,
+    "es2022": true,
+    "commonjs": true
+  },
+  "parserOptions": {
+    "ecmaVersion": 2022,
+    "sourceType": "commonjs"
+  },
+  "extends": ["eslint:recommended", "prettier"],
+  "rules": {
+    "eqeqeq": ["error", "always", { "null": "ignore" }],
+    "no-var": "error",
+    "prefer-const": "error",
+    "no-console": "off",
+    "no-unused-vars": ["warn", { "argsIgnorePattern": "^_" }],
+    "no-empty": ["error", { "allowEmptyCatch": true }]
+  },
+  "overrides": [
+    {
+      "files": ["public/**/*.js"],
+      "env": { "browser": true, "node": false, "es2022": true },
+      "parserOptions": { "sourceType": "module" },
+      "globals": {
+        "marked": "readonly",
+        "DOMPurify": "readonly",
+        "katex": "readonly",
+        "pdfjsLib": "readonly",
+        "pdfjsViewer": "readonly",
+        "PaperReader": "writable",
+        "READER_PALETTE": "writable"
+      }
+    },
+    {
+      "files": ["tests/**/*.js"],
+      "env": { "node": true, "commonjs": true }
+    }
+  ]
+}

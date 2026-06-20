@@ -9,8 +9,12 @@ function startServer(handler) {
       const chunks = [];
       for await (const c of req) chunks.push(c);
       const body = chunks.length ? Buffer.concat(chunks).toString('utf8') : null;
-      try { await handler(req, res, body); }
-      catch (e) { res.writeHead(500); res.end(JSON.stringify({ ok: false, error: e.message })); }
+      try {
+        await handler(req, res, body);
+      } catch (e) {
+        res.writeHead(500);
+        res.end(JSON.stringify({ ok: false, error: e.message }));
+      }
     });
     server.listen(0, '127.0.0.1', () => resolve(server));
   });
@@ -29,15 +33,37 @@ function baseCtx(store, save) {
   return {
     store,
     save: save || (async () => {}),
-    scanner: { scan: async () => ({ added: 0 }), enqueue: () => {}, extractConcepts: async (ids) => ({ processed: ids.length, added: 1 }) },
+    scanner: {
+      scan: async () => ({ added: 0 }),
+      enqueue: () => {},
+      extractConcepts: async (ids) => ({ processed: ids.length, added: 1 }),
+    },
     config: { ai: {} },
   };
 }
 
+test('GET /api/health 返回状态信息', async () => {
+  const store = { papers: { a: {}, b: {} }, tags: [], topics: [], folders: [], concepts: [], settings: {} };
+  const router = createApiRouter(baseCtx(store));
+  const server = await startServer(router.handle);
+  const port = server.address().port;
+  const r = await call(port, 'GET', '/api/health');
+  assert.strictEqual(r.status, 200);
+  assert.strictEqual(r.json.ok, true);
+  assert.strictEqual(r.json.data.status, 'ok');
+  assert.strictEqual(r.json.data.papers, 2);
+  assert.strictEqual(typeof r.json.data.uptime, 'number');
+  server.close();
+});
+
 test('GET /api/papers 返回列表视图', async () => {
-  const store = { version: 1, tags: ['rlhf'], papers: {
-    a: { id: 'a', title: 'T1', tags: ['rlhf'], status: 'ready', readStatus: 'unread', starred: false, addedAt: 1 },
-  } };
+  const store = {
+    version: 1,
+    tags: ['rlhf'],
+    papers: {
+      a: { id: 'a', title: 'T1', tags: ['rlhf'], status: 'ready', readStatus: 'unread', starred: false, addedAt: 1 },
+    },
+  };
   const router = createApiRouter(baseCtx(store));
   const server = await startServer(router.handle);
   const port = server.address().port;
@@ -49,10 +75,14 @@ test('GET /api/papers 返回列表视图', async () => {
 });
 
 test('GET /api/papers 支持标签与全文 q 筛选', async () => {
-  const store = { version: 1, tags: [], papers: {
-    a: { id: 'a', title: 'Alpha', tags: ['rlhf'], status: 'ready', addedAt: 1, summary: '', notes: '', abstract: '' },
-    b: { id: 'b', title: 'Beta', tags: ['data'], status: 'ready', addedAt: 2, summary: '', notes: '', abstract: '' },
-  } };
+  const store = {
+    version: 1,
+    tags: [],
+    papers: {
+      a: { id: 'a', title: 'Alpha', tags: ['rlhf'], status: 'ready', addedAt: 1, summary: '', notes: '', abstract: '' },
+      b: { id: 'b', title: 'Beta', tags: ['data'], status: 'ready', addedAt: 2, summary: '', notes: '', abstract: '' },
+    },
+  };
   const router = createApiRouter(baseCtx(store));
   const server = await startServer(router.handle);
   const port = server.address().port;
@@ -65,11 +95,19 @@ test('GET /api/papers 支持标签与全文 q 筛选', async () => {
 });
 
 test('PATCH /api/papers/:id 更新 notes/starred 并持久化', async () => {
-  const store = { version: 1, tags: [], papers: {
-    a: { id: 'a', title: 'T', notes: '', starred: false, status: 'ready', updatedAt: 0 },
-  } };
+  const store = {
+    version: 1,
+    tags: [],
+    papers: {
+      a: { id: 'a', title: 'T', notes: '', starred: false, status: 'ready', updatedAt: 0 },
+    },
+  };
   let saved = null;
-  const router = createApiRouter(baseCtx(store, async (s) => { saved = s; }));
+  const router = createApiRouter(
+    baseCtx(store, async (s) => {
+      saved = s;
+    }),
+  );
   const server = await startServer(router.handle);
   const port = server.address().port;
   const r = await call(port, 'PATCH', '/api/papers/a', { notes: 'my note', starred: true });
@@ -81,19 +119,33 @@ test('PATCH /api/papers/:id 更新 notes/starred 并持久化', async () => {
 });
 
 test('PATCH→GET 批注往返：对象型 quadPoints 被还原为真数组（高亮持久化根因修复）', async () => {
-  const store = { version: 1, tags: [], papers: {
-    a: { id: 'a', title: 'T', status: 'ready', annotations: null },
-  } };
+  const store = {
+    version: 1,
+    tags: [],
+    papers: {
+      a: { id: 'a', title: 'T', status: 'ready', annotations: null },
+    },
+  };
   const router = createApiRouter(baseCtx(store, async () => {}));
   const server = await startServer(router.handle);
   const port = server.address().port;
   // 复刻浏览器：serializable 里 quadPoints 是 Float32Array，经 fetch 的 JSON.stringify 发出，
   // 到服务端已退化成 {"0":..} 对象（call() 内部 JSON.stringify 等价于这一步）。
-  const payload = { items: [{
-    id: null, annotationType: 9, color: [187, 247, 208], opacity: 1, thickness: 12,
-    quadPoints: new Float32Array([265, 660, 329, 660, 265, 649, 329, 649]),
-    pageIndex: 0, rect: [69, 524, 525, 664],
-  }], updatedAt: 1 };
+  const payload = {
+    items: [
+      {
+        id: null,
+        annotationType: 9,
+        color: [187, 247, 208],
+        opacity: 1,
+        thickness: 12,
+        quadPoints: new Float32Array([265, 660, 329, 660, 265, 649, 329, 649]),
+        pageIndex: 0,
+        rect: [69, 524, 525, 664],
+      },
+    ],
+    updatedAt: 1,
+  };
   const w = await call(port, 'PATCH', '/api/papers/a', { annotations: payload });
   assert.strictEqual(w.status, 200);
   // 写入侧：落盘的 quadPoints 必须是真数组
@@ -104,7 +156,8 @@ test('PATCH→GET 批注往返：对象型 quadPoints 被还原为真数组（�
   const r = await call(port, 'GET', '/api/papers/a');
   const qp = r.json.data.annotations.items[0].quadPoints;
   assert.ok(Array.isArray(qp));
-  let boxes = 0; for (let i = 0; i < qp.length; i += 8) boxes++;
+  let boxes = 0;
+  for (let i = 0; i < qp.length; i += 8) boxes++;
   assert.strictEqual(boxes, 1, '高亮区域应可重建（修复前为 0）');
   server.close();
 });
@@ -112,9 +165,18 @@ test('PATCH→GET 批注往返：对象型 quadPoints 被还原为真数组（�
 test('GET 详情：自愈历史脏数据（已落盘的对象型 quadPoints）', async () => {
   // 模拟历史上已被写坏的存量数据：quadPoints 已是 {"0":..} 对象
   const corrupted = JSON.parse(JSON.stringify({ q: new Float32Array([1, 2, 3, 4, 5, 6, 7, 8]) })).q;
-  const store = { version: 1, tags: [], papers: {
-    a: { id: 'a', title: 'T', status: 'ready', annotations: { items: [{ annotationType: 9, quadPoints: corrupted, pageIndex: 0 }], updatedAt: 1 } },
-  } };
+  const store = {
+    version: 1,
+    tags: [],
+    papers: {
+      a: {
+        id: 'a',
+        title: 'T',
+        status: 'ready',
+        annotations: { items: [{ annotationType: 9, quadPoints: corrupted, pageIndex: 0 }], updatedAt: 1 },
+      },
+    },
+  };
   const router = createApiRouter(baseCtx(store));
   const server = await startServer(router.handle);
   const port = server.address().port;
@@ -126,10 +188,14 @@ test('GET 详情：自愈历史脏数据（已落盘的对象型 quadPoints）',
 });
 
 test('GET /api/tags 返回字典+计数', async () => {
-  const store = { version: 1, tags: ['rlhf', 'data'], papers: {
-    a: { id: 'a', tags: ['rlhf'], status: 'ready' },
-    b: { id: 'b', tags: ['rlhf', 'data'], status: 'ready' },
-  } };
+  const store = {
+    version: 1,
+    tags: ['rlhf', 'data'],
+    papers: {
+      a: { id: 'a', tags: ['rlhf'], status: 'ready' },
+      b: { id: 'b', tags: ['rlhf', 'data'], status: 'ready' },
+    },
+  };
   const router = createApiRouter(baseCtx(store));
   const server = await startServer(router.handle);
   const port = server.address().port;
@@ -141,10 +207,17 @@ test('GET /api/tags 返回字典+计数', async () => {
 });
 
 test('GET /api/papers 支持 topic 与 folder 筛选', async () => {
-  const store = { version: 2, tags: [], topics: ['推理'], folders: [], concepts: [], papers: {
-    a: { id: 'a', title: 'A', tags: [], topics: ['推理'], folders: ['f1'], status: 'ready', addedAt: 1 },
-    b: { id: 'b', title: 'B', tags: [], topics: ['数据'], folders: [], status: 'ready', addedAt: 2 },
-  } };
+  const store = {
+    version: 2,
+    tags: [],
+    topics: ['推理'],
+    folders: [],
+    concepts: [],
+    papers: {
+      a: { id: 'a', title: 'A', tags: [], topics: ['推理'], folders: ['f1'], status: 'ready', addedAt: 1 },
+      b: { id: 'b', title: 'B', tags: [], topics: ['数据'], folders: [], status: 'ready', addedAt: 2 },
+    },
+  };
   const router = createApiRouter(baseCtx(store));
   const server = await startServer(router.handle);
   const port = server.address().port;
@@ -158,13 +231,24 @@ test('GET /api/papers 支持 topic 与 folder 筛选', async () => {
 });
 
 test('PATCH /api/papers/:id 可写入 topics/folders/readProgress', async () => {
-  const store = { version: 2, tags: [], topics: [], folders: [], concepts: [], papers: {
-    a: { id: 'a', title: 'T', topics: [], folders: [], readProgress: null, status: 'ready', updatedAt: 0 },
-  } };
+  const store = {
+    version: 2,
+    tags: [],
+    topics: [],
+    folders: [],
+    concepts: [],
+    papers: {
+      a: { id: 'a', title: 'T', topics: [], folders: [], readProgress: null, status: 'ready', updatedAt: 0 },
+    },
+  };
   const router = createApiRouter(baseCtx(store));
   const server = await startServer(router.handle);
   const port = server.address().port;
-  const r = await call(port, 'PATCH', '/api/papers/a', { topics: ['推理'], folders: ['f1'], readProgress: { page: 3, scrollTop: 120 } });
+  const r = await call(port, 'PATCH', '/api/papers/a', {
+    topics: ['推理'],
+    folders: ['f1'],
+    readProgress: { page: 3, scrollTop: 120 },
+  });
   assert.strictEqual(r.status, 200);
   assert.deepStrictEqual(store.papers.a.topics, ['推理']);
   assert.deepStrictEqual(store.papers.a.folders, ['f1']);
@@ -174,9 +258,16 @@ test('PATCH /api/papers/:id 可写入 topics/folders/readProgress', async () => 
 });
 
 test('收藏夹 CRUD：POST / PATCH / DELETE，计数随论文变化', async () => {
-  const store = { version: 2, tags: [], topics: [], folders: [], concepts: [], papers: {
-    a: { id: 'a', title: 'A', folders: [], status: 'ready' },
-  } };
+  const store = {
+    version: 2,
+    tags: [],
+    topics: [],
+    folders: [],
+    concepts: [],
+    papers: {
+      a: { id: 'a', title: 'A', folders: [], status: 'ready' },
+    },
+  };
   const router = createApiRouter(baseCtx(store));
   const server = await startServer(router.handle);
   const port = server.address().port;
@@ -196,10 +287,16 @@ test('收藏夹 CRUD：POST / PATCH / DELETE，计数随论文变化', async () 
 });
 
 test('GET /api/concepts 与概念清单 Markdown', async () => {
-  const store = { version: 2, tags: [], topics: [], folders: [],
-    concepts: [{ id: 'c1', term: 'RLHF', definition: 'd', paperIds: ['a'] }], papers: {
+  const store = {
+    version: 2,
+    tags: [],
+    topics: [],
+    folders: [],
+    concepts: [{ id: 'c1', term: 'RLHF', definition: 'd', paperIds: ['a'] }],
+    papers: {
       a: { id: 'a', title: 'A 论文', conceptIds: ['c1'], status: 'ready' },
-    } };
+    },
+  };
   const router = createApiRouter(baseCtx(store));
   const server = await startServer(router.handle);
   const port = server.address().port;
@@ -213,10 +310,17 @@ test('GET /api/concepts 与概念清单 Markdown', async () => {
 });
 
 test('POST /api/papers/concepts 对选中论文调用 scanner.extractConcepts', async () => {
-  const store = { version: 2, tags: [], topics: [], folders: [], concepts: [], papers: {
-    a: { id: 'a', title: 'A', status: 'ready' },
-    b: { id: 'b', title: 'B', status: 'ready' },
-  } };
+  const store = {
+    version: 2,
+    tags: [],
+    topics: [],
+    folders: [],
+    concepts: [],
+    papers: {
+      a: { id: 'a', title: 'A', status: 'ready' },
+      b: { id: 'b', title: 'B', status: 'ready' },
+    },
+  };
   const router = createApiRouter(baseCtx(store));
   const server = await startServer(router.handle);
   const port = server.address().port;
@@ -227,9 +331,16 @@ test('POST /api/papers/concepts 对选中论文调用 scanner.extractConcepts', 
 });
 
 test('GET /api/stats 含 folders/topics/concepts 计数', async () => {
-  const store = { version: 2, tags: [], topics: ['推理'], folders: [{ id: 'f1', name: 'x' }], concepts: [{ id: 'c1', term: 'y' }], papers: {
-    a: { id: 'a', status: 'ready' },
-  } };
+  const store = {
+    version: 2,
+    tags: [],
+    topics: ['推理'],
+    folders: [{ id: 'f1', name: 'x' }],
+    concepts: [{ id: 'c1', term: 'y' }],
+    papers: {
+      a: { id: 'a', status: 'ready' },
+    },
+  };
   const router = createApiRouter(baseCtx(store));
   const server = await startServer(router.handle);
   const port = server.address().port;
@@ -241,7 +352,15 @@ test('GET /api/stats 含 folders/topics/concepts 计数', async () => {
 });
 
 test('GET /api/settings 返回 summaryPrompt 与内置默认', async () => {
-  const store = { version: 2, tags: [], topics: [], folders: [], concepts: [], settings: { summaryPrompt: '我的提示词' }, papers: {} };
+  const store = {
+    version: 2,
+    tags: [],
+    topics: [],
+    folders: [],
+    concepts: [],
+    settings: { summaryPrompt: '我的提示词' },
+    papers: {},
+  };
   const router = createApiRouter(baseCtx(store));
   const server = await startServer(router.handle);
   const port = server.address().port;
@@ -254,7 +373,11 @@ test('GET /api/settings 返回 summaryPrompt 与内置默认', async () => {
 test('PUT /api/settings/summary-prompt 持久化并 trim', async () => {
   const store = { version: 2, tags: [], topics: [], folders: [], concepts: [], settings: {}, papers: {} };
   let saved = null;
-  const router = createApiRouter(baseCtx(store, async (s) => { saved = s; }));
+  const router = createApiRouter(
+    baseCtx(store, async (s) => {
+      saved = s;
+    }),
+  );
   const server = await startServer(router.handle);
   const port = server.address().port;
   const r = await call(port, 'PUT', '/api/settings/summary-prompt', { value: '  新提示  ' });

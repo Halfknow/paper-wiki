@@ -4,6 +4,15 @@
 
 ## [Unreleased]
 
+_下一个版本的改动会写在这里。_
+
+---
+
+## [2.2.0] — 2026-06-21
+
+> **PDF 阅读器重构（路线 B）+ 批注系统 + Indigo 配色 + 工程化基础。**
+> 从自研裸渲染迁移到 pdf.js 官方 PDFViewer，新增高亮/便签/手写批注（保存+回显），配色由绿改 Indigo，补齐 CI/测试/lint/health/备份等工程化基建。
+
 ### Added — 配色系统重设计
 - **主色由绿改 Indigo**：`--accent` `#2f7d5d`（绿）→ `#4f46e5`（Indigo），背景淡蓝灰 slate；按钮/链接/选中/Logo/favicon 全部统一到 Indigo 系。
 - **chip 高区分**：主题按名 hash 轮换 6 色（indigo/violet/cyan/blue/pink/amber）、标签改中性灰、指标用 cyan、状态用语义色（绿/红/amber），告别"一片绿"。
@@ -44,6 +53,23 @@
 - **双页第二页空白**：`removePageBorders:true` + spread 模式下 `getVisibleElements` 水平裁剪误判右页不可见导致不渲染 → 去掉 removePageBorders，改用 CSS 覆盖默认边框；另加 `afterReady` 主动 `_ensureRender` + `pagerendered` 兜底推进单线程渲染链。
 - **双页比窗口大（103%）**：afterReady 恢复了上次手动缩放的 scale 而非 fit → 改为默认总是 fitToWidth。
 - **顶部间隙不统一**：`.reader-canvas-wrap` 有 `padding:18px 0 40px` → 改 0，间隙全交由 `#viewer` padding:6px 控制。
+
+### Added — 工程化与运维基础
+- **CI（GitHub Actions）**：`.github/workflows/ci.yml` 两个 job——lint-and-unit（eslint + prettier check + `npm test`）、e2e（Playwright，spawn server.js + fixture PDF）。push/PR 自动触发。
+- **Prettier + ESLint**：`.prettierrc`（2 空格/单引号/分号/120 行宽，贴合现有后端风格）+ `.eslintrc.json`（`eslint:recommended` + `prettier`，`eqeqeq` 配 `null:ignore` 容纳 `== null` 惯用法，`no-var`/`prefer-const`）。前端 `public/` 排除格式化（无分号 + 手工对齐模板串）。新增 `npm run lint`/`format`/`format:check`/`test:e2e`。
+- **health 端点**：`GET /api/health` 返回 `{status, uptime, papers}`，供 pm2/反向代理探活。+测试。
+- **错误响应脱敏**：生产模式（`NODE_ENV=production`）顶层 catch 与下载失败不再回传 `e.message`（防泄露路径/栈信息），改回通用错误。
+- **每日备份**：`backupStore` 把 `papers.json` 复制到 `data/backups/papers-YYYYMMDD.json`，保留最近 7 份；server 启动即备一次 + 每 6 小时检查。
+- **e2e 测试**（Playwright）：`tests/e2e/reader.spec.js` 覆盖 reader 关键路径——① PDF 打开并渲染（canvas 出现）；② 高亮创建 + 关闭后持久化往返（`GET /api/papers/sample` 的 annotations 非空，覆盖 quadPoints TypedArray 退化修复）。配套 `tests/fixtures/sample.pdf`（wkhtmltopdf 生成的 2 页带文本层 PDF）+ `scripts/e2e-bootstrap.js`（预置 config/PDF/papers.json）。
+
+### Changed — 安全与默认值
+- **默认监听 127.0.0.1**：`config.example.json` 的 host 与 server.js fallback 从 `0.0.0.0` 改为 `127.0.0.1`，避免不做鉴权时局域网暴露（仍可用 `HOST` env / config 显式开放）。
+- **engines 改 `>=20`**：对齐 pdfjs-dist@4.10.38 的实际 node 要求（原 `>=18.17` 与 pdfjs 冲突）。
+- **scanIntervalMinutes 用 `??`**：原 `|| 5` 在值为 0 时误降级到 5，改 `??` 让 0 生效（e2e 可禁用后台扫描）。
+
+### Fixed — 工程化过程发现的真实 bug
+- **scanner.js `sleep` 未导入**（ESLint 抓到）：`createScanner` 用了 `sleep` 但只解构 `{ sha1OfFile, log }`，`drain` 超时分支会抛 `sleep is not defined` → 补 `require('./util')` 解构 `sleep`。
+- 正则多余转义（`[\w\.\-]` → `[\w.-]`、模板串 `\$` → `$`）。
 
 ### Docs
 - **AGENTS.md**：面向 agent / 新开发者的实现现状地图（架构、数据流、关键约定与陷阱）。

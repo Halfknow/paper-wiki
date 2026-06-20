@@ -5,10 +5,7 @@ const path = require('node:path');
 const { joinTextContent, extractText } = require('../lib/parser');
 
 test('joinTextContent 拼接多页 items 为文本，页间空行', () => {
-  const pages = [
-    { items: [{ str: 'Hello ' }, { str: 'World' }] },
-    { items: [{ str: 'Page 2' }] },
-  ];
+  const pages = [{ items: [{ str: 'Hello ' }, { str: 'World' }] }, { items: [{ str: 'Page 2' }] }];
   const out = joinTextContent(pages);
   assert.strictEqual(out, 'Hello World\n\nPage 2');
 });
