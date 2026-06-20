@@ -72,13 +72,29 @@
 
     <section class="list-pane">
       <div class="list-toolbar">
-        <span class="list-kicker" id="list-kicker">论文列表</span>
-        <span class="kbd-hint" id="list-hint">↑↓ 选择 · Enter 打开 PDF · S 收藏</span>
-        <select id="sort" title="排序">
-          <option value="addedDesc">最近添加</option>
-          <option value="updatedDesc">最近更新</option>
-          <option value="titleAsc">标题</option>
-        </select>
+        <label class="sort-field" title="排序方式">
+          <svg class="sort-ico" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="4" y1="6" x2="14" y2="6"/><line x1="4" y1="12" x2="11" y2="12"/><line x1="4" y1="18" x2="8" y2="18"/><polyline points="16 8 19 5 22 8"/><line x1="19" y1="5" x2="19" y2="19"/></svg>
+          <select id="sort" aria-label="排序方式">
+            <optgroup label="时间">
+              <option value="addedDesc">最近添加</option>
+              <option value="addedAsc">最早添加</option>
+              <option value="updatedDesc">最近更新</option>
+            </optgroup>
+            <optgroup label="标题">
+              <option value="titleAsc">标题 A → Z</option>
+              <option value="titleDesc">标题 Z → A</option>
+            </optgroup>
+            <optgroup label="年份">
+              <option value="yearDesc">年份（新 → 旧）</option>
+              <option value="yearAsc">年份（旧 → 新）</option>
+            </optgroup>
+            <optgroup label="阅读">
+              <option value="progressDesc">阅读进度</option>
+              <option value="conceptDesc">概念最多</option>
+            </optgroup>
+          </select>
+        </label>
+        <span class="toolbar-spacer"></span>
         <button class="btn subtle sm" id="btn-compact" title="紧凑视图（一行一篇，仅 3 标签）">≐</button>
         <button class="btn subtle sm" id="btn-pick" title="多选论文以追加概念">多选</button>
       </div>
@@ -184,10 +200,10 @@
         <button class="rb-toggle active" id="reader-spread" title="切换单页 / 双页">双页</button>
         <span class="rb-sep" aria-hidden="true"></span>
         <div class="rb-tools" role="group" aria-label="批注工具">
-          <button class="rb-tool active" id="reader-tool-cursor" title="浏览（退出批注）">
+          <button class="rb-tool active" id="reader-tool-cursor" title="选择：点选已有批注，Delete 删除">
             <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M4 3l7 17 2.5-7L20 10.5 4 3z"/></svg>
           </button>
-          <button class="rb-tool" id="reader-tool-highlight" title="高亮：选中文字着色">
+          <button class="rb-tool" id="reader-tool-highlight" title="高亮：拖选文字创建高亮">
             <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M15 3l6 6-9 9H6v-6l9-9z"/><path d="M14 4l6 6"/><path d="M4 21h16" stroke-width="2.4"/></svg>
           </button>
           <button class="rb-tool" id="reader-tool-note" title="便签：点击添加文字备注">
@@ -195,6 +211,10 @@
           </button>
           <button class="rb-tool" id="reader-tool-ink" title="手写：自由绘制">
             <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21c4-1 6-5 9-9 2-3 5-4 8-2-2 4-4 7-9 8-3 .5-5 2-8 3z"/><path d="M14 7l3 3"/></svg>
+          </button>
+          <span class="rb-tool-sep" aria-hidden="true"></span>
+          <button class="rb-tool rb-tool-delete" id="reader-tool-delete" title="选择模式下点选批注后删除" aria-disabled="true">
+            <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>
           </button>
         </div>
         <span class="reader-colors" id="reader-colors" title="批注颜色">

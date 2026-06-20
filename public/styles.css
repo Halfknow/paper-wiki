@@ -219,11 +219,30 @@ body.is-resizing { cursor:col-resize; user-select:none; }
   padding:8px 10px; border-bottom:1px solid var(--border);
   background:var(--panel); z-index:5;
 }
-.list-kicker {
-  flex:1 1 auto; min-width:80px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
-  font-size:12px; color:var(--muted); font-weight:600;
+.toolbar-spacer { flex:1 1 auto; min-width:0; }
+/* 排序（group by）控件：与顶栏 select 统一的设计语言，外壳 + 自定义下拉箭头 */
+.sort-field {
+  display:inline-flex; align-items:center; gap:6px; flex:0 0 auto;
+  min-height:34px; padding:0 9px; cursor:pointer;
+  background:rgba(241,245,249,.86); border:1px solid var(--border);
+  border-radius:var(--radius-sm); color:var(--muted);
+  transition:background .12s ease, border-color .12s ease, box-shadow .12s ease;
 }
-.list-toolbar select { flex:1; min-width:0; }
+.sort-field:hover { background:#fff; border-color:#94a3b8; }
+.sort-field:focus-within { border-color:var(--accent); background:var(--panel); box-shadow:0 0 0 3px var(--accent-soft); }
+.sort-field .sort-ico { flex:0 0 auto; color:var(--muted2); }
+.list-toolbar select {
+  appearance:none; -webkit-appearance:none; -moz-appearance:none;
+  border:0; background-color:transparent; color:var(--text);
+  font-size:12px; font-weight:600; cursor:pointer;
+  min-width:0; max-width:150px; min-height:32px;
+  padding:6px 18px 6px 0;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+  background-repeat:no-repeat; background-position:right center; background-size:12px;
+}
+.list-toolbar select:focus { outline:none; }
+.list-toolbar select optgroup { color:var(--muted); font-weight:600; }
+.list-toolbar select option { color:var(--text); font-weight:500; }
 /* 列表本身独立滚动：只有清单滚动，不会带动整页 */
 .paper-list { list-style:none; margin:0; padding:6px; flex:1 1 auto; overflow:auto; min-height:0; }
 .paper-item {
@@ -346,10 +365,6 @@ body.is-resizing { cursor:col-resize; user-select:none; }
 /* 紧凑视图里的细进度条（无百分比文字，更省空间） */
 .progress-row.thin { margin-top:5px; }
 .progress-row.thin .progress-bar { height:2px; }
-/* 列表工具栏键盘提示 */
-.kbd-hint { color:var(--muted2); font-size:11px; margin-left:2px; }
-.kbd-hint { display:none; }   /* 默认隐藏，宽屏再显示，避免小屏拥挤 */
-@media (min-width:1100px) { .kbd-hint { display:inline; } }
 /* 读完徽标 */
 .read-chip.done { color:var(--green); background:var(--green-soft); border-color:#bbf7d0; }
 
@@ -582,6 +597,152 @@ body.is-resizing { cursor:col-resize; user-select:none; }
 .rb-tool.active { background:var(--accent); color:#fff; box-shadow:0 4px 12px rgba(79,70,229,.36); }
 .rb-tool:active { transform:translateY(1px); }
 .rb-tool svg { display:block; }
+
+/* 工具组内的分隔条（删除按钮与批注工具之间） */
+.rb-tool-sep { width:1px; height:20px; background:var(--border2); flex:0 0 auto; margin:0 2px; }
+/* 删除批注按钮：默认低调，有选中时（.available）转为醒目红色，hover/激活红底 */
+.rb-tool-delete { color:var(--muted2); opacity:.72; }
+.rb-tool-delete:hover { background:var(--red-soft); color:var(--red); box-shadow:0 1px 3px rgba(220,38,38,.18); }
+.rb-tool-delete.available { color:var(--red); opacity:1; }
+.rb-tool-delete.available:hover { background:var(--red); color:#fff; box-shadow:0 4px 12px rgba(220,38,38,.34); }
+
+/* ============================================================
+ * 覆盖 pdf.js 选中批注时弹出的原生工具条（.editToolbar）。
+ * pdf.js 默认是浅灰小方块，与本应用设计不搭、删除按钮也不够醒目。
+ * 变量与圆角：用与 pdf.js 同等特异性(0,3,0)、但源码更靠后的选择器取胜；
+ * 删除按钮 hover 变红：pdf.js 该规则特异性达 (0,5,1)，只能用 !important 覆盖。
+ * ============================================================ */
+.annotationEditorLayer :is(.highlightEditor,.freeTextEditor,.inkEditor,.stampEditor) .editToolbar {
+  --editor-toolbar-bg-color: var(--panel);
+  --editor-toolbar-fg-color: var(--text);
+  --editor-toolbar-border-color: var(--border2);
+  --editor-toolbar-hover-bg-color: var(--panel2);
+  --editor-toolbar-hover-border-color: #94a3b8;
+  --editor-toolbar-focus-outline-color: var(--accent);
+  --editor-toolbar-shadow: var(--shadow-lg);
+  --editor-toolbar-height: 30px;
+  --editor-toolbar-padding: 4px;
+  border-radius: 10px;
+}
+/* 选择工具：背景透传给 textLayer，可正常拖选文本；只有已有批注本体可点选/删除。 */
+#reader-view.reader-selecting .annotationEditorLayer {
+  --outline-width:1px;
+  --outline-color:rgba(79,70,229,.58);
+  --outline-around-width:0px;
+  --outline-around-color:transparent;
+  --hover-outline-color:rgba(79,70,229,.32);
+  --hover-outline-around-color:transparent;
+  --focus-outline:solid 1px rgba(79,70,229,.58);
+  --unfocus-outline:solid 1px transparent;
+  --focus-outline-around:solid 0 transparent;
+  --hover-outline:solid 1px rgba(79,70,229,.32);
+  --hover-outline-around:solid 0 transparent;
+  pointer-events:none;
+  cursor:text;
+}
+#reader-view.reader-selecting .annotationEditorLayer :is(.highlightEditor,.freeTextEditor,.inkEditor,.stampEditor),
+#reader-view.reader-selecting .annotationEditorLayer :is(.highlightEditor,.freeTextEditor,.inkEditor,.stampEditor) .internal,
+#reader-view.reader-selecting .annotationEditorLayer .editToolbar {
+  pointer-events:auto;
+}
+#reader-view.reader-selecting .annotationEditorLayer :is(.highlightEditor,.freeTextEditor,.inkEditor,.stampEditor) {
+  cursor:pointer;
+}
+#reader-view.reader-selecting .annotationEditorLayer .highlightEditor.selectedEditor .internal {
+  outline:1px solid rgba(79,70,229,.52);
+  outline-offset:1px;
+  border-radius:2px;
+}
+
+/* 高亮工具只负责拖选文字创建高亮，不点选已有批注。 */
+#reader-view.reader-highlighting .annotationEditorLayer :is(.highlightEditor,.freeTextEditor,.inkEditor,.stampEditor),
+#reader-view.reader-highlighting .annotationEditorLayer :is(.highlightEditor,.freeTextEditor,.inkEditor,.stampEditor) .internal {
+  pointer-events:none !important;
+}
+#reader-view.reader-highlighting .annotationEditorLayer .editToolbar { display:none !important; }
+
+/* pdf.js 选中批注后的原生小浮窗：统一单行居中，修复删除按钮图标跑偏。 */
+.annotationEditorLayer :is(.highlightEditor,.freeTextEditor,.inkEditor,.stampEditor) .editToolbar .buttons {
+  height:30px;
+  gap:2px;
+}
+.annotationEditorLayer :is(.highlightEditor,.freeTextEditor,.inkEditor,.stampEditor) .editToolbar .buttons > :not(.divider) {
+  width:30px !important;
+  min-width:30px;
+  height:30px !important;
+  display:inline-grid;
+  place-items:center;
+  border-radius:7px;
+}
+.annotationEditorLayer :is(.highlightEditor,.freeTextEditor,.inkEditor,.stampEditor) .editToolbar .buttons :is(.delete,.highlightButton)::before {
+  width:16px !important;
+  height:16px !important;
+  -webkit-mask-size:16px 16px;
+  mask-size:16px 16px;
+}
+/* 高亮颜色切换：colorPicker 不是普通 30px 图标按钮，单独给色块 + 箭头留空间。 */
+.annotationEditorLayer .highlightEditor .editToolbar .buttons > .colorPicker {
+  width:52px !important;
+  min-width:52px;
+  height:30px !important;
+  padding:0 8px !important;
+  display:inline-flex !important;
+  align-items:center;
+  justify-content:center;
+  gap:7px;
+  border-radius:7px;
+  box-sizing:border-box;
+}
+.annotationEditorLayer .highlightEditor .editToolbar .buttons > .colorPicker .swatch {
+  width:17px;
+  height:17px;
+  border:1px solid rgba(15,23,42,.18);
+  box-shadow:0 0 0 2px rgba(255,255,255,.9);
+}
+.annotationEditorLayer .highlightEditor .editToolbar .buttons > .colorPicker::after {
+  width:7px;
+  height:7px;
+  margin-top:-3px;
+  display:block;
+  background:transparent !important;
+  -webkit-mask-image:none !important;
+  mask-image:none !important;
+  border-right:1.8px solid currentColor;
+  border-bottom:1.8px solid currentColor;
+  transform:rotate(45deg);
+  scale:1 !important;
+}
+.annotationEditorLayer .highlightEditor .editToolbar .buttons > .colorPicker:has(.dropdown:not(.hidden))::after {
+  margin-top:3px;
+  transform:rotate(225deg);
+  scale:1 !important;
+}
+.annotationEditorLayer .highlightEditor .editToolbar .buttons > .colorPicker .dropdown {
+  width:42px;
+  min-width:42px;
+  padding:8px 0;
+  gap:8px;
+  border-radius:10px;
+  background:var(--panel);
+  border:1px solid var(--border2);
+  box-shadow:var(--shadow-lg);
+  inset-block-start:calc(100% + 7px);
+}
+.annotationEditorLayer .highlightEditor .editToolbar .buttons > .colorPicker .dropdown.hidden {
+  display:none !important;
+}
+.annotationEditorLayer .highlightEditor .editToolbar .buttons > .colorPicker .dropdown button {
+  width:100%;
+  height:22px;
+  padding:0;
+}
+.annotationEditorLayer .highlightEditor .editToolbar .buttons > .colorPicker .dropdown .swatch {
+  width:18px;
+  height:18px;
+}
+/* 删除按钮（高亮/便签/手写选中后都会出现）：hover 红底白图标，破坏性语义清晰 */
+.annotationEditorLayer .editToolbar .buttons .delete:hover { background-color: var(--red) !important; }
+.annotationEditorLayer .editToolbar .buttons .delete:hover::before { background-color: #fff !important; }
 
 /* 颜色选择器（默认隐藏，仅高亮/手写工具激活时显示）。即时出现，无入场动画。 */
 .reader-colors {

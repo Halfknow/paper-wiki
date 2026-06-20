@@ -144,8 +144,10 @@ async function main() {
   });
 
   scanner.start();
-  server.listen(config.port || 8888, config.host || '0.0.0.0', () => {
-    log(`PaperWiki listening on http://${config.host || '0.0.0.0'}:${config.port || 8888}`);
+  const port = process.env.PORT || config.port || 8888;
+  const host = process.env.HOST || config.host || '0.0.0.0';
+  server.listen(port, host, () => {
+    log(`PaperWiki listening on http://${host}:${port}`);
   });
 
   // 优雅关停：停定时器 → 等当前论文处理完落盘（drain，最多 5s）→ 关 HTTP → 兜底强制退出。

@@ -187,26 +187,6 @@ function renderStats(stats) {
     <span class="stat-pill">${stats.concepts} 概念</span>`;
 }
 
-function currentViewLabel() {
-  if (state.filter.folder) {
-    const folder = state.folders.find((f) => f.id === state.filter.folder);
-    return folder ? folder.name : '收藏夹';
-  }
-  if (state.filter.starred) return '星标';
-  if (state.filter.readStatus === 'unread' || state.filter.mode === 'unread') return '未读';
-  return '全部论文';
-}
-
-function renderListHeader() {
-  const el = $('list-kicker');
-  if (!el) return;
-  const bits = [currentViewLabel(), `${state.papers.length} 篇`];
-  if (state.filter.q) bits.push('搜索中');
-  if (state.filter.topic) bits.push(state.filter.topic);
-  if (state.filter.tag) bits.push(state.filter.tag);
-  el.textContent = bits.join(' · ');
-}
-
 // ---- 刷新数据 ----
 async function refresh() {
   const params = new URLSearchParams();
@@ -235,7 +215,6 @@ async function refresh() {
   if (papers.ok) {
     state.papers = papers.data || [];
     renderList();
-    renderListHeader();
   }
   if (tags.ok) state.tags = tags.data || [];
   if (topics.ok) state.topics = topics.data || [];
@@ -630,17 +609,25 @@ async function patch(id, fields, silent) {
 
 // ---- 阅读器 ----
 let reader = null;
-// 双击列表项打开时，p 来自 summaryView（不含 annotations 字段）；详情页打开时含。
-// 这里统一兜底：annotations 缺失就懒拉一次 detailView 取 annotations，确保高亮/便签能正确回显。
+function syncLocalAnnotations(id, annotations, extra) {
+  if (state.detail && state.detail.id === id) {
+    state.detail = { ...state.detail, ...(extra || {}), annotations };
+  }
+  const row = state.papers.find((p) => p.id === id);
+  if (row) row.annotations = annotations;
+  if (reader && reader.paper && reader.paper.id === id) reader.paper.annotations = annotations;
+}
+
+// 打开前总是拉一次 detailView：summaryView 不含 annotations，且刚保存后的详情缓存也可能是旧的。
 async function openReader(paper) {
   if (!window.PaperReader) { toast('阅读器尚未加载', 'error'); return; }
-  // summaryView 不含 annotations；detialView 才有。缺失时补拉，否则 reader.open 收到 undefined 会跳过回显。
-  if (paper.annotations === undefined) {
-    try {
-      const { data: full } = await jget('/api/papers/' + encodeURIComponent(paper.id));
-      if (full) paper = { ...paper, annotations: full.annotations || null, readProgress: full.readProgress || paper.readProgress };
-    } catch (e) { /* 拉取失败不阻塞阅读，只是无法回显已存批注 */ }
-  }
+  try {
+    const { data: full } = await jget('/api/papers/' + encodeURIComponent(paper.id));
+    if (full) {
+      paper = { ...paper, ...full, annotations: full.annotations || null, readProgress: full.readProgress || paper.readProgress };
+      if (state.detail && state.detail.id === paper.id) state.detail = { ...state.detail, ...full };
+    }
+  } catch (e) { /* 拉取失败不阻塞阅读，只是可能无法回显最新批注 */ }
   if (!reader) {
     reader = new window.PaperReader({
       view: $('reader-view'),
@@ -653,6 +640,7 @@ async function openReader(paper) {
       spread: $('reader-spread'),
       toolCursor: $('reader-tool-cursor'), toolHighlight: $('reader-tool-highlight'),
       toolNote: $('reader-tool-note'), toolInk: $('reader-tool-ink'),
+      toolDelete: $('reader-tool-delete'),
       colorsEl: $('reader-colors'),
       title: $('reader-title'), saved: $('reader-saved'),
       onClose: () => { flushPendingNotes(); setTimeout(refresh, 200); },
@@ -664,7 +652,10 @@ async function openReader(paper) {
         else if (pct > 0.02) patchBody.readStatus = 'reading';
         await PATCH('/api/papers/' + encodeURIComponent(id), patchBody);
       },
-      onSaveAnnotations: async (id, payload) => { await PATCH('/api/papers/' + encodeURIComponent(id), { annotations: payload }); },
+      onSaveAnnotations: async (id, payload) => {
+        const r = await PATCH('/api/papers/' + encodeURIComponent(id), { annotations: payload });
+        if (r && r.ok) syncLocalAnnotations(id, (r.data && r.data.annotations) || payload, r.data || null);
+      },
     });
   }
   reader.open(paper, paper.readProgress, paper.annotations);

@@ -35,6 +35,46 @@ import '/vendor/pdfjs-viewer.js';
     note: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16v11l-4 4H4z"/><path d="M8 9h8M8 13h4"/></svg>',
   };
 
+  function isDenseArrayLike(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+    const keys = Object.keys(value);
+    if (!keys.length) return false;
+    for (let i = 0; i < keys.length; i++) {
+      if (!Object.prototype.hasOwnProperty.call(value, String(i))) return false;
+    }
+    return true;
+  }
+
+  function repairAnnotationValue(value) {
+    if (ArrayBuffer.isView(value) && !(value instanceof DataView)) {
+      return Array.from(value).map(repairAnnotationValue);
+    }
+    if (Array.isArray(value)) return value.map(repairAnnotationValue);
+    if (!value || typeof value !== 'object') return value;
+    if (isDenseArrayLike(value)) {
+      const arr = new Array(Object.keys(value).length);
+      for (let i = 0; i < arr.length; i++) arr[i] = repairAnnotationValue(value[i]);
+      return arr;
+    }
+    const out = {};
+    for (const key of Object.keys(value)) out[key] = repairAnnotationValue(value[key]);
+    return out;
+  }
+
+  function repairAnnotationPayload(annotations) {
+    if (!annotations || typeof annotations !== 'object') return annotations;
+    const fixed = repairAnnotationValue(annotations);
+    if (fixed && Array.isArray(fixed.items)) {
+      fixed.items = fixed.items.map((item) => {
+        if (item && typeof item.id === 'string' && item.id.startsWith('pdfjs_internal_editor_')) {
+          return { ...item, id: null };
+        }
+        return item;
+      });
+    }
+    return fixed;
+  }
+
   // 初始编辑器模式用 NONE：保证 UIManager 被创建（isValidAnnotationEditorMode 要求单一值，
   // 组合位掩码如 FREETEXT|HIGHLIGHT|INK=27 会被判为非法导致 UIManager 不建）。
   // 具体工具由运行时 setTool 切换；高亮/便签/手写三类都在 UIManager 就绪后可用。
@@ -60,12 +100,15 @@ import '/vendor/pdfjs-viewer.js';
       this.paper = null;
       this.spread = true;                           // 默认双页
       this.curTool = 'cursor';
+      this._selectMode = true;                      // 用户侧“选择”工具：底层借用 pdf.js 可选中模式
       this.curColor = '#fde68a';
       this._fitMode = true;                         // 默认开启"适应宽度"，窗口缩放自动重排
       this.savingTimer = null;
       this.lastSavedAt = 0;
       this.savingAnnotTimer = null;
       this.lastSavedAnnotAt = 0;
+      this._annotationsDirty = false;
+      this._suppressAnnotationDirty = false;
       this.restorePending = null;
       this._pendingAnnotations = null;
       this._pop = null;                             // 选区浮窗
@@ -87,16 +130,31 @@ import '/vendor/pdfjs-viewer.js';
       // 点击百分比文字也触发"适应宽度"，是常见的现代快捷交互
       if (this.elZoomLabel) { this.elZoomLabel.style.cursor = 'pointer'; this.elZoomLabel.onclick = () => this.fitToWidth(); }
       this.elSpread.onclick = () => { this.spread = !this.spread; this.applySpread(); };
-      // 键盘：Delete/Backspace 删除选中的批注。
-      // 编辑模式（高亮/便签/手写）下 pdf.js 自带删除（且层已 enable 可点选），这里仅光标模式兜底：
-      // 光标模式层被 pointer-events:none 封死无选中，故提示用户先切工具，并吞掉 Backspace 防误触发后退。
+      // 键盘：只在“选择”工具下删除选中的批注，避免在高亮/便签/手写模式里误删。
       this._onKey = (e) => {
         if (!this.view.classList.contains('active')) return;
+        if (this.isTypingTarget(e.target || document.activeElement)) return;
+        if (e.key === 'Escape') {
+          const hadAnnotationSelection = !!(this.uiManager && this.uiManager.hasSelection);
+          const hadTextPopup = !!(this._pop && !this._pop.hidden);
+          this.hideSelectionPopup();
+          if (hadTextPopup) {
+            try { document.getSelection().removeAllRanges(); } catch {}
+          }
+          const cleared = this.clearAnnotationSelection();
+          if (hadAnnotationSelection || hadTextPopup || cleared) {
+            e.preventDefault();
+            e.stopImmediatePropagation();
+          }
+          return;
+        }
         if (e.key !== 'Delete' && e.key !== 'Backspace') return;
-        if (document.activeElement && /^(INPUT|TEXTAREA)$/.test(document.activeElement.tagName)) return;
-        if (this.curTool !== 'cursor') return;          // 编辑模式交给 pdf.js
         e.preventDefault();                              // 吞掉，避免 Backspace 触发浏览器后退
-        this.deleteSelectedEditors();                    // 光标模式：提示用户切工具
+        if (this.curTool !== 'cursor') {
+          this.setStatus('请先切到「选择」模式，点选批注后再删除', true);
+          return;
+        }
+        this.deleteSelectedEditors();
       };
       document.addEventListener('keydown', this._onKey, true);
       // 批注工具
@@ -104,6 +162,8 @@ import '/vendor/pdfjs-viewer.js';
       Object.entries(tools).forEach(([mode, btn]) => {
         if (btn) btn.onclick = () => this.setTool(mode);
       });
+      // 删除选中批注（工具栏垃圾桶）。与键盘 Delete 同一入口。
+      if (this.toolDelete) this.toolDelete.onclick = () => this.deleteSelectedEditors();
       // 颜色选择：真正应用到 pdf.js（旧版只存 curColor 不生效）
       if (this.colorsEl) {
         this.colorsEl.querySelectorAll('.reader-color').forEach((el) => {
@@ -119,6 +179,8 @@ import '/vendor/pdfjs-viewer.js';
       this.paper = paper;
       readProgress = readProgress || {};
       this._pendingAnnotations = annotations || null;
+      this._annotationsDirty = false;
+      this._suppressAnnotationDirty = false;
       this._initialFitDone = false;   // 每次打开重置（实例跨多次打开复用），保证 pagesinit/afterReady 的 fit 守卫正确
       this.elTitle.textContent = paper.title || paper.filename;
       this.view.classList.add('active');
@@ -166,10 +228,22 @@ import '/vendor/pdfjs-viewer.js';
       // UI manager 就绪时缓存引用 + 挂批注变更监听
       this.eventBus.on('annotationeditoruimanager', ({ uiManager }) => {
         this.uiManager = uiManager;
-        // 批注内容任何变化（新增/编辑/删除/移动）→ 防抖保存。这是最可靠的保存触发源。
+        // 新增/修改 → 防抖保存。回灌历史批注时会临时 suppress，避免打开即覆盖。
         if (this.doc && this.doc.annotationStorage) {
-          this.doc.annotationStorage.onSetModified = () => this.scheduleSaveAnnotations();
+          this.doc.annotationStorage.onSetModified = () => {
+            if (!this._suppressAnnotationDirty) this.scheduleSaveAnnotations();
+          };
         }
+      });
+      // 编辑器状态变化只同步 UI。保存只由真实新增/修改/删除触发，避免打开或选中时写空批注。
+      this.eventBus.on('annotationeditorstateschanged', () => {
+        if (this.curTool === 'highlight' && this.uiManager && this.uiManager.hasSelection) {
+          setTimeout(() => {
+            if (this.curTool !== 'highlight' || !this.uiManager || !this.uiManager.hasSelection) return;
+            this.clearAnnotationSelection();
+          }, 0);
+        }
+        this.updateDeleteButton();
       });
       // 首屏渲染前：先把跨页+缩放定好，让页面一开始就按全宽尺寸渲染。
       // 避免"先按默认100%渲染显示、pagesloaded 再跳到fit"造成的打开闪烁；
@@ -205,8 +279,8 @@ import '/vendor/pdfjs-viewer.js';
       });
       this._onScroll = () => {
         this.scheduleSaveProgress();
-        this.scheduleSaveAnnotations();
         this.hideSelectionPopup();      // 滚动时收起浮窗
+        this.clearAnnotationSelection();
       };
       this.wrap.addEventListener('scroll', this._onScroll, { passive: true });
       // Ctrl/Cmd + 滚轮缩放；窗口大小变化时若在 fit 状态重新自适应
@@ -246,6 +320,7 @@ import '/vendor/pdfjs-viewer.js';
       window.addEventListener('resize', this._onResize);
 
       this.setupSelectionPopup();
+      this.setupAnnotationPointerGuards();
 
       this.linkService.setDocument(this.doc);
       await this.viewer.setDocument(this.doc);
@@ -327,6 +402,8 @@ import '/vendor/pdfjs-viewer.js';
      *  容器宽用 clientWidth（已排除滚动条），配合 CSS scrollbar-gutter:stable 始终稳定，无需再猜滚动条宽。 */
     fitToWidth() {
       if (!this.viewer || !this.doc) return;
+      this.hideSelectionPopup();
+      this.clearAnnotationSelection();
       const pv = this.viewer.getPageView(0);
       if (!pv || !pv.pdfPage) { this.viewer.currentScaleValue = 'page-width'; this._fitMode = true; return; }
       const containerW = this.wrap.clientWidth;
@@ -360,25 +437,41 @@ import '/vendor/pdfjs-viewer.js';
       return Math.hypot(dx, dy);
     }
 
-    /** 切批注工具。运行时 setter 需 {mode} 对象，且 UIManager 必须已就绪。 */
+    isTypingTarget(target) {
+      if (!target) return false;
+      if (target.isContentEditable) return true;
+      return !!(target.closest && target.closest('input, textarea, select, [contenteditable]'));
+    }
+
+    /** 切批注工具。cursor 是用户侧“选择”模式，底层借用 FREETEXT 让已有批注可点选。 */
     setTool(mode) {
       this.curTool = mode;
+      this._selectMode = mode === 'cursor';
       this.hideSelectionPopup();
       if (!this.viewer) return;
       const map = {
-        cursor: AnnotationEditorType.NONE,
+        cursor: AnnotationEditorType.FREETEXT,
         highlight: AnnotationEditorType.HIGHLIGHT,
         note: AnnotationEditorType.FREETEXT,
         ink: AnnotationEditorType.INK,
       };
       const target = map[mode] != null ? map[mode] : AnnotationEditorType.NONE;
+      if (this.uiManager) {
+        if (this._selectMode) {
+          try { this.uiManager.commitOrRemove(); } catch {}
+        } else {
+          this.clearAnnotationSelection();
+        }
+      }
       try {
         this.viewer.annotationEditorMode = { mode: target };
       } catch {}  // UIManager 未就绪时静默（afterReady 会再调一次）
       this.syncToolButtons(mode);
+      this.syncToolModeClasses();
       // 调色板仅在高亮/手写时显示，并把当前色应用到对应参数
       if (this.colorsEl) this.colorsEl.classList.toggle('show', mode === 'highlight' || mode === 'ink');
       if (mode === 'highlight' || mode === 'ink') this.applyColor(this.curColor);
+      this.updateDeleteButton();
       // 点击工具直接切换，不再弹右侧文字说明（按用户要求精简交互）
     }
 
@@ -389,8 +482,11 @@ import '/vendor/pdfjs-viewer.js';
       reverse[AnnotationEditorType.HIGHLIGHT] = 'highlight';
       reverse[AnnotationEditorType.FREETEXT] = 'note';
       reverse[AnnotationEditorType.INK] = 'ink';
-      this.curTool = reverse[mode] || 'cursor';
+      this.curTool = (this._selectMode && mode === AnnotationEditorType.FREETEXT) ? 'cursor' : (reverse[mode] || 'cursor');
+      if (this.curTool !== 'cursor') this._selectMode = false;
       this.syncToolButtons(this.curTool);
+      this.syncToolModeClasses();
+      this.updateDeleteButton();
       if (this.colorsEl) this.colorsEl.classList.toggle('show', this.curTool === 'highlight' || this.curTool === 'ink');
       // 选区快捷高亮：等真正进入 HIGHLIGHT 模式（高亮已创建）后，再切回目标工具，
       // 这样无论模式切换走同步还是异步路径都不会竞态（旧版固定延时会抢在创建前切回）。
@@ -405,6 +501,12 @@ import '/vendor/pdfjs-viewer.js';
       Object.entries(btns).forEach(([m, b]) => { if (b) b.classList.toggle('active', m === mode); });
     }
 
+    syncToolModeClasses() {
+      if (!this.view) return;
+      this.view.classList.toggle('reader-selecting', this.curTool === 'cursor');
+      this.view.classList.toggle('reader-highlighting', this.curTool === 'highlight');
+    }
+
     /** 把颜色应用到 pdf.js 批注参数。高亮工具/选区浮窗用 HIGHLIGHT_DEFAULT_COLOR；手写用 INK_COLOR。 */
     applyColor(color, kind) {
       this.curColor = color;
@@ -416,29 +518,109 @@ import '/vendor/pdfjs-viewer.js';
       } catch {}
     }
 
-    /** 删除当前选中的批注（高亮/便签/手写）。返回是否真的删了。
-     *  注意：光标(NONE)模式下批注层被 CSS pointer-events:none 封死，无法选中——
-     *  必须先切到对应工具（高亮/便签/手写）使层 enable，才能点选批注。
-     *  pdf.js 的 UIManager.delete() 会移除所有 selected editors 并触发 storage 变更 → 自动保存。 */
+    /** 删除当前选中的批注。只能从“选择”工具触发，避免高亮模式承担删除语义。 */
     deleteSelectedEditors() {
       if (!this.uiManager) return false;
       try {
-        const active = this.uiManager.getActive ? this.uiManager.getActive() : null;
-        // 光标模式下批注层禁用，不会有选中 → 引导用户先切工具
-        if (!active) {
-          this.setStatus('请先切到「高亮/便签/手写」工具，再点选批注后按删除键', true);
+        if (this.curTool !== 'cursor') {
+          this.setStatus('请先切到「选择」模式，点选批注后再删除', true);
           return false;
         }
-        if (this.uiManager.delete) this.uiManager.delete();
-        else if (active.remove) active.remove();
-        else return false;
+        // hasSelection 才是"点选中了批注"的可靠判定（getActive 只表示"正在编辑中"）。
+        const hasSel = this.uiManager.hasSelection;
+        if (!hasSel) {
+          this.setStatus('选择模式下点选要删除的批注，再点删除', true);
+          return false;
+        }
+        this.uiManager.delete();
+        // pdf.js 的 annotationStorage.onSetModified 只在"新增/修改"时触发、删除时不触发，
+        // 故这里显式调度保存，否则删除要等到下次滚动/关闭才落盘（曾导致"删了又回来"）。
+        this.scheduleSaveAnnotations(true);
         this.setStatus('已删除批注');
+        this.updateDeleteButton();
         return true;
       } catch { return false; }
     }
 
+    /** 同步工具栏删除按钮的可用态：有选中才可点（视觉上更清晰，也避免误点）。 */
+    updateDeleteButton() {
+      if (!this.toolDelete) return;
+      const enabled = this.curTool === 'cursor' && !!(this.uiManager && this.uiManager.hasSelection);
+      this.toolDelete.classList.toggle('available', enabled);
+      this.toolDelete.setAttribute('aria-disabled', String(!enabled));
+      this.toolDelete.title = enabled ? '删除选中的批注' : '选择模式下点选批注后删除';
+    }
+
+    /** 退出已有批注的选中态：pdf.js 会同步隐藏原生浮窗，并移除 selectedEditor 边框。 */
+    clearAnnotationSelection() {
+      const hadSelection = !!(this.uiManager && this.uiManager.hasSelection);
+      if (hadSelection) {
+        try { this.uiManager.unselectAll(); } catch {}
+      }
+      this.updateDeleteButton();
+      return hadSelection;
+    }
+
+    setupAnnotationPointerGuards() {
+      this._onAnnotGuardDown = (e) => this.guardAnnotationPointer(e);
+      this._onAnnotGuardUp = (e) => this.guardAnnotationPointer(e);
+      this._onAnnotToolbarClick = (e) => this.handleAnnotationToolbarClick(e);
+      this.wrap.addEventListener('pointerdown', this._onAnnotGuardDown, true);
+      this.wrap.addEventListener('pointerup', this._onAnnotGuardUp, true);
+      this.wrap.addEventListener('click', this._onAnnotToolbarClick, true);
+    }
+
+    handleAnnotationToolbarClick(e) {
+      const target = e.target;
+      if (!target || !target.closest) return;
+      const colorChoice = target.closest('.editToolbar .colorPicker .dropdown button');
+      if (colorChoice) {
+        setTimeout(() => {
+          this.clearAnnotationSelection();
+          this.scheduleSaveAnnotations(true);
+        }, 260);
+        return;
+      }
+      const del = target.closest('.editToolbar .delete');
+      if (!del) return;
+      if (this.curTool !== 'cursor') {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        this.setStatus('请先切到「选择」模式，点选批注后再删除', true);
+        return;
+      }
+      setTimeout(() => this.scheduleSaveAnnotations(true), 120);
+    }
+
+    guardAnnotationPointer(e) {
+      const target = e.target;
+      if (!target || !target.closest) return;
+      if (target.closest('.editToolbar')) return;
+
+      const editor = target.closest('.highlightEditor, .freeTextEditor, .inkEditor, .stampEditor');
+      if (this.curTool === 'highlight' && editor) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        return;
+      }
+      if (this.curTool !== 'cursor' || editor) return;
+
+      if (e.type === 'pointerdown') this.clearAnnotationSelection();
+
+      const layer = target.closest('.annotationEditorLayer');
+      if (!layer) return;
+      // 选择模式底层借用 FREETEXT；拦截空白点击，避免误新增便签。
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      if (e.type === 'pointerdown') {
+        try { layer.focus({ preventScroll: true }); } catch {}
+      }
+    }
+
     applySpread(skipFit) {
       if (!this.viewer) return;
+      this.hideSelectionPopup();
+      this.clearAnnotationSelection();
       this.viewer.spreadMode = this.spread ? SpreadMode.ODD : SpreadMode.NONE;
       if (this.elSpread) {
         this.elSpread.textContent = this.spread ? '双页' : '单页';
@@ -453,6 +635,8 @@ import '/vendor/pdfjs-viewer.js';
 
     zoomBy(delta) {
       if (!this.viewer) return;
+      this.hideSelectionPopup();
+      this.clearAnnotationSelection();
       this._fitMode = false;                      // 手动缩放退出 fit 模式
       const next = Math.max(0.25, Math.min(5, +(this.viewer.currentScale + delta).toFixed(2)));
       this.viewer.currentScaleValue = String(next);
@@ -498,7 +682,7 @@ import '/vendor/pdfjs-viewer.js';
       // 文本选完（pointerup）→ 短延时后判断是否展示浮窗
       this._onSelUp = (e) => {
         if (this._pop && this._pop.contains(e.target)) return;
-        setTimeout(() => this.maybeShowSelectionPopup(), 10);
+        setTimeout(() => { this.maybeShowSelectionPopup(); this.updateDeleteButton(); }, 10);
       };
       // 重新交互（在内容区按下，且不在浮窗上）→ 收起
       this._onSelDown = (e) => {
@@ -582,21 +766,44 @@ import '/vendor/pdfjs-viewer.js';
       this._pop.hidden = true;
     }
 
-    /** 选区快捷高亮：保住选区后用 pdf.js 内部方法真正创建高亮编辑器。
-     *  highlightSelection 在 NONE 模式下会自动 switchToMode(HIGHLIGHT) 并创建，故浏览态也可用。 */
+    /** 选区快捷高亮：保住选区后用 pdf.js 内部方法真正创建高亮编辑器。 */
     quickHighlight(color, alsoNote) {
       const sel = document.getSelection();
       if (!sel || sel.isCollapsed) { this.hideSelectionPopup(); return; }
       if (!this.uiManager) { this.setStatus('批注未就绪'); return; }
+      const ranges = [];
+      for (let i = 0; i < sel.rangeCount; i++) ranges.push(sel.getRangeAt(i).cloneRange());
+      const targetTool = alsoNote ? 'note' : 'cursor';
       this.hideSelectionPopup();
       this.applyColor(color, 'highlight');
-      // 标记目标工具：高亮创建（进入 HIGHLIGHT 模式）后由 onEditorModeChanged 切回。
-      // alsoNote → 切到便签工具便于补文字备注；否则回到浏览(cursor)态。
-      this._afterHiTool = alsoNote ? 'note' : 'cursor';
-      try { this.uiManager.highlightSelection('floating_button'); } catch {}
-      this.setStatus(alsoNote ? '已高亮 · 点击页面位置添加便签' : '已高亮');
-      // 兜底：极端情况下模式变更事件未触发时，1s 后仍切回目标工具
-      setTimeout(() => { if (this._afterHiTool) { const t = this._afterHiTool; this._afterHiTool = null; this.setTool(t); } }, 1000);
+      // 选择工具底层是 FREETEXT，pdf.js 的 highlightSelection 必须等 HIGHLIGHT 模式落到 layer 后再调用。
+      this._afterHiTool = null;
+      try {
+        if (this.viewer) {
+          this._selectMode = false;
+          this.viewer.annotationEditorMode = { mode: AnnotationEditorType.HIGHLIGHT };
+          this.curTool = 'highlight';
+          this.syncToolButtons('highlight');
+          this.syncToolModeClasses();
+        }
+      } catch {}
+      setTimeout(() => {
+        try {
+          const current = document.getSelection();
+          if (current && ranges.length) {
+            current.removeAllRanges();
+            for (const range of ranges) current.addRange(range);
+          }
+          this.applyColor(color, 'highlight');
+          this.uiManager.highlightSelection('floating_button');
+          this.scheduleSaveAnnotations(true);
+          this.setStatus(alsoNote ? '已高亮 · 点击页面位置添加便签' : '已高亮');
+          setTimeout(() => this.setTool(targetTool), 160);
+        } catch {
+          this.setStatus('高亮失败，请重试', true);
+          this.setTool('cursor');
+        }
+      }, 90);
     }
 
     copySelection() {
@@ -610,19 +817,43 @@ import '/vendor/pdfjs-viewer.js';
     }
 
     // ---- 批注持久化（用 annotationStorage.serializable）----
-    scheduleSaveAnnotations() {
+    scheduleSaveAnnotations(force = false) {
+      if (this._suppressAnnotationDirty && !force) return;
+      this._annotationsDirty = true;
       if (this.savingAnnotTimer) clearTimeout(this.savingAnnotTimer);
       this.savingAnnotTimer = setTimeout(() => this.saveAnnotations(), 1000);
+    }
+
+    flushAnnotationEditorsToStorage() {
+      if (!this.uiManager || typeof this.uiManager.getEditors !== 'function') return 0;
+      let added = 0;
+      const total = this.total || (this.viewer && this.viewer.pagesCount) || 0;
+      for (let pageIndex = 0; pageIndex < total; pageIndex++) {
+        let editors = [];
+        try { editors = this.uiManager.getEditors(pageIndex) || []; } catch { editors = []; }
+        for (const editor of editors) {
+          try {
+            if (editor && !(editor.isEmpty && editor.isEmpty())) {
+              this.uiManager.addToAnnotationStorage(editor);
+              added++;
+            }
+          } catch {}
+        }
+      }
+      return added;
     }
 
     serializeAnnotations() {
       try {
         const doc = this.doc;
         if (!doc || !doc.annotationStorage) return null;
+        this.flushAnnotationEditorsToStorage();
         const serial = doc.annotationStorage.serializable;
         if (!serial || !serial.map) return { items: [], updatedAt: Date.now() };
         const items = [];
-        for (const [id, val] of serial.map) items.push({ id, ...val });
+        for (const [id, val] of serial.map) {
+          items.push(repairAnnotationValue({ id, ...val }));
+        }
         if (!items.length) return { items: [], updatedAt: Date.now() };
         return { items, hash: serial.hash || '', updatedAt: Date.now() };
       } catch { return null; }
@@ -630,14 +861,17 @@ import '/vendor/pdfjs-viewer.js';
 
     async saveAnnotations(force = false) {
       if (!this.paper || !this.doc) return;
+      if (!this._annotationsDirty) return;
       const now = Date.now();
-      // 2 秒限频仅防高频拖拽产生的抖动写入；close() 时 force=true 绕过，保证最后一次落盘不丢
-      if (!force && now - this.lastSavedAnnotAt < 2000) return;
+      // 2 秒限频仅防高频拖拽产生的抖动写入；close() 时 force=true 绕过，保证最后一次落盘不丢。
+      // 窗口内不丢弃而是推迟重试：否则"删除/快速编辑"紧跟一次保存时会被吞，要等下次操作才落盘。
+      if (!force && now - this.lastSavedAnnotAt < 2000) { this.scheduleSaveAnnotations(); return; }
       const payload = this.serializeAnnotations();
       if (!payload) return;
       this.lastSavedAnnotAt = now;
       try {
         await this.onSaveAnnotations(this.paper.id, payload);
+        this._annotationsDirty = false;
         // 给一个可见的「已保存」反馈，避免用户怀疑高亮没存住（呼应刚修的保存丢失 bug）
         const n = (payload && payload.items && payload.items.length) || 0;
         this.setStatus(n ? ('✓ 批注已保存（' + n + '）') : '✓ 批注已清空');
@@ -653,6 +887,7 @@ import '/vendor/pdfjs-viewer.js';
      *  loadAnnotations 末尾也会主动扫一遍已就绪页，避免首页 pagerendered 早于 loadAnnotations 的竞态。 */
     loadAnnotations(annotations) {
       this._annotByPage = new Map();
+      annotations = repairAnnotationPayload(annotations);
       if (!annotations || !annotations.items || !annotations.items.length) return;
       for (const it of annotations.items) {
         if (!it || it.annotationType == null) continue;
@@ -680,13 +915,18 @@ import '/vendor/pdfjs-viewer.js';
       if (!layer || !layer.deserialize) return;
       // 关键：deserialize 全部成功后再 delete，否则某条抛错时整页批注会从缓存丢失，重试也补不回来
       let allOk = true;
-      for (const it of items) {
-        try {
-          const ed = await layer.deserialize(it);
-          if (ed && layer.add) layer.add(ed); else allOk = false;
-        } catch (e) {
-          allOk = false;
+      this._suppressAnnotationDirty = true;
+      try {
+        for (const it of items) {
+          try {
+            const ed = await layer.deserialize(it);
+            if (ed && layer.add) layer.add(ed); else allOk = false;
+          } catch (e) {
+            allOk = false;
+          }
         }
+      } finally {
+        this._suppressAnnotationDirty = false;
       }
       if (allOk) this._annotByPage.delete(pageIndex);
     }
@@ -728,6 +968,10 @@ import '/vendor/pdfjs-viewer.js';
     async _teardown(save) {
       // 先发起强制保存（绕过限频，确保最后一次批注不丢），但要在销毁 doc 前就把内容序列化好
       // （serializeAnnotations 同步读取 doc.annotationStorage，故这一步必须在 destroy 之前完成）。
+      if (save && this.uiManager) {
+        try { this.uiManager.commitOrRemove(); } catch {}
+        this.flushAnnotationEditorsToStorage();
+      }
       const saveP = save ? this.saveAnnotations(true) : Promise.resolve();
       if (this.savingTimer) { clearTimeout(this.savingTimer); if (save) this.saveProgress(); this.savingTimer = null; }
       if (this.savingAnnotTimer) { clearTimeout(this.savingAnnotTimer); this.savingAnnotTimer = null; }
@@ -737,18 +981,21 @@ import '/vendor/pdfjs-viewer.js';
       if (this._annotRetry2) { clearTimeout(this._annotRetry2); this._annotRetry2 = null; }
       this._annotByPage = null;
       if (this._onWheel) this.wrap.removeEventListener('wheel', this._onWheel);
-      if (this._onKey) document.removeEventListener('keydown', this._onKey, true);
       if (this._onResize) window.removeEventListener('resize', this._onResize);
       if (this._onScroll) this.wrap.removeEventListener('scroll', this._onScroll);
       if (this._onSelUp) this.wrap.removeEventListener('pointerup', this._onSelUp);
       if (this._onSelDown) this.wrap.removeEventListener('pointerdown', this._onSelDown);
+      if (this._onAnnotGuardDown) this.wrap.removeEventListener('pointerdown', this._onAnnotGuardDown, true);
+      if (this._onAnnotGuardUp) this.wrap.removeEventListener('pointerup', this._onAnnotGuardUp, true);
+      if (this._onAnnotToolbarClick) this.wrap.removeEventListener('click', this._onAnnotToolbarClick, true);
       if (this._onTouchStart) {
         this.wrap.removeEventListener('touchstart', this._onTouchStart);
         this.wrap.removeEventListener('touchmove', this._onTouchMove);
         this.wrap.removeEventListener('touchend', this._onTouchEnd);
       }
-      this._onWheel = null; this._onResize = null; this._onKey = null; this._onScroll = null;
+      this._onWheel = null; this._onResize = null; this._onScroll = null;
       this._onSelUp = null; this._onSelDown = null;
+      this._onAnnotGuardDown = this._onAnnotGuardUp = this._onAnnotToolbarClick = null;
       this._onTouchStart = this._onTouchMove = this._onTouchEnd = null;
       this.hideSelectionPopup();
       if (this._pop) { this._pop.remove(); this._pop = null; }

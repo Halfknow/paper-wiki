@@ -80,6 +80,51 @@ test('PATCH /api/papers/:id 更新 notes/starred 并持久化', async () => {
   server.close();
 });
 
+test('PATCH→GET 批注往返：对象型 quadPoints 被还原为真数组（高亮持久化根因修复）', async () => {
+  const store = { version: 1, tags: [], papers: {
+    a: { id: 'a', title: 'T', status: 'ready', annotations: null },
+  } };
+  const router = createApiRouter(baseCtx(store, async () => {}));
+  const server = await startServer(router.handle);
+  const port = server.address().port;
+  // 复刻浏览器：serializable 里 quadPoints 是 Float32Array，经 fetch 的 JSON.stringify 发出，
+  // 到服务端已退化成 {"0":..} 对象（call() 内部 JSON.stringify 等价于这一步）。
+  const payload = { items: [{
+    id: null, annotationType: 9, color: [187, 247, 208], opacity: 1, thickness: 12,
+    quadPoints: new Float32Array([265, 660, 329, 660, 265, 649, 329, 649]),
+    pageIndex: 0, rect: [69, 524, 525, 664],
+  }], updatedAt: 1 };
+  const w = await call(port, 'PATCH', '/api/papers/a', { annotations: payload });
+  assert.strictEqual(w.status, 200);
+  // 写入侧：落盘的 quadPoints 必须是真数组
+  const storedQp = store.papers.a.annotations.items[0].quadPoints;
+  assert.ok(Array.isArray(storedQp), '落盘 quadPoints 应为数组');
+  assert.strictEqual(storedQp.length, 8);
+  // 读取侧：GET 详情返回的 quadPoints 可被 pdf.js 的 for(i<length;i+=8) 正常重建
+  const r = await call(port, 'GET', '/api/papers/a');
+  const qp = r.json.data.annotations.items[0].quadPoints;
+  assert.ok(Array.isArray(qp));
+  let boxes = 0; for (let i = 0; i < qp.length; i += 8) boxes++;
+  assert.strictEqual(boxes, 1, '高亮区域应可重建（修复前为 0）');
+  server.close();
+});
+
+test('GET 详情：自愈历史脏数据（已落盘的对象型 quadPoints）', async () => {
+  // 模拟历史上已被写坏的存量数据：quadPoints 已是 {"0":..} 对象
+  const corrupted = JSON.parse(JSON.stringify({ q: new Float32Array([1, 2, 3, 4, 5, 6, 7, 8]) })).q;
+  const store = { version: 1, tags: [], papers: {
+    a: { id: 'a', title: 'T', status: 'ready', annotations: { items: [{ annotationType: 9, quadPoints: corrupted, pageIndex: 0 }], updatedAt: 1 } },
+  } };
+  const router = createApiRouter(baseCtx(store));
+  const server = await startServer(router.handle);
+  const port = server.address().port;
+  const r = await call(port, 'GET', '/api/papers/a');
+  const qp = r.json.data.annotations.items[0].quadPoints;
+  assert.ok(Array.isArray(qp), '读取时应把存量脏数据还原为数组');
+  assert.deepStrictEqual(qp, [1, 2, 3, 4, 5, 6, 7, 8]);
+  server.close();
+});
+
 test('GET /api/tags 返回字典+计数', async () => {
   const store = { version: 1, tags: ['rlhf', 'data'], papers: {
     a: { id: 'a', tags: ['rlhf'], status: 'ready' },

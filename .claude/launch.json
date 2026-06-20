@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "paperwiki",
+      "runtimeExecutable": "C:\\Users\\Halfknow\\AppData\\Roaming\\fnm\\aliases\\default\\node.exe",
+      "runtimeArgs": ["server.js"],
+      "autoPort": true
+    }
+  ]
+}
