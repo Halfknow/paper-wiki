@@ -901,6 +901,45 @@ function bind() {
     else toast(r.error || '扫描失败', 'error');
     setTimeout(refresh, 600);
   };
+
+  // arXiv 网址导入
+  function openImportModal() {
+    $('import-url-input').value = '';
+    const h = $('import-hint');
+    h.textContent = '支持 abs / pdf / html 网址或裸 ID，会自动下载 PDF 并开始 AI 处理。';
+    h.classList.remove('error');
+    $('import-modal').classList.add('active');
+    setTimeout(() => $('import-url-input').focus(), 50);
+  }
+  function closeImportModal() { $('import-modal').classList.remove('active'); }
+  $('btn-import').onclick = openImportModal;
+  $('import-modal-cancel').onclick = closeImportModal;
+  $('import-modal').addEventListener('click', (e) => { if (e.target.id === 'import-modal') closeImportModal(); });
+  $('import-url-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('import-modal-ok').click(); });
+  $('import-modal-ok').onclick = async () => {
+    const url = $('import-url-input').value.trim();
+    const hint = $('import-hint');
+    hint.classList.remove('error');
+    if (!url) { hint.textContent = '请粘贴 arXiv 网址或 ID'; hint.classList.add('error'); return; }
+    const btn = $('import-modal-ok');
+    const old = btn.textContent;
+    btn.textContent = '下载中…'; btn.disabled = true;
+    try {
+      const r = await POST('/api/import', { url });
+      if (r.ok) {
+        if (r.data.status === 'duplicate') toast('该论文已导入过：' + (r.data.title || r.data.arxivId || r.data.id));
+        else toast('已开始下载并处理，可在列表查看进度', 'good');
+        closeImportModal();
+        setTimeout(refresh, 300);
+      } else {
+        hint.textContent = r.error || '导入失败';
+        hint.classList.add('error');
+      }
+    } catch (e) {
+      hint.textContent = '导入失败：' + ((e && e.message) || '网络错误');
+      hint.classList.add('error');
+    } finally { btn.textContent = old; btn.disabled = false; }
+  };
   $('btn-concepts').onclick = showConcepts;
   $('btn-concepts-close').onclick = showLibrary;
   $('concept-q').oninput = renderConcepts;
@@ -996,6 +1035,7 @@ function bind() {
     // 列表键盘导航：仅在不输入、不开阅读器、不开模态时生效
     if (!$('reader-view').classList.contains('active')
         && !$('folder-modal').classList.contains('active')
+        && !$('import-modal').classList.contains('active')
         && !['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName)
         && state.papers.length) {
       const curIdx = state.papers.findIndex((p) => p.id === state.current);
@@ -1014,6 +1054,7 @@ function bind() {
     if (e.key === 'Escape') {
       if ($('reader-view').classList.contains('active') && reader) reader.close();
       $('folder-modal').classList.remove('active');
+      $('import-modal').classList.remove('active');
     }
   });
 }

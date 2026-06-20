@@ -353,6 +353,10 @@ body.is-resizing { cursor:col-resize; user-select:none; }
 /* 读完徽标 */
 .read-chip.done { color:var(--green); background:var(--green-soft); border-color:#bbf7d0; }
 
+/* arXiv 网址导入弹窗提示 */
+.import-hint { color:var(--muted2); font-size:12px; margin:6px 0 0; line-height:1.5; }
+.import-hint.error { color:var(--red); }
+
 /* 空库引导卡片 */
 .empty-guide { cursor:default !important; padding:8px 4px !important; }
 .empty-guide:hover { background:transparent !important; }

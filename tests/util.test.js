@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const {
-  normalizeTitle, titleSimilarity, cleanFilenameToTitle, sleep, createRateLimiter,
+  normalizeTitle, titleSimilarity, cleanFilenameToTitle, sleep, createRateLimiter, parseArxivUrl,
 } = require('../lib/util');
 
 test('normalizeTitle 小写化、去标点、折叠空白、去 LaTeX', () => {
@@ -32,4 +32,37 @@ test('createRateLimiter 保证最小间隔', async () => {
   const t0 = Date.now();
   await lim(); await lim(); await lim();
   assert.ok(Date.now() - t0 >= 100, '三次调用至少间隔 100ms');
+});
+
+test('parseArxivUrl 解析 abs/pdf/html 网址与裸 ID', () => {
+  // abs 网址
+  let r = parseArxivUrl('https://arxiv.org/abs/2401.12345');
+  assert.strictEqual(r.arxivId, '2401.12345');
+  assert.strictEqual(r.pdfUrl, 'https://arxiv.org/pdf/2401.12345.pdf');
+  // abs 带版本号 → 去版本号
+  r = parseArxivUrl('https://arxiv.org/abs/2401.12345v2');
+  assert.strictEqual(r.arxivId, '2401.12345');
+  // pdf 网址（含版本与 .pdf 后缀）
+  r = parseArxivUrl('https://arxiv.org/pdf/2401.12345v2.pdf');
+  assert.strictEqual(r.arxivId, '2401.12345');
+  assert.strictEqual(r.pdfUrl, 'https://arxiv.org/pdf/2401.12345.pdf');
+  // html 网址
+  r = parseArxivUrl('https://arxiv.org/html/2401.12345v1');
+  assert.strictEqual(r.arxivId, '2401.12345');
+  // 裸 ID（带版本）
+  r = parseArxivUrl('  2401.12345v3  ');
+  assert.strictEqual(r.arxivId, '2401.12345');
+  // 老格式分类 ID
+  r = parseArxivUrl('https://arxiv.org/abs/cs.AI/0701001');
+  assert.strictEqual(r.arxivId, 'cs.ai/0701001');
+  assert.strictEqual(r.pdfUrl, 'https://arxiv.org/pdf/cs.ai/0701001.pdf');
+});
+
+test('parseArxivUrl 对非法输入返回 null', () => {
+  assert.strictEqual(parseArxivUrl('https://example.com/x'), null);
+  assert.strictEqual(parseArxivUrl('not a url at all'), null);
+  assert.strictEqual(parseArxivUrl(''), null);
+  assert.strictEqual(parseArxivUrl(null), null);
+  // 非 arXiv 的 http 网址（含类似 ID 形式但 host 不对）
+  assert.strictEqual(parseArxivUrl('https://example.org/abs/2401.12345'), null);
 });
