@@ -1,7 +1,11 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const http = require('node:http');
+const fs = require('node:fs');
+const os = require('node:os');
+const pathm = require('node:path');
 const { createApiRouter } = require('../lib/api');
+const arxivMod = require('../lib/arxiv');
 
 function startServer(handler) {
   return new Promise((resolve) => {
@@ -367,6 +371,143 @@ test('GET /api/settings 返回 summaryPrompt 与内置默认', async () => {
   const r = await call(port, 'GET', '/api/settings');
   assert.strictEqual(r.json.data.summaryPrompt, '我的提示词');
   assert.ok(r.json.data.defaultPrompt && r.json.data.defaultPrompt.length > 50);
+  server.close();
+});
+
+test('POST /api/import 带 meta：按「作者 等 - 年份 - 标题」命名并预填元数据', async () => {
+  const tmpPapers = fs.mkdtempSync(pathm.join(os.tmpdir(), 'pwimport-'));
+  const origDownload = arxivMod.downloadPaperPdf;
+  arxivMod.downloadPaperPdf = async (url, dest) => {
+    fs.writeFileSync(dest, Buffer.from('%PDF-1.4\n%placeholder\n'));
+    return dest;
+  };
+  try {
+    const store = { version: 2, tags: [], topics: [], folders: [], concepts: [], papers: {} };
+    let enq = null;
+    const ctx = {
+      store,
+      save: async () => {},
+      scanner: { scan: async () => ({}), enqueue: (ids) => (enq = ids), extractConcepts: async () => ({}) },
+      config: { ai: {}, papersDir: tmpPapers, arxiv: {} },
+    };
+    const router = createApiRouter(ctx);
+    const server = await startServer(router.handle);
+    const port = server.address().port;
+    const meta = {
+      title: 'DAPO: An Open-Source System',
+      authors: ['Qiying Yu', 'Bob Lee'],
+      year: 2025,
+      abstract: 'We present DAPO.',
+      primaryCategory: 'cs.LG',
+      arxivId: '2503.14476',
+    };
+    const r = await call(port, 'POST', '/api/import', { url: 'https://arxiv.org/abs/2503.14476', meta });
+    assert.strictEqual(r.status, 200);
+    assert.strictEqual(r.json.data.status, 'imported');
+    const p = store.papers[r.json.data.id];
+    assert.strictEqual(p.filename, 'Yu 等 - 2025 - DAPO An Open-Source System.pdf', '应按 作者 等 - 年份 - 标题 命名');
+    assert.strictEqual(p.title, 'DAPO: An Open-Source System');
+    assert.deepStrictEqual(p.authors, ['Qiying Yu', 'Bob Lee']);
+    assert.strictEqual(p.year, '2025');
+    assert.strictEqual(p.abstract, 'We present DAPO.');
+    assert.strictEqual(p.arxivId, '2503.14476');
+    assert.strictEqual(p.primaryCategory, 'cs.LG');
+    assert.strictEqual(p.metaSource, 'arxiv', '预填元数据 → metaSource=arxiv，总结直接基于真实标题/摘要');
+    assert.strictEqual(p.importSource, 'discover');
+    assert.strictEqual(p.status, 'pending');
+    assert.deepStrictEqual(enq, [p.id], '应入队等流水线总结');
+    assert.ok(fs.existsSync(pathm.join(tmpPapers, p.filename)), '规范名文件应已落盘');
+    server.close();
+  } finally {
+    arxivMod.downloadPaperPdf = origDownload;
+    fs.rmSync(tmpPapers, { recursive: true, force: true });
+  }
+});
+
+test('POST /api/import 不带 meta：回退 <arxivId>.pdf 且 importSource=url', async () => {
+  const tmpPapers = fs.mkdtempSync(pathm.join(os.tmpdir(), 'pwimport2-'));
+  const origDownload = arxivMod.downloadPaperPdf;
+  arxivMod.downloadPaperPdf = async (url, dest) => {
+    fs.writeFileSync(dest, Buffer.from('%PDF-1.4\n%placeholder\n'));
+    return dest;
+  };
+  try {
+    const store = { version: 2, tags: [], topics: [], folders: [], concepts: [], papers: {} };
+    const ctx = {
+      store,
+      save: async () => {},
+      scanner: { scan: async () => ({}), enqueue: () => {}, extractConcepts: async () => ({}) },
+      config: { ai: {}, papersDir: tmpPapers, arxiv: {} },
+    };
+    const router = createApiRouter(ctx);
+    const server = await startServer(router.handle);
+    const port = server.address().port;
+    const r = await call(port, 'POST', '/api/import', { url: 'https://arxiv.org/abs/2401.99999' });
+    assert.strictEqual(r.json.data.status, 'imported');
+    const p = store.papers[r.json.data.id];
+    assert.strictEqual(p.filename, '2401.99999.pdf', '无 meta → 回退裸ID命名（后续 processOne 会改名）');
+    assert.strictEqual(p.importSource, 'url');
+    assert.strictEqual(p.metaSource, null);
+    server.close();
+  } finally {
+    arxivMod.downloadPaperPdf = origDownload;
+    fs.rmSync(tmpPapers, { recursive: true, force: true });
+  }
+});
+
+test('DELETE /api/papers/:id 删除条目 + PDF + 全文，并清理概念引用', async () => {
+  const tmp = fs.mkdtempSync(pathm.join(os.tmpdir(), 'pwdel-'));
+  const pdf = pathm.join(tmp, 'p.pdf');
+  const txt = pathm.join(tmp, 'p.txt');
+  fs.writeFileSync(pdf, 'PDFDATA');
+  fs.writeFileSync(txt, 'fulltext');
+  const store = {
+    version: 2,
+    tags: [],
+    topics: [],
+    folders: [],
+    concepts: [{ id: 'c1', term: 'T', paperIds: ['a', 'b'] }],
+    papers: {
+      a: { id: 'a', filename: 'p.pdf', filepath: pdf, fulltextPath: txt, conceptIds: ['c1'], status: 'ready' },
+      b: { id: 'b', filename: 'q.pdf', filepath: pathm.join(tmp, 'q.pdf'), conceptIds: ['c1'], status: 'ready' },
+    },
+  };
+  let saved = false;
+  const ctx = {
+    store,
+    save: async () => {
+      saved = true;
+    },
+    scanner: { scan: async () => ({}), enqueue: () => {}, extractConcepts: async () => ({}) },
+    config: { ai: {}, papersDir: tmp },
+  };
+  const router = createApiRouter(ctx);
+  const server = await startServer(router.handle);
+  const port = server.address().port;
+  const r = await call(port, 'DELETE', '/api/papers/a');
+  assert.strictEqual(r.status, 200);
+  assert.strictEqual(r.json.ok, true);
+  assert.ok(!store.papers.a, '论文条目应被删除');
+  assert.ok(store.papers.b, '其它论文不受影响');
+  assert.ok(!fs.existsSync(pdf), 'PDF 文件应被删除');
+  assert.ok(!fs.existsSync(txt), '全文文件应被删除');
+  assert.deepStrictEqual(store.concepts[0].paperIds, ['b'], '概念里应移除该论文引用');
+  assert.ok(saved, '应持久化');
+  server.close();
+  fs.rmSync(tmp, { recursive: true, force: true });
+});
+
+test('DELETE /api/papers/:id 文件缺失也能删条目（不抛）；不存在返回 404', async () => {
+  const store = { version: 2, tags: [], topics: [], folders: [], concepts: [], papers: { a: { id: 'a', filename: 'gone.pdf', filepath: '/no/such/gone.pdf', status: 'missing' } } };
+  const ctx = { store, save: async () => {}, scanner: { scan: async () => ({}), enqueue: () => {} }, config: { ai: {}, papersDir: '/tmp' } };
+  const router = createApiRouter(ctx);
+  const server = await startServer(router.handle);
+  const port = server.address().port;
+  const r = await call(port, 'DELETE', '/api/papers/a');
+  assert.strictEqual(r.status, 200, '文件缺失也应成功删条目');
+  assert.ok(!store.papers.a);
+  const r404 = await call(port, 'DELETE', '/api/papers/nope');
+  assert.strictEqual(r404.status, 404);
   server.close();
 });
 

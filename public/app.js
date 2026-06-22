@@ -434,6 +434,7 @@ function renderDetail() {
           <button class="btn ${p.starred ? '' : 'ghost'} sm" id="b-star">${p.starred ? '★ 已收藏' : '☆ 收藏'}</button>
           <button class="btn ghost sm" id="b-read" title="切换阅读状态">${p.readStatus === 'done' ? '✓ 已读' : '标记已读'}</button>
           <button class="btn ghost sm" id="b-resume" title="重新总结（含主题/概念）">重新总结</button>
+          <button class="btn ghost sm danger" id="b-delete" title="删除论文（连同本地 PDF 与全文，不可恢复）">删除</button>
         </div>
       </div>
       <div class="meta">${meta}</div>
@@ -463,6 +464,21 @@ function renderDetail() {
     if (r.ok) toast('已加入重新总结队列');
     else toast(r.error || '重新总结失败', 'error');
     setTimeout(refresh, 600);
+  };
+  $('b-delete').onclick = async () => {
+    if (!confirm(`删除论文「${p.title || p.filename}」？\n将同时删除本地 PDF 与全文文本，且不可恢复。`)) return;
+    const btn = $('b-delete');
+    setBusy(btn, true, '删除中…');
+    const r = await DEL('/api/papers/' + p.id);
+    setBusy(btn, false);
+    if (r.ok) {
+      toast('已删除');
+      state.detail = null; // 清空详情，回到「从左侧选择一篇论文」
+      renderDetail();
+      refresh();
+    } else {
+      toast(r.error || '删除失败', 'error');
+    }
   };
   d.querySelectorAll('.tab').forEach((t) => t.onclick = () => {
     if (state.tab !== t.dataset.tab) flushPendingNotes(); // 离开笔记 tab 前落盘
@@ -1159,7 +1175,16 @@ function bind() {
       while (queue.length) {
         const r = queue.shift();
         try {
-          const res = await POST('/api/import', { url: r.arxivUrl });
+          // 带上候选元数据：后端据此命名「作者 等 - 年份 - 标题.pdf」并预填，避免空标题→空总结
+          const meta = {
+            title: r.title,
+            authors: r.authors || [],
+            year: r.year,
+            abstract: r.summary || '',
+            primaryCategory: r.primaryCategory || null,
+            arxivId: r.arxivId,
+          };
+          const res = await POST('/api/import', { url: r.arxivUrl, meta });
           if (res.ok && res.data.status === 'imported') ok++;
           else if (res.ok && res.data.status === 'duplicate') dup++;
           else fail++;

@@ -7,6 +7,8 @@ const {
   sleep,
   createRateLimiter,
   parseArxivUrl,
+  safeFilename,
+  buildPaperFilename,
 } = require('../lib/util');
 
 test('normalizeTitle 小写化、去标点、折叠空白、去 LaTeX', () => {
@@ -79,4 +81,49 @@ test('parseArxivUrl 对非法输入返回 null', () => {
   assert.strictEqual(parseArxivUrl(null), null);
   // 非 arXiv 的 http 网址（含类似 ID 形式但 host 不对）
   assert.strictEqual(parseArxivUrl('https://example.org/abs/2401.12345'), null);
+});
+
+test('safeFilename 去除文件系统非法字符并净化', () => {
+  assert.strictEqual(safeFilename('DAPO: An Open-Source LLM'), 'DAPO An Open-Source LLM');
+  assert.strictEqual(safeFilename('a/b\\c:d*e?f"g<h>i|j'), 'a b c d e f g h i j');
+  assert.strictEqual(safeFilename('trailing dots...'), 'trailing dots');
+  assert.strictEqual(safeFilename('  spaced   out  '), 'spaced out');
+  assert.strictEqual(safeFilename(''), '');
+  assert.strictEqual(safeFilename(null), '');
+  assert.ok(safeFilename('x'.repeat(300), { maxLen: 50 }).length <= 50);
+});
+
+test('buildPaperFilename 生成 「作者 等 - 年份 - 标题.pdf」', () => {
+  assert.strictEqual(
+    buildPaperFilename({ authors: ['Kai Han', 'Yunhe Wang'], year: 2024, title: 'A Survey on Visual Transformer', arxivId: '2012.12556' }),
+    'Han 等 - 2024 - A Survey on Visual Transformer.pdf',
+  );
+  assert.strictEqual(
+    buildPaperFilename({ authors: ['Jeong'], year: '2024', title: 'Fine-tuning Methods', arxivId: 'x' }),
+    'Jeong - 2024 - Fine-tuning Methods.pdf',
+  );
+  // 标题含非法字符（冒号）
+  assert.strictEqual(
+    buildPaperFilename({ authors: ['Yu', 'B'], year: 2025, title: 'DAPO: An Open-Source System', arxivId: 'x' }),
+    'Yu 等 - 2025 - DAPO An Open-Source System.pdf',
+  );
+});
+
+test('buildPaperFilename 缺字段时的回退', () => {
+  // 无标题 → 回退 arxivId
+  assert.strictEqual(buildPaperFilename({ authors: ['A'], year: 2024, title: '', arxivId: '2401.00001' }), '2401.00001.pdf');
+  // 无作者 → 「年份 - 标题」
+  assert.strictEqual(buildPaperFilename({ authors: [], year: 2024, title: 'Lonely Title', arxivId: 'x' }), '2024 - Lonely Title.pdf');
+  // 无年份 → 「作者 等 - 标题」
+  assert.strictEqual(buildPaperFilename({ authors: ['Han', 'X'], year: null, title: 'No Year', arxivId: 'x' }), 'Han 等 - No Year.pdf');
+  // 全缺但有 arxivId
+  assert.strictEqual(buildPaperFilename({ authors: [], year: null, title: '', arxivId: '2401.00002' }), '2401.00002.pdf');
+  // 全缺且无 arxivId → null
+  assert.strictEqual(buildPaperFilename({ authors: [], year: null, title: '', arxivId: null }), null);
+});
+
+test('buildPaperFilename 长标题截断（含 .pdf 总长 ≤ 180）', () => {
+  const fn = buildPaperFilename({ authors: ['Han'], year: 2024, title: 'T'.repeat(400), arxivId: 'x' });
+  assert.ok(fn.endsWith('.pdf'));
+  assert.ok(fn.length <= 180, 'filename 总长应受限, 实际=' + fn.length);
 });
