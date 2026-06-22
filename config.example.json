@@ -11,5 +11,16 @@
     "timeoutMs": 120000
   },
   "arxiv": { "enabled": true, "titleSimilarityThreshold": 0.75, "minIntervalMs": 3000 },
+  "discover": {
+    "claudeTimeoutMs": 60000,
+    "maxResults": 40,
+    "perAxis": 25,
+    "semanticScholar": true,
+    "semanticScholarApiKey": "",
+    "openAlex": true,
+    "recencyWindowYears": 8,
+    "titleSimThreshold": 0.85,
+    "weights": { "rel": 0.45, "auth": 0.35, "rec": 0.2 }
+  },
   "summaryPrompt": ""
 }

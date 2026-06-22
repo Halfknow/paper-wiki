@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert');
-const { parseAtom, extractArxivId, pickBest, searchArxiv } = require('../lib/arxiv');
+const { parseAtom, extractArxivId, pickBest, searchArxiv, searchArxivMulti } = require('../lib/arxiv');
 
 const SAMPLE = `<?xml version="1.0" encoding="UTF-8"?>
 <feed xmlns="http://www.w3.org/2005/Atom">
@@ -108,4 +108,44 @@ test('searchArxiv 加 AbortSignal.timeout 超时信号', async () => {
   };
   await searchArxiv('survey', fakeFetch, { timeoutMs: 15000 });
   assert.ok(sawSignal, 'fetch 调用应带上 signal');
+});
+
+test('searchArxiv 不传新参时 URL 保持旧行为（max_results=3, relevance, descending）', async () => {
+  let seenUrl;
+  const fakeFetch = async (url) => {
+    seenUrl = url;
+    return { ok: true, text: async () => SAMPLE };
+  };
+  await searchArxiv('survey', fakeFetch, { minIntervalMs: 0 });
+  assert.match(seenUrl, /max_results=3/);
+  assert.match(seenUrl, /sortBy=relevance/);
+  assert.match(seenUrl, /sortOrder=descending/);
+  assert.match(seenUrl, /start=0/);
+});
+
+test('searchArxiv 支持 maxResults/sortBy/sortOrder/start 新参', async () => {
+  let seenUrl;
+  const fakeFetch = async (url) => {
+    seenUrl = url;
+    return { ok: true, text: async () => SAMPLE };
+  };
+  await searchArxiv('moe', fakeFetch, { maxResults: 5, sortBy: 'submittedDate', sortOrder: 'ascending', start: 10 });
+  assert.match(seenUrl, /max_results=5/);
+  assert.match(seenUrl, /sortBy=submittedDate/);
+  assert.match(seenUrl, /sortOrder=ascending/);
+  assert.match(seenUrl, /start=10/);
+  // 确认不再有硬编码的 max_results=3
+  assert.doesNotMatch(seenUrl, /max_results=3/);
+});
+
+test('searchArxivMulti 默认按提交时间倒序拉 20 条', async () => {
+  let seenUrl;
+  const fakeFetch = async (url) => {
+    seenUrl = url;
+    return { ok: true, text: async () => SAMPLE };
+  };
+  await searchArxivMulti('rag', fakeFetch, { minIntervalMs: 0 });
+  assert.match(seenUrl, /max_results=20/);
+  assert.match(seenUrl, /sortBy=submittedDate/);
+  assert.match(seenUrl, /sortOrder=descending/);
 });
