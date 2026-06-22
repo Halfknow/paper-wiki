@@ -8,6 +8,36 @@ _下一个版本的改动会写在这里。_
 
 ---
 
+## [2.3.0] — 2026-06-22
+
+> **按主题发现论文（Discover）+ 规范命名 + 删除功能 + 元数据/空总结修复。**
+> 首页输入主题即自动发现「最新 + 最权威 + 引用量高 + 与现有库不重复」的 arXiv 论文（LLM 生成检索式 → 多轴召回 → 引用量复合排序 → SSE 流式进度）；导入按「作者 等 - 年份 - 标题」命名并预填元数据；新增删除论文（连同本地文件）。
+
+### Added — 按主题发现论文（Discover）
+- **入口**：顶栏「发现」→ 输入研究主题/名词（中英文 / 缩写均可）。
+- **查询理解三级兜底**：`claude -p`（新增 `lib/claude.js`，spawn 子进程 + `--output-format json`，永不抛错）→ **GLM 网关**（复用 `config.ai` 那套总结接口）→ 原始主题。产出**结构化检索计划**（多 query + arXiv 分类 + 英文关键词），而非单条查询。claude 在无头/pm2 环境常因鉴权 401，网关兜底保证检索质量不退化。
+- **多轴召回**：每条检索式分别按 `relevance`（捞经典 / 高被引）与 `submittedDate`（捞最新）两轴查 arXiv，合并去重成候选池——权威与最新论文都能进池（取代旧实现「只取最新 N 篇再按引用量排」的自相矛盾）。`lib/arxiv.js` 新增 `searchArxivMulti`，`searchArxiv` 支持 `maxResults/sortBy/sortOrder/start`（默认值保持旧行为，防回归）。
+- **引用量**：Semantic Scholar 批量（支持 `semanticScholarApiKey` + 429 指数退避重试）+ **OpenAlex 按 arXiv DOI 兜底**；回传 `citationsAvailable` 让前端在限流时如实提示。
+- **复合排序**：`score = 相关度×0.45 + 权威(log10 引用量)×0.35 + 新近×0.20`（`config.discover.weights` 可调），取代单一引用量排序，直接落地「最新 + 最权威 + 相关」的融合。
+- **去重**：剔除库内同 arxivId 或标题高度相似（Jaccard ≥ 阈值）的论文。
+- **SSE 流式进度**：`GET /api/discover/stream?topic=` 逐阶段推送（理解主题 → 检索 arXiv[相关/最新各 N 篇] → 引用量[S2/OpenAlex] → 去重排序 → 完成 N 篇）；前端 5 步进度面板实时刷新，结果卡片展示引用量 / 重要引用 + 相关度点条 + 排名。保留 `POST /api/discover` 非流式兜底（脚本/降级用）。
+- **批量导入**：勾选候选 → 逐个 `POST /api/import`（并发 3），复用既有下载 + 入库流水线。
+- 新增 `lib/discover.js`（`buildDiscoveryQuery` / `planViaGateway` / `enrichWithCitations` / `enrichWithOpenAlex` / `computeRelevance` / `discoverPapers`）+ `lib/claude.js`；`config.discover` 配置块。+测试（36 例）。
+
+### Added — 规范文件名 + 删除论文
+- **导入命名「作者 等 - 年份 - 标题.pdf」**：`util.buildPaperFilename` / `safeFilename`（对齐库内 Zotero 风格命名，净化文件系统非法字符 `< > : " / \ | ? *` 与控制字符，标题侧截断使总长 ≤ 180）。`POST /api/import` 接收发现候选的 `meta`（标题/作者/年份/摘要/分类），下载即规范命名并**预填元数据**（`metaSource=arxiv`），使总结直接基于真实标题摘要。
+- **删除论文**：`DELETE /api/papers/:id` 删除条目 + 本地 PDF（仅限 `papersDir` 内，防越界）+ 全文文本，并清理概念清单里的论文引用；前端详情头新增「删除」按钮（二次确认，删后回列表）。空论文或有文件的论文均可删。
+
+### Fixed
+- **发现 / 裸 ID 导入论文标题·标签·总结全空（根因）**：裸 arXiv ID 命名（`2012.12556.pdf`）经 `scan()` 入库时，`cleanFilenameToTitle` 会把 `2012` 当孤立年份删掉 → `ti:` 标题搜索必失败 → 拿不到 arXiv 元数据 → 空标题。`scanner.processOne` 现在 arxivId 为空时先用 `parseArxivUrl(文件名)` 识别裸 ID 走 `id:` 精确查，并从 arXiv `published` 补年份，再把裸 ID 文件**改名为规范名**（id 基于内容 sha1，改名不影响全文 / 概念 / 批注）。存量空论文点「重新总结」即可自愈。
+- **空总结被当作成功**：模型偶发返回空对象（批量 / 超时 / 限流时）时，旧逻辑会写出误导性的空「## TL;DR」并标 `ready`，用户无从察觉。现在判定「无内容」（无 tldr / 贡献 / 方法）→ 不当成功，存可重试占位并清空 `summaryAt`，便于「重新总结」识别重跑。
+- **claude `--output-format json` 解析**：新版 CLI（2.1.x）输出的是消息数组 `[{type:'system'},…,{type:'result',result,is_error}]` 而非旧的 `{result}` 单对象；`parseClaudeOutput` 兼容数组并对 `is_error`（如 401）判为失败 → 走网关兜底。
+
+### Tests
+- 由 ~70 例增至 **119 例**：discover 全链路（多轴召回 / 复合排序 / 网关兜底 / OpenAlex 兜底 / 数组解析 / 进度回调 / 引用量可用性）、命名 helper（safeFilename / buildPaperFilename / 缺字段回退 / 长标题截断）、裸 ID 识别 + 改名 + 空总结守卫、`/api/import` 带 meta 命名预填、`DELETE /api/papers/:id`。
+
+---
+
 ## [2.2.0] — 2026-06-21
 
 > **PDF 阅读器重构（路线 B）+ 批注系统 + Indigo 配色 + 工程化基础。**

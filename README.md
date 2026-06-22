@@ -5,7 +5,10 @@
 ## 功能
 
 - 📁 **持续扫描**：增量扫描 `papers/`，按文件内容 sha1 识别新增/变更（改名/移动不丢笔记）
+- 🔭 **按主题发现论文**：顶栏「发现」输入研究主题/名词（中英文均可）→ LLM（`claude -p`，失败回退 GLM 网关）生成 arXiv 检索式 → **两轴召回**（相关度 + 最新）→ Semantic Scholar / OpenAlex 补引用量 → **复合排序**（相关·权威·新近）→ 剔除已入库 → 勾选批量导入。**SSE 流式进度**全程可见
 - 🔗 **arXiv 网址导入**：顶栏粘贴 arXiv `abs`/`pdf`/`html` 网址或裸 ID（如 `2310.01234`）下载并入库
+- 🏷️ **规范命名**：发现/网址导入的论文按「作者 等 - 年份 - 标题.pdf」落盘（净化非法字符），元数据空缺时按文件名里的 arXiv ID 自动补全并改名
+- 🗑️ **删除论文**：详情页「删除」按钮，连同本地 PDF 与全文一并移除（二次确认）
 - 🎨 **Indigo 主题**：淡蓝灰底 + Indigo 强调色；chip 高区分（主题色轮换 / 标签中性灰 / 指标青 / 状态语义色）
 - 🗂️ **虚拟收藏夹**：在页面里建文件夹（如「精读 / 待复现 / 综述」），一篇论文可属多个收藏夹，与磁盘目录解耦
 - 🏷️ **双维度筛选**：
@@ -80,7 +83,13 @@ npm run scan        # 扫描并处理完队列后退出
 | `ai.timeoutMs` | `120000` | 单次 AI 调用超时 |
 | `arxiv.enabled` | `true` | 是否查 arXiv 补元数据 |
 | `arxiv.titleSimilarityThreshold` | `0.75` | 标题匹配阈值 |
-| `arxiv.minIntervalMs` | `3000` | arXiv API 调用最小间隔（礼貌限速） |
+| `arxiv.minIntervalMs` | `3000` | arXiv API 调用最小间隔（礼貌限速；发现的多轴多查询也走它） |
+| `discover.maxResults` / `perAxis` | `40` / `25` | 发现：最终候选上限 / 每轴每查询拉取数 |
+| `discover.semanticScholar` | `true` | 是否查 Semantic Scholar 引用量 |
+| `discover.semanticScholarApiKey` | `""` | S2 API key（可选，免 key 也能用，靠 OpenAlex 兜底；填 key 降低限流） |
+| `discover.openAlex` | `true` | S2 缺失时是否用 OpenAlex 按 arXiv DOI 兜底引用量 |
+| `discover.weights` | `{rel:.45,auth:.35,rec:.2}` | 复合排序权重：相关度 / 权威(引用量) / 新近 |
+| `discover.queryEngine` | `auto` | 查询理解引擎：`auto`(claude→网关→原始) / `claude` / `gateway` |
 | `summaryPrompt` | — | 自定义总结 system prompt（留空用内置） |
 
 ## 工作方式
@@ -116,7 +125,7 @@ npm run scan        # 扫描并处理完队列后退出
 papers/        你的 PDF（只读扫描，gitignore）
 data/          papers.json + text/ + backups/（运行时数据，gitignore）
 config.json    实际配置（gitignore，含 key）；模板见 config.example.json
-lib/           后端模块：util/store/parser/arxiv/ai/scanner/api/annotations
+lib/           后端模块：util/store/parser/arxiv/ai/scanner/api/annotations/discover/claude
 public/        前端静态页（无构建，原生 ESM）
   ├─ index.html   三栏布局（侧栏/列表/详情）+ 阅读器 + 概念/提示词视图
   ├─ app.js       主逻辑：路由/列表/详情/收藏夹/主题/概念/多选/导入/键盘导航
@@ -136,9 +145,12 @@ ecosystem.config.cjs   pm2 配置
 | GET | `/api/papers` | 列表，支持 `q/tag/topic/folder/status/readStatus/starred/sort` |
 | GET | `/api/papers/:id` | 详情（含 summary/notes/annotations） |
 | PATCH | `/api/papers/:id` | 更新 notes/starred/readStatus/tags/topics/folders/readProgress/annotations |
-| POST | `/api/papers/:id/summarize` | 重新总结（含主题/概念） |
+| DELETE | `/api/papers/:id` | 删除条目 + 本地 PDF + 全文，并清理概念引用 |
+| POST | `/api/papers/:id/summarize` | 重新总结（含主题/概念；裸 ID 文件会顺带补元数据 + 改名） |
 | POST | `/api/papers/concepts` | body `{ids:[...]}`：对选中论文**增量抽取**概念 |
-| POST | `/api/import` | body `{url}`：arXiv 网址/ID 导入下载 |
+| GET | `/api/discover/stream?topic=` | **SSE 流式**按主题发现（逐阶段进度 + 结果） |
+| POST | `/api/discover` | body `{topic}`：非流式发现（兜底/脚本用） |
+| POST | `/api/import` | body `{url, meta?}`：arXiv 网址/ID 导入；带 meta 时按「作者-年份-标题」命名并预填 |
 | POST | `/api/scan` | 手动扫描 |
 | GET/PATCH | `/api/tags` | 标签字典（合并/删除） |
 | GET | `/api/topics` | 主题字典 + 计数 |
@@ -153,13 +165,13 @@ ecosystem.config.cjs   pm2 配置
 ## 测试
 
 ```bash
-npm test            # node --test，跑 lib 各模块单元测试（70 例）
+npm test            # node --test，跑 lib 各模块单元测试（119 例）
 npm run lint        # ESLint
 npm run format:check # Prettier 格式检查
 npm run test:e2e    # Playwright e2e（reader 渲染 + 高亮往返）
 ```
 
-覆盖 store v2 迁移、原子写/串行锁/损坏自愈、annotations TypedArray 归一化、AI prompt/增量抽取解析、arXiv 网址解析、API 全端点、health 端点。e2e 用 Playwright 跑真实浏览器，覆盖 PDF 打开渲染 + 高亮创建持久化往返。
+覆盖 store v2 迁移、原子写/串行锁/损坏自愈、annotations TypedArray 归一化、AI prompt/增量抽取解析、arXiv 网址解析、API 全端点（含 discover / import-with-meta / delete）、health 端点；**发现**全链路（多轴召回 / 复合排序 / claude→网关兜底 / OpenAlex 兜底 / 进度回调）、命名 helper、裸 ID 识别+改名+空总结守卫。e2e 用 Playwright 跑真实浏览器，覆盖 PDF 打开渲染 + 高亮创建持久化往返。
 
 CI（GitHub Actions）在每次 push/PR 自动跑 lint + 单测 + e2e。
 

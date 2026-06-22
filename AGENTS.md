@@ -5,7 +5,7 @@
 
 ## 这是什么
 
-一个**薄**的本地 Web 服务：扫描 `papers/*.pdf` → 提取全文 → 查 arXiv 补元数据 → 用 OpenAI 兼容接口生成总结/标签/主题/概念，并提供一个 Indigo 主题 SPA（列表 + 详情 tab + 独立 PDF 阅读器 + 批注 + 概念清单 + 提示词编辑）。
+一个**薄**的本地 Web 服务：扫描 `papers/*.pdf` → 提取全文 → 查 arXiv 补元数据 → 用 OpenAI 兼容接口生成总结/标签/主题/概念，并提供一个 Indigo 主题 SPA（列表 + 详情 tab + 独立 PDF 阅读器 + 批注 + 概念清单 + 提示词编辑）。另有**按主题发现**：输入主题 → LLM 生成 arXiv 检索式 → 多轴召回 + 引用量复合排序 → 勾选导入（SSE 流式进度）。
 
 - **零构建前端**：原生 ESM，浏览器直接加载 `public/`。
 - **零数据库**：状态存 `data/papers.json`（单文件 JSON，进程内串行写锁，每日备份）。
@@ -22,11 +22,13 @@ lib/
   scanner.js ★         增量扫描 + 串行流水线（parse→arxiv→ai）+ extractConcepts + drain
   ai.js      ★         OpenAI 兼容 chat 调用：summarize / extractConcepts
                         含 429/5xx 指数退避重试、JSON 容错解析
-  api.js     ★         REST 路由：health/papers/tags/topics/folders/concepts/settings/stats/import
-  annotations.js ★     批注归一化层：pdf.js TypedArray(quadPoints) 经 JSON 退化的双向修复
+  api.js     ★         REST 路由：health/papers/tags/topics/folders/concepts/settings/stats/import/discover；paper DELETE
+  discover.js ★        按主题发现：检索计划(claude→网关→原始)/多轴召回/S2+OpenAlex 引用量/复合排序/去重
+  claude.js  ★         spawn `claude -p --output-format json` 子进程（永不抛错，失败回退网关）
+  annotations.js       批注归一化层：pdf.js TypedArray(quadPoints) 经 JSON 退化的双向修复
   parser.js            pdfjs-dist 全文提取（Node 端，无 DOM worker）
-  arxiv.js             Atom 解析、标题相似度匹配、PDF 链接抽取、下载
-  util.js              sha1、限速器、sleep、标题归一化/相似度、文件名清洗、parseArxivUrl
+  arxiv.js   ★         Atom 解析、标题相似度匹配、PDF 链接抽取、下载；searchArxiv 支持 sort/分页 + searchArxivMulti
+  util.js    ★         sha1、限速器、sleep、标题归一化/相似度、文件名清洗、parseArxivUrl、safeFilename/buildPaperFilename
 public/
   index.html           三栏布局 + 阅读器(reader-bar批注工具组) + 概念/提示词视图 + 收藏夹/导入模态
   app.js     ★         主逻辑：路由/列表/详情/收藏夹/主题/概念/多选/导入/键盘导航(1065行)
@@ -34,7 +36,7 @@ public/
   styles.css ★         Indigo 主题（grid + flex 列布局，列表独立滚动，reader 深灰底白页）
 scripts/scan-once.js   不启 HTTP，扫一次处理完队列后退出（初始化/排错）
 scripts/e2e-bootstrap.js  e2e 测试数据准备（预置 config/PDF/papers.json）
-tests/*.test.js        node --test，覆盖全部 lib 模块（70 例）
+tests/*.test.js        node --test，覆盖全部 lib 模块（119 例）
 tests/e2e/             Playwright e2e（reader 渲染 + 高亮往返）
 tests/fixtures/        sample.pdf（2 页带文本层，e2e 用）
 config.json            实际配置（gitignore，含 key）；模板 config.example.json
@@ -45,7 +47,7 @@ papers/                你的 PDF（只读扫描，gitignore）
 .prettierrc/.eslintrc.json  代码质量（仅格式化 lib/server/tests，public/ 排除）
 ```
 
-★ = v2.2 重点改动文件。
+★ = v2.2 / v2.3 重点改动文件（v2.3：discover/claude/util/arxiv/api/scanner）。
 
 ## 数据模型（store v2，`data/papers.json`）
 
@@ -96,14 +98,30 @@ scan() 一篇新论文:
 
 processOne(id):                     ← 串行，避免限速
   1. parsing    parser.extractText → 写 data/text/<id>.txt
-  2. enriching  arxiv.searchArxiv + pickBest（阈值 0.75，限速 3s）
+  2. enriching  arxiv 查元数据：p.arxivId 或 parseArxivUrl(文件名) 命中 → id: 精确查；
+                否则 cleanFilenameToTitle + ti: + pickBest（阈值 0.75，限速 3s）。补 year(published)
   3. summarizing ai.summarize(prompt = store.settings.summaryPrompt
                               || config.summaryPrompt || DEFAULT_PROMPT)
-     → 写 summary/tags/topics/concepts/conceptIds
+     → 有内容才写 summary/tags/topics/concepts；空对象 → 存可重试占位（见陷阱 13）
+  4. 规范命名   裸 ID 文件名 → buildPaperFilename「作者 等 - 年份 - 标题.pdf」并 rename（id 不变）
   finally: deps.saveStore(store)   ← 单参！见下方陷阱
 
-arXiv 导入 (POST /api/import):
-  util.parseArxivUrl → arxiv.downloadPaperPdf → 落 papers/ → 下次 scan 自动入库
+arXiv 导入 (POST /api/import { url, meta? }):
+  util.parseArxivUrl → arxiv.downloadPaperPdf → 落 papers/。带 meta（来自发现候选）时
+  按 buildPaperFilename 命名 + 预填 title/authors/year/abstract（metaSource=arxiv）→ enqueue 总结
+
+按主题发现 (GET /api/discover/stream?topic= ，SSE):
+  discover.discoverPapers:
+    buildDiscoveryQuery  claude -p（lib/claude.js）→ 失败回退 GLM 网关(planViaGateway) → 原始主题
+                         产出 {queries[], categories[], keyterms[]}
+    多轴召回             每 query × {relevance, submittedDate} → searchArxivMulti → 合并去重
+    enrichWithCitations  Semantic Scholar 批量(+apiKey/429 重试) → 缺失项 enrichWithOpenAlex(arXiv DOI)
+    复合排序             computeRelevance(keyterms) + log(引用量) + 新近，加权(config.discover.weights)
+    去重                 剔除库内同 arxivId / 标题相似
+  onProgress(stage) → SSE event: progress / done / fail（前端 5 步进度面板）
+
+删除 (DELETE /api/papers/:id):
+  删 store 条目 + p.filepath(限 papersDir 内) + p.fulltextPath + 清理 concepts[].paperIds
 ```
 
 **概念增量抽取**（`scanner.extractConcepts(ids)`）：复用 `data/text/<id>.txt`，把已有 term 喂给模型只返回新概念，`mergeConcepts` 按归一化 term 去重并合并 paperIds。
@@ -135,11 +153,21 @@ arXiv 导入 (POST /api/import):
 
 11. **光标模式无法选中批注**：NONE 模式下 `.annotationEditorLayer.disabled { pointer-events:none }` 封死整层，点击到不了 editor。删除批注必须先切到对应工具（高亮/便签/手写）使层 enable。
 
-12. **重启才加载后端改动**：`lib/` 模块在启动时 `require()` 进内存并缓存；改了 lib 必须重启服务。前端 `public/` 是每次请求即时读取，改完刷新浏览器即可。
+12. **重启才加载后端改动**：`lib/` 模块在启动时 `require()` 进内存并缓存；改了 `lib/`、`server.js`、`config.json` 必须 `pm2 restart` 才生效。前端 `public/`（html/js/css）每次请求即时读盘且发 `no-cache`，改完**刷新浏览器即可**。`data/papers.json` 是内存态运行数据，运行中手改会被覆盖。
+
+13. **空总结不可当成功**：模型偶发返回空对象 `{}`（批量/超时/限流）。`processOne` 判定「有内容」= 有 `tldr`/`contributions`/`method` 之一；否则存 `buildSummaryMarkdown(null)` 占位并清 `summaryAt`，不写误导性的空「## TL;DR」。`buildSummaryMarkdown({})` 只会得到空标题——务必在写入前过滤。
+
+14. **裸 ID 文件名查不到元数据（历史 bug）**：`cleanFilenameToTitle("2012.12556")` 会把 `2012` 当孤立年份删掉 → `ti:".12556"` 搜不到 → 元数据全空 → 空标题→空总结。`processOne` 现在 `p.arxivId` 为空时先 `parseArxivUrl(文件名)` 识别裸 ID 走 `id:` 精确查。改元数据逻辑勿回退此分支。
+
+15. **发现的查询理解必须有兜底**：`claude -p`（lib/claude.js）在无头/pm2 环境常因鉴权 **401**（进程 exit≠0 或 `is_error:true`）；且新版 CLI `--output-format json` 输出**消息数组**（取末个 `type:'result'`）而非 `{result}` 单对象。`buildDiscoveryQuery` 三级兜底 `claude → planViaGateway(GLM) → 原始主题`，`config.discover.queryEngine` 可强制。改 prompt/解析要保持兜底链。
+
+16. **发现排序是复合分，不是单引用量**：旧实现「取最新 N 篇再按引用量排」自相矛盾（最新论文≈0 引用）。现按 `relevance + submittedDate` 两轴召回进池，再 `相关×0.45 + 权威×0.35 + 新近×0.20` 排序。引用量经 S2 + OpenAlex 兜底，`citationsAvailable=false` 时前端要提示「按相关+新近排」。
+
+17. **改名/删除以内容 sha1 为 id**：paper id = `sha1(文件内容)前16位`，与文件名无关。所以 `processOne` 改名、`DELETE` 删文件都不影响 id / `data/text/<id>.txt` / 概念 / 批注。改名撞名时加 ` (arxivId)` 后缀；删文件限定 `papersDir` 内防越界。
 
 ## 工程化
 
-- **测试**：`npm test`（node --test，70 例，覆盖全 lib）；`npm run test:e2e`（Playwright，reader 渲染 + 高亮往返）。
+- **测试**：`npm test`（node --test，119 例，覆盖全 lib）；`npm run test:e2e`（Playwright，reader 渲染 + 高亮往返）。
 - **代码质量**：`npm run lint`（ESLint，`eqeqeq` 配 `null:ignore` 容纳 `== null`）；`npm run format`/`format:check`（Prettier，**仅 lib/server/tests**，public/ 排除因无分号风格冲突）。
 - **CI**：`.github/workflows/ci.yml` 两个 job——lint-and-unit、e2e。push/PR 触发。
 - **运维**：`GET /api/health` 探活；`NODE_ENV=production` 错误响应脱敏；`backupStore` 每日备份 `data/backups/papers-YYYYMMDD.json`（保留 7 份）。
@@ -150,7 +178,7 @@ arXiv 导入 (POST /api/import):
 ```bash
 npm start                 # 前台，http://127.0.0.1:8888
 npm run scan              # 只扫一次，不启 HTTP（初始化/排错）
-npm test                  # node --test（70 例）
+npm test                  # node --test（119 例）
 npm run test:e2e          # Playwright（reader + 高亮往返）
 npm run lint              # ESLint
 npm run format:check      # Prettier 检查

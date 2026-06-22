@@ -1,6 +1,6 @@
 {
   "name": "paper-wiki",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "private": true,
   "description": "Thin local web service to manage arXiv PDFs with AI summaries, tags, notes and preview.",
   "main": "server.js",
