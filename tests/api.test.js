@@ -646,6 +646,42 @@ test('PATCH /api/topics 主题重命名/删除（对齐标签 PATCH）', async (
   server.close();
 });
 
+test('PATCH /api/tags 标签重命名/删除——清单删除时从所有论文剔除（与主题对称）', async () => {
+  const store = {
+    version: 2,
+    tags: ['rlhf', 'transformer', 'fine-tuning'],
+    topics: [],
+    folders: [],
+    concepts: [],
+    papers: {
+      a: { id: 'a', tags: ['rlhf', 'transformer'], topics: [] },
+      b: { id: 'b', tags: ['rlhf'], topics: [] },
+      c: { id: 'c', tags: ['transformer', 'fine-tuning'], topics: [] },
+    },
+  };
+  const router = createApiRouter(baseCtx(store));
+  const server = await startServer(router.handle);
+  const port = server.address().port;
+  // 合并：rlhf → ppo（论文里的 rlhf 都改名为 ppo）
+  const r1 = await call(port, 'PATCH', '/api/tags', { merge: 'rlhf', into: 'ppo' });
+  assert.strictEqual(r1.status, 200);
+  assert.deepStrictEqual(store.papers.a.tags.sort(), ['ppo', 'transformer']);
+  assert.deepStrictEqual(store.papers.b.tags, ['ppo']);
+  assert.ok(store.tags.includes('ppo'));
+  assert.ok(!store.tags.includes('rlhf'));
+  // 删除：transformer —— 必须从所有论文剔除（不残留）
+  const r2 = await call(port, 'PATCH', '/api/tags', { delete: 'transformer' });
+  assert.strictEqual(r2.status, 200);
+  assert.deepStrictEqual(store.papers.a.tags, ['ppo'], '论文 a 剔除 transformer');
+  assert.deepStrictEqual(store.papers.c.tags, ['fine-tuning'], '论文 c 剔除 transformer');
+  assert.ok(!store.tags.includes('transformer'), '清单不再含 transformer');
+  // 删除后清单应与论文实际标签一致（聚合重建，无残留）
+  const r3 = await call(port, 'GET', '/api/tags');
+  const names = r3.json.data.map((t) => t.name);
+  assert.ok(!names.includes('transformer'), 'GET 清单也无 transformer');
+  server.close();
+});
+
 test('GET /api/settings 返回采集段（scan/arxiv/discover）+ overrides + system 只读', async () => {
   const store = {
     version: 2,
