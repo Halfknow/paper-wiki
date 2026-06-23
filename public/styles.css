@@ -140,9 +140,9 @@ body.is-resizing { cursor:col-resize; user-select:none; }
   display:flex; flex-direction:column; min-height:0;
 }
 .sidebar > .side-section:not(.side-footer) { flex:0 0 auto; }
-/* 左下角设置入口 footer */
+/* 左下角设置入口 footer：padding 收紧，避免与 .sidebar 自身 padding 叠加导致下方空隙过大 */
 .side-footer {
-  margin-top:auto; padding:8px; border-top:1px solid var(--border);
+  margin-top:auto; padding:6px 10px 2px; border-top:1px solid var(--border);
 }
 .side-footer .side-item { width:100%; justify-content:flex-start; }
 /* 左下角「设置」入口：贴合平台的描边按钮（线性齿轮 + 悬停 Indigo） */
