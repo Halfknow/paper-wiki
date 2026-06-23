@@ -78,18 +78,52 @@ input,select,textarea { font:inherit; color:var(--text); }
   background:rgba(241,245,249,.86); border:1px solid var(--border); color:var(--text);
   padding:7px 8px; border-radius:var(--radius-sm); min-height:34px;
 }
-/* 顶栏筛选下拉：与列表排序 select 统一设计语言——去原生箭头、自定义 chevron、焦点 Indigo 光环 */
-.topbar select {
+/* 下拉框统一设计语言（顶栏筛选 / 分类排序 / 任意 .ui-select 共用）：
+   去原生箭头 + 自定义 chevron + 悬停边框加深 + 焦点 Indigo 光环，与 .badge/.tag/.sort-field 同源。
+   注：列表排序 select 包在 .sort-field 外壳里（外壳自带背景/边框），单独处理；<option>/<optgroup> 弹出面板由系统渲染，无法 CSS 定制。 */
+.topbar select,
+.tax-toolbar select,
+.ui-select {
   appearance:none; -webkit-appearance:none; -moz-appearance:none;
-  max-width:168px; min-width:118px; cursor:pointer;
-  padding:7px 30px 7px 10px; font-size:13px;
+  min-height:34px; cursor:pointer; font-size:13px; font-weight:600;
+  color:var(--text);
+  background-color:rgba(241,245,249,.86);
+  border:1px solid var(--border); border-radius:var(--radius-sm);
+  padding:7px 30px 7px 12px;
   background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
-  background-repeat:no-repeat; background-position:right 9px center; background-size:12px;
+  background-repeat:no-repeat; background-position:right 10px center; background-size:12px;
   transition:border-color .12s ease, box-shadow .12s ease, background-color .12s ease;
 }
-.topbar select:hover { border-color:#94a3b8; background-color:#fff; }
-.topbar select:focus { outline:none; border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft); }
-.topbar select option { color:var(--text); }
+.topbar select { max-width:170px; min-width:124px; }
+.tax-toolbar select { min-width:112px; }
+/* 列表排序 select：包在 .sort-field 外壳里，自身透明无边框（外壳提供视觉），
+   只保留字体/箭头/对齐；option 面板样式走下面的统一规则。 */
+.list-toolbar select {
+  appearance:none; -webkit-appearance:none; -moz-appearance:none;
+  border:0; background-color:transparent; color:var(--text);
+  font-size:12px; font-weight:600; cursor:pointer;
+  min-width:140px; max-width:180px; min-height:34px;
+  padding:6px 18px 6px 0;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+  background-repeat:no-repeat; background-position:right center; background-size:12px;
+}
+.list-toolbar select:focus { outline:none; }
+/* 统一交互态（顶栏筛选 / 分类排序） */
+.topbar select:hover,
+.tax-toolbar select:hover,
+.ui-select:hover { border-color:#94a3b8; background-color:#fff; }
+.topbar select:focus,
+.tax-toolbar select:focus,
+.ui-select:focus { outline:none; border-color:var(--accent); background-color:var(--panel); box-shadow:0 0 0 3px var(--accent-soft); }
+/* 弹出面板内的分组标题/选项（系统支持部分定制：字重/颜色） */
+.topbar select optgroup,
+.list-toolbar select optgroup,
+.tax-toolbar select optgroup,
+.ui-select optgroup { color:var(--muted); font-weight:700; font-size:11px; }
+.topbar select option,
+.list-toolbar select option,
+.tax-toolbar select option,
+.ui-select option { color:var(--text); font-weight:500; }
 .star-filter { display:flex; align-items:center; gap:5px; cursor:pointer; white-space:nowrap; flex:0 0 auto; }
 .stats { display:flex; align-items:center; gap:4px; color:var(--muted); font-size:12px; white-space:nowrap; }
 .stat-pill {
@@ -302,18 +336,7 @@ body.is-resizing { cursor:col-resize; user-select:none; }
 .sort-field:hover { background:#fff; border-color:#94a3b8; }
 .sort-field:focus-within { border-color:var(--accent); background:var(--panel); box-shadow:0 0 0 3px var(--accent-soft); }
 .sort-field .sort-ico { flex:0 0 auto; color:var(--muted2); }
-.list-toolbar select {
-  appearance:none; -webkit-appearance:none; -moz-appearance:none;
-  border:0; background-color:transparent; color:var(--text);
-  font-size:12px; font-weight:600; cursor:pointer;
-  min-width:140px; max-width:180px; min-height:34px;
-  padding:6px 18px 6px 0;
-  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
-  background-repeat:no-repeat; background-position:right center; background-size:12px;
-}
-.list-toolbar select:focus { outline:none; }
-.list-toolbar select optgroup { color:var(--muted); font-weight:600; }
-.list-toolbar select option { color:var(--text); font-weight:500; }
+/* .list-toolbar select 规则见顶部「下拉框统一设计语言」段（与顶栏/分类 select 同源） */
 /* 列表本身独立滚动：只有清单滚动，不会带动整页 */
 .paper-list { list-style:none; margin:0; padding:6px; flex:1 1 auto; overflow:auto; min-height:0; }
 .paper-item {
@@ -1234,18 +1257,7 @@ iframe.pdf { width:100%; height:calc(100vh - 200px); border:1px solid var(--bord
 }
 .tax-search input:focus { outline:none; border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft); }
 /* 分类排序下拉：与顶栏/列表 select 同设计语言——自定义 chevron + 焦点光环 + 悬停 */
-.tax-toolbar select {
-  appearance:none; -webkit-appearance:none; -moz-appearance:none;
-  height:32px; min-width:108px; padding:0 30px 0 10px;
-  font-size:13px; font-weight:600; cursor:pointer;
-  border:1px solid var(--border2); border-radius:var(--radius-sm);
-  background-color:var(--panel); color:var(--text);
-  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
-  background-repeat:no-repeat; background-position:right 9px center; background-size:12px;
-  transition:border-color .12s ease, box-shadow .12s ease;
-}
-.tax-toolbar select:hover { border-color:#94a3b8; }
-.tax-toolbar select:focus { outline:none; border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft); }
+/* .tax-toolbar select 规则见顶部「下拉框统一设计语言」段（与顶栏/列表 select 同源） */
 #tax-select-toggle.active { background:var(--accent-soft); color:var(--accent-strong); border-color:#c7d2fe; }
 .tax-rows { border:1px solid var(--border); border-radius:8px; overflow:hidden; background:var(--panel); }
 .tax-row { display:flex; align-items:center; gap:10px; padding:9px 14px; border-bottom:1px solid var(--border); min-height:42px; }
