@@ -153,16 +153,18 @@ input,select,textarea { font:inherit; color:var(--text); }
 .ui-select {
   appearance:none; -webkit-appearance:none; -moz-appearance:none;
   min-height:34px; cursor:pointer; font-size:13px; font-weight:600;
-  color:var(--text);
+  color:var(--text); white-space:nowrap;
   background-color:rgba(241,245,249,.86);
   border:1px solid var(--border); border-radius:var(--radius-sm);
-  padding:7px 30px 7px 12px;
+  padding:7px 28px 7px 12px;
   background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
   background-repeat:no-repeat; background-position:right 10px center; background-size:12px;
   transition:border-color .12s ease, box-shadow .12s ease, background-color .12s ease;
 }
-.topbar select { max-width:170px; min-width:124px; }
+.topbar select { max-width:170px; min-width:116px; }
 .tax-toolbar select { min-width:112px; }
+/* 状态 select 选了非默认值时 active 态（与 .filter-trigger.active 一致的 Indigo 强调） */
+.topbar select.active { border-color:#c7d2fe; background-color:var(--accent-soft); color:var(--accent-strong); }
 /* 列表排序 select：包在 .sort-field 外壳里，自身透明无边框（外壳提供视觉），
    只保留字体/箭头/对齐；option 面板样式走下面的统一规则。 */
 .list-toolbar select {
@@ -393,11 +395,12 @@ body.is-resizing { cursor:col-resize; user-select:none; }
 .seg-btn.active { background:var(--accent-soft); color:var(--accent-strong); }
 .seg-btn:focus-visible { outline:2px solid var(--accent); outline-offset:-2px; }
 /* 排序（group by）控件：与顶栏 select 统一的设计语言，外壳 + 自定义下拉箭头 */
+/* 排序控件外壳：视觉对齐 .filter-trigger（同色、同 padding、同字号）+ 排序图标 */
 .sort-field {
   display:inline-flex; align-items:center; gap:6px; flex:0 0 auto;
-  min-height:34px; padding:0 9px; cursor:pointer;
-  background:rgba(241,245,249,.86); border:1px solid var(--border);
-  border-radius:var(--radius-sm); color:var(--muted);
+  min-height:34px; padding:7px 12px; cursor:pointer;
+  background:rgba(241,245,249,.86); border:1px solid var(--border); border-radius:var(--radius-sm);
+  color:var(--text); font-size:13px; font-weight:600; white-space:nowrap;
   transition:background .12s ease, border-color .12s ease, box-shadow .12s ease;
 }
 .sort-field:hover { background:#fff; border-color:#94a3b8; }

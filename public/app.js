@@ -460,7 +460,9 @@ function renderList() {
 }
 
 function renderFilters() {
-  $('filter-status').value = state.filter.status || state.filter.readStatus || '';
+  const statusSel = $('filter-status');
+  const statusVal = state.filter.status || state.filter.readStatus || '';
+  if (statusSel) { statusSel.value = statusVal; statusSel.classList.toggle('active', !!statusVal); }
   $('filter-starred').checked = state.filter.starred;
   // 主题/标签触发器：同步选中数徽标；并剔除已删除/合并的失效项（保留仍存在的）。
   const tagSet = new Set(state.tags.map((t) => t.name));
