@@ -437,13 +437,16 @@ body.is-resizing { cursor:col-resize; user-select:none; }
 .detail-state { display:flex; flex-wrap:wrap; align-items:center; gap:6px; margin-bottom:6px; }
 .dh h2 { margin:0; font-size:21px; flex:1; min-width:200px; line-height:1.32; font-weight:720; }
 .dh-actions { display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
-/* 星级评分控件（详情 dh-actions 内）：5 颗线性星，点击设分 / 再点清零，hover 预览 */
-.rate { display:inline-flex; align-items:center; gap:1px; padding:3px 7px; border:1px solid var(--border2); border-radius:6px; background:var(--panel); }
-.rate .star { display:inline-flex; color:var(--muted2); cursor:pointer; padding:2px; border-radius:4px; line-height:0; transition:color .12s, background .12s; }
+.dh-actions .dh-spacer { flex:1 1 auto; }
+/* 星级评分控件：与按钮等高（min-height:34px 对齐 .btn.sm），作为论文评分属性独占左侧。 */
+.rate { display:inline-flex; align-items:center; gap:2px; padding:0 4px 0 8px; border:1px solid var(--border2); border-radius:var(--radius-sm); background:var(--panel); min-height:34px; }
+.rate-label { font-size:12px; color:var(--muted2); font-weight:600; margin-right:4px; }
+.rate .star { display:inline-flex; color:var(--muted2); cursor:pointer; padding:3px; border-radius:5px; line-height:0; transition:color .12s, background .12s; }
+.rate .star svg { width:16px; height:16px; }
 .rate .star:hover { background:var(--accent-soft); }
 .rate .star.on { color:var(--amber); }
 .rate .star:focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
-.rate-clear { border:none; background:none; color:var(--muted2); font-size:12px; cursor:pointer; margin-left:4px; padding:0 2px; }
+.rate-clear { border:none; background:none; color:var(--muted2); font-size:12px; cursor:pointer; margin-left:6px; padding:0 4px; }
 .rate-clear:hover { color:var(--red); }
 /* 列表标题尾的星角标 + 评分计数 */
 .star-badge { display:inline-flex; align-items:center; gap:2px; margin-left:6px; color:var(--amber); font-size:12px; font-weight:650; vertical-align:1px; }

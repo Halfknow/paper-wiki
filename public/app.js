@@ -444,11 +444,13 @@ function renderDetail() {
           <h2>${escapeHtml(p.title || p.filename)}</h2>
         </div>
         <div class="dh-actions">
-          <button class="btn sm" id="b-open-pdf">打开 PDF</button>
           <span class="rate" id="rate" role="radiogroup" aria-label="星级评分">
+            <span class="rate-label">评分</span>
             ${[1, 2, 3, 4, 5].map((n) => `<i class="star ${(p.rating || 0) >= n ? 'on' : ''}" data-r="${n}" role="radio" aria-checked="${(p.rating || 0) >= n}" tabindex="0" title="${n} 星">${starSvg((p.rating || 0) >= n)}</i>`).join('')}
             ${(p.rating || 0) > 0 ? `<button class="rate-clear" id="b-rate-clear" title="清除评分">清除</button>` : ''}
           </span>
+          <span class="dh-spacer"></span>
+          <button class="btn sm" id="b-open-pdf" title="在新视图打开 PDF 阅读器">打开 PDF</button>
           <button class="btn ghost sm" id="b-read" title="切换阅读状态">${p.readStatus === 'done' ? '✓ 已读' : '标记已读'}</button>
           <button class="btn ghost sm" id="b-resume" title="重新总结（含主题/概念）">重新总结</button>
           <button class="btn ghost sm danger" id="b-delete" title="删除论文（连同本地 PDF 与全文，不可恢复）">删除</button>
