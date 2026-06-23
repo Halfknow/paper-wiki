@@ -28,7 +28,7 @@ async function safeGet(p) {
 const state = {
   papers: [], tags: [], topics: [], folders: [], concepts: [],
   current: null, detail: null, tab: 'summary',
-  filter: { q: '', status: '', readStatus: '', tag: '', topic: '', starred: false, folder: '', mode: '', sort: 'addedDesc' },
+  filter: { q: '', status: '', readStatus: '', tags: [], topics: [], starred: false, folder: '', mode: '', sort: 'addedDesc' },
   pickMode: false,
   selected: new Set(),
   compact: localStorage.getItem('pw-compact') === '1',
@@ -228,8 +228,8 @@ async function refresh() {
     else params.set('status', f.status);
   }
   if (f.readStatus) params.set('readStatus', f.readStatus);
-  if (f.tag) params.set('tag', f.tag);
-  if (f.topic) params.set('topic', f.topic);
+  (f.tags || []).forEach((t) => params.append('tag', t));
+  (f.topics || []).forEach((t) => params.append('topic', t));
   if (f.folder) params.set('folder', f.folder);
   if (f.starred) params.set('starred', '1');
   if (f.sort) params.set('sort', f.sort);
@@ -462,17 +462,162 @@ function renderList() {
 function renderFilters() {
   $('filter-status').value = state.filter.status || state.filter.readStatus || '';
   $('filter-starred').checked = state.filter.starred;
-  // 标签下拉：以 state.filter.tag 为准；若该标签已不存在（被删/合并）则回退「全部」
-  const tagNames = new Set(state.tags.map((t) => t.name));
-  $('filter-tag').innerHTML = '<option value="">全部标签</option>' +
-    state.tags.map((t) => `<option value="${escapeHtml(t.name)}">${escapeHtml(t.name)} (${t.count})</option>`).join('');
-  $('filter-tag').value = state.filter.tag && tagNames.has(state.filter.tag) ? state.filter.tag : '';
-  // 主题下拉：同上
-  const topicNames = new Set(state.topics.map((t) => t.name));
-  $('filter-topic').innerHTML = '<option value="">全部主题</option>' +
-    state.topics.map((t) => `<option value="${escapeHtml(t.name)}">${escapeHtml(t.name)} (${t.count})</option>`).join('');
-  $('filter-topic').value = state.filter.topic && topicNames.has(state.filter.topic) ? state.filter.topic : '';
+  // 主题/标签触发器：同步选中数徽标；并剔除已删除/合并的失效项（保留仍存在的）。
+  const tagSet = new Set(state.tags.map((t) => t.name));
+  state.filter.tags = (state.filter.tags || []).filter((t) => tagSet.has(t));
+  const topicSet = new Set(state.topics.map((t) => t.name));
+  state.filter.topics = (state.filter.topics || []).filter((t) => topicSet.has(t));
+  const tn = state.filter.tags.length, mn = state.filter.topics.length;
+  const tagTrig = $('filter-tag-trigger'), topicTrig = $('filter-topic-trigger');
+  if (tagTrig) {
+    tagTrig.classList.toggle('active', tn > 0);
+    tagTrig.querySelector('.ft-count').textContent = tn ? tn : '';
+  }
+  if (topicTrig) {
+    topicTrig.classList.toggle('active', mn > 0);
+    topicTrig.querySelector('.ft-count').textContent = mn ? mn : '';
+  }
 }
+
+// ---- 主题/标签 WPS 式可搜索多选筛选面板 ----
+/** 当前展开的筛选面板信息（用于 ESC / 点遮罩关闭）。 */
+let curFilterPop = null;
+function closeFilterPop() {
+  if (!curFilterPop) return;
+  curFilterPop.mask.remove();
+  curFilterPop = null;
+  document.removeEventListener('keydown', onFilterPopKey);
+}
+function onFilterPopKey(e) {
+  if (e.key === 'Escape') { e.preventDefault(); closeFilterPop(); }
+}
+/**
+ * 打开主题/标签筛选面板（WPS/Excel 列筛选器风格：搜索框 + 全选 + 勾选列表）。
+ * @param {'tag'|'topic'} kind
+ * 选中态用 state.filter.tags/topics（数组，维度内 OR）；确定后 refresh()。
+ */
+function openFilterPop(kind) {
+  closeFilterPop(); // 关掉可能存在的旧面板
+  const label = kind === 'tag' ? '标签' : '主题';
+  const items = (kind === 'tag' ? state.tags : state.topics) || [];
+  const selected = new Set(kind === 'tag' ? state.filter.tags : state.filter.topics);
+  const trigger = $(kind === 'tag' ? 'filter-tag-trigger' : 'filter-topic-trigger');
+  if (!trigger) return;
+
+  // 面板 + 遮罩（遮罩接收点击关闭，面板 stopPropagation）
+  const mask = document.createElement('div');
+  mask.className = 'filter-pop-mask';
+  const pop = document.createElement('div');
+  pop.className = 'filter-pop';
+  pop.setAttribute('role', 'dialog');
+  pop.setAttribute('aria-label', label + '筛选');
+  const renderList = (query) => {
+    const q = (query || '').trim().toLowerCase();
+    const matched = q ? items.filter((it) => it.name.toLowerCase().includes(q)) : items;
+    const allChecked = matched.length > 0 && matched.every((it) => selected.has(it.name));
+    let html = `<div class="fp-search"><input type="text" class="fp-search-input" placeholder="搜索${label}…" value="${escapeHtml(query || '')}" /></div>`;
+    html += `<div class="fp-toolbar"><label class="fp-all"><input type="checkbox" id="fp-all" ${allChecked ? 'checked' : ''} /><span>全选${matched.length ? ` (${matched.length})` : ''}</span></label>${selected.size ? `<button class="fp-clear" id="fp-clear">清除已选</button>` : ''}</div>`;
+    html += '<div class="fp-list">';
+    if (!matched.length) html += '<div class="fp-empty">无匹配</div>';
+    for (const it of matched) {
+      const on = selected.has(it.name);
+      const p = chipOf(it.name);
+      html += `<div class="check-row${on ? ' on' : ''}" data-name="${escapeHtml(it.name)}"><span class="fp-check">${on ? CHECK_SVG : UNCHECK_SVG}</span><span class="fp-name" style="background:${p.s};color:${p.c};border-color:${p.b}">${escapeHtml(it.name)}</span><span class="fp-count">${it.count}</span></div>`;
+    }
+    html += '</div>';
+    html += `<div class="fp-foot"><span class="fp-sel-count">已选 ${selected.size}</span><button class="btn ghost sm" id="fp-cancel">取消</button><button class="btn sm" id="fp-ok">确定</button></div>`;
+    return html;
+  };
+  pop.innerHTML = renderList('');
+  mask.appendChild(pop);
+  mask.onclick = (e) => { if (e.target === mask) closeFilterPop(); };
+  pop.onclick = (e) => e.stopPropagation();
+  document.body.appendChild(mask);
+  curFilterPop = { mask, kind, selected };
+  document.addEventListener('keydown', onFilterPopKey);
+
+  // 定位：面板贴在触发器下方（顶栏下方）
+  const r = trigger.getBoundingClientRect();
+  pop.style.top = (r.bottom + window.scrollY + 4) + 'px';
+  pop.style.left = (r.left + window.scrollX) + 'px';
+  // 搜索框聚焦
+  const searchInput = pop.querySelector('.fp-search-input');
+  if (searchInput) { searchInput.focus(); searchInput.select(); }
+
+  let curQuery = '';
+  const rerender = () => {
+    const sc = searchInput ? searchInput.value : curQuery;
+    curQuery = sc;
+    const selCount = pop.querySelector('.fp-sel-count');
+    if (selCount) selCount.textContent = '已选 ' + selected.size;
+    // 仅重渲列表 + 全选行 + 清除按钮（保留搜索框焦点）
+    const items2 = (kind === 'tag' ? state.tags : state.topics) || [];
+    const q = sc.trim().toLowerCase();
+    const matched = q ? items2.filter((it) => it.name.toLowerCase().includes(q)) : items2;
+    const allChecked = matched.length > 0 && matched.every((it) => selected.has(it.name));
+    const allEl = pop.querySelector('#fp-all');
+    if (allEl) allEl.checked = allChecked;
+    const allSpan = pop.querySelector('.fp-all span');
+    if (allSpan) allSpan.textContent = '全选' + (matched.length ? ` (${matched.length})` : '');
+    const clearBtn = pop.querySelector('#fp-clear');
+    if (selected.size && !clearBtn) {
+      const tb = pop.querySelector('.fp-toolbar');
+      if (tb) tb.insertAdjacentHTML('beforeend', `<button class="fp-clear" id="fp-clear">清除已选</button>`);
+      pop.querySelector('#fp-clear').onclick = () => { selected.clear(); rerender(); };
+    } else if (!selected.size && clearBtn) clearBtn.remove();
+    // 重渲列表
+    let html = '';
+    const listEl = pop.querySelector('.fp-list');
+    if (!matched.length) { listEl.innerHTML = '<div class="fp-empty">无匹配</div>'; return; }
+    for (const it of matched) {
+      const on = selected.has(it.name);
+      const p = chipOf(it.name);
+      html += `<div class="check-row${on ? ' on' : ''}" data-name="${escapeHtml(it.name)}"><span class="fp-check">${on ? CHECK_SVG : UNCHECK_SVG}</span><span class="fp-name" style="background:${p.s};color:${p.c};border-color:${p.b}">${escapeHtml(it.name)}</span><span class="fp-count">${it.count}</span></div>`;
+    }
+    listEl.innerHTML = html;
+  };
+
+  // 搜索
+  searchInput.oninput = rerender;
+  // 全选 / 清除已选
+  const wireToolbar = () => {
+    const allEl = pop.querySelector('#fp-all');
+    if (allEl) allEl.onchange = () => {
+      const q = (searchInput.value || '').trim().toLowerCase();
+      const items2 = (kind === 'tag' ? state.tags : state.topics) || [];
+      const matched = q ? items2.filter((it) => it.name.toLowerCase().includes(q)) : items2;
+      if (allEl.checked) matched.forEach((it) => selected.add(it.name));
+      else matched.forEach((it) => selected.delete(it.name));
+      rerender();
+    };
+    const clearBtn = pop.querySelector('#fp-clear');
+    if (clearBtn) clearBtn.onclick = () => { selected.clear(); rerender(); };
+  };
+  wireToolbar();
+  // 勾选行（事件委托，rerender 后仍有效）
+  pop.querySelector('.fp-list').addEventListener('click', (e) => {
+    const row = e.target.closest('.check-row');
+    if (!row) return;
+    const name = row.dataset.name;
+    if (selected.has(name)) selected.delete(name); else selected.add(name);
+    rerender();
+  });
+  // 全选/清除行用 mutation 重新接线（rerender 后 toolbar 可能重建）
+  const obs = new MutationObserver(wireToolbar);
+  obs.observe(pop.querySelector('.fp-toolbar'), { childList: true });
+  // 底部按钮
+  pop.querySelector('#fp-cancel').onclick = closeFilterPop;
+  pop.querySelector('#fp-ok').onclick = () => {
+    const arr = items.map((it) => it.name).filter((n) => selected.has(n));
+    if (kind === 'tag') state.filter.tags = arr; else state.filter.topics = arr;
+    closeFilterPop();
+    refresh();
+    toast(arr.length ? `已按 ${arr.length} 个${label}筛选` : `已清除${label}筛选`);
+  };
+}
+// 复选框图标（线性 SVG，复用全站描边风格）
+const CHECK_SVG = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="4" fill="#4f46e5" stroke="#4f46e5"/><polyline points="8 12 11 15 16 9" stroke="#fff"/></svg>';
+const UNCHECK_SVG = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="#94a3b8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="4"/></svg>';
 
 // ---- 详情 ----
 async function select(id) {
@@ -1709,12 +1854,10 @@ function taxBatchMerge() {
   };
 }
 
-/** 点计数/名称跳回主列表并按该标签/主题筛选。 */
+/** 点计数/名称跳回主列表并按该标签/主题筛选（设为单元素多选）。 */
 function taxJumpToLibrary(kind, name) {
-  if (kind === 'tag') state.filter.tag = name;
-  else state.filter.topic = name;
-  const selEl = $(kind === 'tag' ? 'filter-tag' : 'filter-topic');
-  if (selEl) selEl.value = name;
+  if (kind === 'tag') state.filter.tags = [name];
+  else state.filter.topics = [name];
   showLibrary();
   refresh();
   toast('已按' + taxLabel(kind) + '「' + name + '」筛选');
@@ -1794,8 +1937,10 @@ function bind() {
     state.filter.mode = '';
     refresh();
   };
-  $('filter-tag').onchange = (e) => { state.filter.tag = e.target.value; refresh(); };
-  $('filter-topic').onchange = (e) => { state.filter.topic = e.target.value; refresh(); };
+  const tagTrig = $('filter-tag-trigger');
+  if (tagTrig) tagTrig.onclick = () => openFilterPop('tag');
+  const topicTrig = $('filter-topic-trigger');
+  if (topicTrig) topicTrig.onclick = () => openFilterPop('topic');
   $('filter-starred').onchange = (e) => { state.filter.starred = e.target.checked; refresh(); };
   $('sort').onchange = (e) => { state.filter.sort = e.target.value; refresh(); };
 
@@ -1803,7 +1948,7 @@ function bind() {
   document.querySelectorAll('.sidebar .side-item[data-mode]').forEach((el) => {
     el.onclick = () => {
       const m = el.dataset.mode;
-      if (m === 'all') state.filter = { ...state.filter, mode: '', starred: false, folder: '', readStatus: '', status: '' };
+      if (m === 'all') state.filter = { ...state.filter, mode: '', starred: false, folder: '', readStatus: '', status: '', tags: [], topics: [] };
       else if (m === 'starred') state.filter = { ...state.filter, mode: '', starred: true, folder: '', readStatus: '' };
       else if (m === 'unread') state.filter = { ...state.filter, mode: 'unread', starred: false, folder: '', status: '', readStatus: 'unread' };
       refresh();

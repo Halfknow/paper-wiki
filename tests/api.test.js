@@ -98,6 +98,35 @@ test('GET /api/papers 支持标签与全文 q 筛选', async () => {
   server.close();
 });
 
+test('GET /api/papers 标签/主题多选筛选（维度内 OR、维度间 AND）', async () => {
+  const store = {
+    version: 2, tags: ['rlhf', 'data', 'cnn'], topics: ['推理', '视觉'],
+    folders: [], concepts: [],
+    papers: {
+      a: { id: 'a', title: 'A', tags: ['rlhf'], topics: ['推理'], status: 'ready', addedAt: 1 },
+      b: { id: 'b', title: 'B', tags: ['data'], topics: ['视觉'], status: 'ready', addedAt: 2 },
+      c: { id: 'c', title: 'C', tags: ['cnn'], topics: ['视觉'], status: 'ready', addedAt: 3 },
+      d: { id: 'd', title: 'D', tags: ['rlhf'], topics: ['视觉'], status: 'ready', addedAt: 4 },
+    },
+  };
+  const router = createApiRouter(baseCtx(store));
+  const server = await startServer(router.handle);
+  const port = server.address().port;
+  // 标签多选 OR：rlhf OR cnn → a, c, d
+  const byTags = await call(port, 'GET', '/api/papers?tag=rlhf&tag=cnn');
+  assert.deepStrictEqual(byTags.json.data.map((p) => p.id).sort(), ['a', 'c', 'd']);
+  // 单标签向后兼容：rlhf → a, d
+  const byTag = await call(port, 'GET', '/api/papers?tag=rlhf');
+  assert.deepStrictEqual(byTag.json.data.map((p) => p.id).sort(), ['a', 'd']);
+  // 标签 + 主题 跨维度 AND：tag=rlhf & topic=视觉 → 仅 d（同时满足）
+  const cross = await call(port, 'GET', '/api/papers?tag=rlhf&topic=' + encodeURIComponent('视觉'));
+  assert.deepStrictEqual(cross.json.data.map((p) => p.id), ['d']);
+  // 主题多选 OR：推理 OR 视觉 → 全部
+  const byTopics = await call(port, 'GET', '/api/papers?topic=' + encodeURIComponent('推理') + '&topic=' + encodeURIComponent('视觉'));
+  assert.strictEqual(byTopics.json.data.length, 4);
+  server.close();
+});
+
 test('PATCH /api/papers/:id 更新 notes/starred 并持久化', async () => {
   const store = {
     version: 1,

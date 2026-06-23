@@ -27,8 +27,8 @@
         <option value="error">出错</option>
         <option value="pending">处理中</option>
       </select>
-      <select id="filter-topic" title="主题筛选"><option value="">全部主题</option></select>
-      <select id="filter-tag" title="标签筛选"><option value="">全部标签</option></select>
+      <button class="filter-trigger" id="filter-topic-trigger" title="主题筛选（可多选）" type="button"><span class="ft-label">主题</span><span class="ft-count"></span><span class="ft-chev" aria-hidden="true"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></span></button>
+      <button class="filter-trigger" id="filter-tag-trigger" title="标签筛选（可多选）" type="button"><span class="ft-label">标签</span><span class="ft-count"></span><span class="ft-chev" aria-hidden="true"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></span></button>
       <label class="star-filter"><input id="filter-starred" type="checkbox" /> 仅星标</label>
     </div>
     <div class="top-actions">
