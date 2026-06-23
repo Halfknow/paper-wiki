@@ -33,7 +33,7 @@ a { color:var(--accent); text-decoration:none; }
 a:hover { text-decoration:underline; }
 button { font:inherit; cursor:pointer; }
 input,select,textarea { font:inherit; color:var(--text); }
-::selection { background:var(--accent-soft); }
+::selection { background:rgba(79,70,229,.28); color:inherit; }
 /* PDF 文字层选区：用更贴合的 Indigo 色替代系统蓝；收紧 line-height 让选区不显得过宽/过高 */
 .reader-canvas-wrap .textLayer ::selection {
   background:rgba(79,70,229,.22);
