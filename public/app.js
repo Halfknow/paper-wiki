@@ -462,16 +462,16 @@ function renderList() {
 function renderFilters() {
   $('filter-status').value = state.filter.status || state.filter.readStatus || '';
   $('filter-starred').checked = state.filter.starred;
-  // 标签下拉
-  const tagSel = $('filter-tag'); const tagCur = tagSel.value;
-  tagSel.innerHTML = '<option value="">全部标签</option>' +
+  // 标签下拉：以 state.filter.tag 为准；若该标签已不存在（被删/合并）则回退「全部」
+  const tagNames = new Set(state.tags.map((t) => t.name));
+  $('filter-tag').innerHTML = '<option value="">全部标签</option>' +
     state.tags.map((t) => `<option value="${escapeHtml(t.name)}">${escapeHtml(t.name)} (${t.count})</option>`).join('');
-  tagSel.value = tagCur;
-  // 主题下拉
-  const topicSel = $('filter-topic'); const topicCur = topicSel.value;
-  topicSel.innerHTML = '<option value="">全部主题</option>' +
+  $('filter-tag').value = state.filter.tag && tagNames.has(state.filter.tag) ? state.filter.tag : '';
+  // 主题下拉：同上
+  const topicNames = new Set(state.topics.map((t) => t.name));
+  $('filter-topic').innerHTML = '<option value="">全部主题</option>' +
     state.topics.map((t) => `<option value="${escapeHtml(t.name)}">${escapeHtml(t.name)} (${t.count})</option>`).join('');
-  topicSel.value = topicCur;
+  $('filter-topic').value = state.filter.topic && topicNames.has(state.filter.topic) ? state.filter.topic : '';
 }
 
 // ---- 详情 ----
@@ -1382,6 +1382,10 @@ async function loadTaxonomy() {
     const [tg, tr] = await Promise.all([jget('/api/tags'), jget('/api/topics')]);
     taxState.data.tag = tg.data || [];
     taxState.data.topic = tr.data || [];
+    // 同步到全局 state：首页「全部标签/全部主题」筛选下拉用同一份数据，避免编辑后不一致。
+    state.tags = taxState.data.tag;
+    state.topics = taxState.data.topic;
+    renderFilters();
     $('tax-tag-count').textContent = taxState.data.tag.length;
     $('tax-topic-count').textContent = taxState.data.topic.length;
     taxState.selected.clear();
