@@ -32,6 +32,60 @@ test('diffPapers 计算 added/changed/missing', () => {
   );
 });
 
+test('fingerprintAll 对内容相同的重复文件去重（同 id 只保留一条，防 scan 覆盖丢数据）', async () => {
+  const { fingerprintAll } = require('../lib/scanner');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pwfp-'));
+  // 两个内容完全相同的 PDF（不同文件名）→ 同 sha1 → 同 id
+  const content = Buffer.from('%PDF-1.4\n%duplicate-content\n');
+  fs.writeFileSync(path.join(dir, 'paper-A.pdf'), content);
+  fs.writeFileSync(path.join(dir, '2402.06196.pdf'), content);
+  const items = (await require('../lib/scanner').scanDir(dir)).map((it) => ({
+    filepath: it.filepath,
+    filename: it.filename,
+    size: it.size,
+    mtime: it.mtime,
+  }));
+  const fp = await fingerprintAll(items);
+  // 关键：两个文件只产出一条指纹（去重），不产生重复 id
+  assert.strictEqual(fp.length, 1, '内容相同的重复文件应去重为一条');
+  const ids = fp.map((x) => x.id);
+  assert.strictEqual(new Set(ids).size, ids.length, '不应有重复 id');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('scan 不用空记录覆盖已 enrich 的论文（防 id 冲突丢数据）', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pwovr-'));
+  const storePath = path.join(dir, 'papers.json');
+  const content = Buffer.from('%PDF-1.4\n%same\n');
+  fs.writeFileSync(path.join(dir, 'real.pdf'), content);
+  // store 里已有同 id 的已处理记录（title/summary/tags 齐全，模拟被重复文件覆盖前的状态）
+  const { sha1OfFile } = require('../lib/util');
+  const id = (await sha1OfFile(path.join(dir, 'real.pdf'))).slice(0, 16);
+  const store = {
+    version: 2, tags: [], topics: [], folders: [], concepts: [],
+    papers: {
+      [id]: {
+        id, filename: 'real.pdf', filepath: path.join(dir, 'real.pdf'),
+        status: 'ready', title: '重要标题', summary: '## TL;DR\n已有总结',
+        tags: ['x'], topics: [], addedAt: 1, updatedAt: 1,
+      },
+    },
+  };
+  const deps = {
+    parser: { extractText: async () => ({ text: 't', charCount: 1, numPages: 1 }) },
+    ai: { summarize: async () => '', extractTagsTopics: async () => ({ tags: [], topics: [] }), buildSummaryMarkdown: () => '', applySettingsOverride: (c) => c },
+    arxiv: {}, rateLimitArxiv: async () => {}, config: { ai: {}, arxiv: { enabled: false } },
+    saveStore: async (s) => {}, mergeTags: () => {}, mergeTopics: () => {},
+  };
+  const scanner = createScanner({ store, storePath, papersDir: dir, deps });
+  await scanner.scan();
+  // 关键：已 enrich 的记录未被空初始化覆盖
+  assert.strictEqual(store.papers[id].title, '重要标题', 'title 不应被覆盖');
+  assert.ok(store.papers[id].summary.includes('已有总结'), 'summary 不应被覆盖');
+  assert.deepStrictEqual(store.papers[id].tags, ['x'], 'tags 不应被覆盖');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
 test('createScanner.scan 发现新 PDF 入库并入队，流水线将其处理为 ready', async () => {
   const papersDir = path.join(__dirname, '..', 'papers');
   let sample;
