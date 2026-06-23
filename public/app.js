@@ -1011,16 +1011,28 @@ function renderConcepts() {
 }
 
 // ---- 多选 + 抽取概念 ----
+function syncPickUI() {
+  const n = state.selected.size;
+  const total = state.papers.length;
+  $('sel-count').textContent = '已选 ' + n + ' 篇';
+  // 全选按钮：全选/取消全选随当前选中态切换文案
+  const allBtn = $('btn-pick-all');
+  if (allBtn) {
+    const allOn = total > 0 && n === total;
+    allBtn.textContent = allOn ? '取消全选' : '全选';
+    allBtn.classList.toggle('active', allOn);
+  }
+}
 function togglePick(id) {
   if (state.selected.has(id)) state.selected.delete(id); else state.selected.add(id);
-  $('sel-count').textContent = '已选 ' + state.selected.size + ' 篇';
+  syncPickUI();
   renderList();
 }
 function togglePickMode(on) {
   state.pickMode = on;
   $('bulk-bar').classList.toggle('active', on);
   if (!on) state.selected.clear();
-  $('sel-count').textContent = '已选 ' + state.selected.size + ' 篇';
+  syncPickUI();
   const pickBtn = $('btn-pick');
   pickBtn.querySelector('.btn-text').textContent = on ? '退出多选' : '多选';
   pickBtn.classList.toggle('active', on);
@@ -2352,13 +2364,31 @@ function bind() {
   bindListSplitter();
   window.addEventListener('resize', () => applyListWidth(state.listWidth));
   $('btn-pick-cancel').onclick = () => togglePickMode(false);
+  // 全选/取消全选当前列表
+  $('btn-pick-all').onclick = () => {
+    const total = state.papers.length;
+    if (!total) return;
+    if (state.selected.size === total) state.selected.clear();
+    else state.papers.forEach((p) => state.selected.add(p.id));
+    syncPickUI();
+    renderList();
+  };
   $('btn-pick-concepts').onclick = async () => {
     const ids = [...state.selected];
     if (!ids.length) { toast('请先选择论文', 'error'); return; }
     const btn = $('btn-pick-concepts');
+    // 进度展示：抽取是逐篇 AI 调用，可能较久。显示不确定进度条 + 「抽取中 N 篇…」。
+    const bp = $('bulk-progress'), bpText = $('bp-text'), bpFill = $('bp-fill');
+    if (bp) { bp.hidden = false; bpFill.style.width = '100%'; bpFill.classList.add('indeterminate'); }
+    if (bpText) bpText.textContent = `抽取中（${ids.length} 篇）…`;
     setBusy(btn, true, '抽取中…');
+    $('btn-pick-cancel').disabled = true;
+    $('btn-pick-all').disabled = true;
     const r = await POST('/api/papers/concepts', { ids });
     setBusy(btn, false);
+    $('btn-pick-cancel').disabled = false;
+    $('btn-pick-all').disabled = false;
+    if (bp) { bp.hidden = true; bpFill.classList.remove('indeterminate'); }
     if (r.data) toast(`完成：处理 ${r.data.processed} 篇，新增 ${r.data.added} 个概念`);
     else toast(r.error || '抽取失败', 'error');
     if (r.ok) togglePickMode(false);

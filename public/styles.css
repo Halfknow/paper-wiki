@@ -1091,6 +1091,18 @@ body.is-resizing { cursor:col-resize; user-select:none; }
 }
 .bulk-bar.active { display:flex; }
 .bulk-bar .sel-count { font-weight:600; }
+/* 抽取概念进度：文字 + 不确定进度条（逐篇 AI 调用，时长不定） */
+.bulk-progress { display:inline-flex; align-items:center; gap:8px; font-size:12px; color:var(--muted); }
+.bulk-progress .bp-bar { width:90px; height:5px; border-radius:3px; overflow:hidden; background:var(--panel3); flex:0 0 auto; }
+.bulk-progress .bp-bar > i { display:block; height:100%; width:0; background:var(--accent); border-radius:3px; }
+.bulk-progress .bp-bar > i.indeterminate {
+  width:40%;
+  animation:bp-slide 1.1s ease-in-out infinite;
+}
+@keyframes bp-slide {
+  0% { margin-left:-40%; }
+  100% { margin-left:100%; }
+}
 
 /* checkbox in list */
 .paper-item .pick { position:absolute; right:8px; top:8px; }
