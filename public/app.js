@@ -64,14 +64,28 @@ async function flushPendingNotes() {
 
 const $ = (id) => document.getElementById(id);
 const PALETTE = window.READER_PALETTE || ['#4f46e5', '#7c3aed', '#0891b2', '#d97706', '#db2777', '#2563eb', '#16a34a', '#475569'];
-const TOPIC_CLASSES = {};
-const TOPIC_RING = 6; // c0..c5，与 styles.css 的 .topic.c0..c5 对应
-function topicClass(t) {
-  const key = String(t ?? '');
-  if (TOPIC_CLASSES[key]) return TOPIC_CLASSES[key];
-  let h = 0; for (const ch of key) h = (h * 31 + ch.charCodeAt(0)) | 0;
-  TOPIC_CLASSES[key] = 'c' + (Math.abs(h) % TOPIC_RING);
-  return TOPIC_CLASSES[key];
+// ---- 统一标签/主题配色（文章 chips + 设置中心分类管理 共用）----
+// 8 色柔和配色：name 稳定 hash → 下标 → {主色, 柔底, 柔边}，全文统一、告别单调灰标签。
+// indigo/violet/cyan/blue/pink/amber 六色延续旧主题视觉，新增 green/rose 扩展多样性。
+const CHIP_PALETTE = [
+  { c: '#4f46e5', s: '#eef2ff', b: '#c7d2fe' }, // indigo
+  { c: '#7c3aed', s: '#f3e8ff', b: '#ddd6fe' }, // violet
+  { c: '#0891b2', s: '#cffafe', b: '#a5f3fc' }, // cyan
+  { c: '#2563eb', s: '#dbeafe', b: '#bfdbfe' }, // blue
+  { c: '#db2777', s: '#fce7f3', b: '#fbcfe8' }, // pink
+  { c: '#d97706', s: '#fef3c7', b: '#fde68a' }, // amber
+  { c: '#16a34a', s: '#dcfce7', b: '#bbf7d0' }, // green
+  { c: '#e11d48', s: '#ffe4e6', b: '#fecdd3' }, // rose
+];
+/** 名字 → 稳定下标（djb2-like hash mod 8，保证同名 chip 永远同色）。 */
+function chipIndex(name) {
+  let h = 0;
+  for (const ch of String(name ?? '')) h = (h * 31 + ch.charCodeAt(0)) | 0;
+  return Math.abs(h) % CHIP_PALETTE.length;
+}
+/** 返回某 name 的配色对象 {c 主色, s 柔底, b 柔边}。 */
+function chipOf(name) {
+  return CHIP_PALETTE[chipIndex(name)];
 }
 
 function statusDot(p) {
@@ -158,21 +172,26 @@ function progressPercent(p) {
 function chipList(items, cls, limit = 4, clsFor) {
   const shown = (items || []).slice(0, limit);
   const rest = Math.max(0, (items || []).length - shown.length);
+  // 统一内联配色：主题/标签按名 hash 落到同一套柔和 8 色，告别单调灰标签。
   return shown.map((t) => {
     const extra = clsFor ? ' ' + clsFor(t) : '';
-    return `<span class="${cls}${extra}">${escapeHtml(t)}</span>`;
+    const p = chipOf(t);
+    return `<span class="${cls}${extra}" style="background:${p.s};color:${p.c};border-color:${p.b}">${escapeHtml(t)}</span>`;
   }).join('') +
     (rest ? `<span class="tag muted">+${rest}</span>` : '');
 }
 
 function compactChipList(p, limit = 4) {
   const items = [
-    ...(p.topics || []).map((name) => ({ name, cls: 'topic ' + topicClass(name) })),
+    ...(p.topics || []).map((name) => ({ name, cls: 'topic' })),
     ...(p.tags || []).map((name) => ({ name, cls: 'tag' })),
   ];
   const shown = items.slice(0, limit);
   const rest = Math.max(0, items.length - shown.length);
-  return shown.map((it) => `<span class="${it.cls}">${escapeHtml(it.name)}</span>`).join('') +
+  return shown.map((it) => {
+    const p = chipOf(it.name);
+    return `<span class="${it.cls}" style="background:${p.s};color:${p.c};border-color:${p.b}">${escapeHtml(it.name)}</span>`;
+  }).join('') +
     (rest ? `<span class="tag muted compact-more">+${rest}</span>` : '');
 }
 
@@ -404,7 +423,7 @@ function renderList() {
         </div>`;
     } else {
       // 舒适：原完整布局
-      const topics = chipList(p.topics, 'topic', 3, topicClass);
+      const topics = chipList(p.topics, 'topic', 3);
       const tags = chipList(p.tags, 'tag', 4);
       const isBusy = ['pending', 'parsing', 'enriching', 'summarizing'].includes(p.status);
       const contHint = (!isBusy && progress != null && progress > 0 && progress < 100) ? ' · 双击继续阅读' : '';
@@ -481,7 +500,7 @@ function renderDetail() {
   const rest = [tailLink, tailSrc].filter(Boolean).join(' · ');
   const metaTail = [head, rest].filter(Boolean).join(' · ');
   const meta = `<span class="meta-authors">${escapeHtml(authorsStr)}</span><span class="meta-tail">${metaTail}</span>`;
-  const topics = chipList(p.topics, 'topic', 5, topicClass);
+  const topics = chipList(p.topics, 'topic', 5);
   const tags = chipList(p.tags, 'tag', 12);
   const folders = (p.folders || []).map((fid) => {
     const fo = state.folders.find((x) => x.id === fid);
@@ -653,7 +672,7 @@ function renderInfoTab(body, p) {
       </div>
       <div class="field field-wide">
         <label>主题（点 × 移除，Enter 添加）</label>
-        <div class="chip-row" id="topic-row">${(p.topics || []).map((t) => `<span class="topic ${topicClass(t)}">${escapeHtml(t)} <span class="x" data-topic-del="${escapeHtml(t)}">×</span></span>`).join(' ') || '<span class="save-hint">无</span>'}
+        <div class="chip-row" id="topic-row">${(p.topics || []).map((t) => { const p = chipOf(t); return `<span class="topic" style="background:${p.s};color:${p.c};border-color:${p.b}">${escapeHtml(t)} <span class="x" data-topic-del="${escapeHtml(t)}">×</span></span>`; }).join(' ') || '<span class="save-hint">无</span>'}
         <input type="text" id="topic-add" class="chip-input" placeholder="+ 主题" /></div>
       </div>
       <div class="field">
@@ -1343,7 +1362,6 @@ function filterSettingsNav(q) {
 
 // ---- 主题与标签管理（分段单栏 + 搜索/排序/内联重命名/合并/批量，全部复用 PATCH {merge,into}/{delete}）----
 const taxState = { kind: 'tag', data: { tag: [], topic: [] }, q: '', sort: 'countDesc', selectMode: false, selected: new Set() };
-const TAX_PALETTE = ['#4f46e5', '#7c3aed', '#0891b2', '#d97706', '#db2777', '#2563eb', '#16a34a', '#0ea5e9', '#e11d48', '#65a30d'];
 const TAX_ICON = {
   pencil:
     '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>',
@@ -1353,11 +1371,8 @@ const TAX_ICON = {
     '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>',
 };
 const taxLabel = (kind) => (kind === 'tag' ? '标签' : '主题');
-function taxColor(name) {
-  let h = 0;
-  for (const ch of String(name)) h = (h * 31 + ch.charCodeAt(0)) | 0;
-  return TAX_PALETTE[Math.abs(h) % TAX_PALETTE.length];
-}
+// 分类管理配色直接复用文章 chip 的统一 CHIP_PALETTE，保证「设置里看到的颜色 = 文章里打标的颜色」。
+const taxColor = (name) => chipOf(name).c;
 function taxPatch(kind, body) {
   return PATCH(kind === 'tag' ? '/api/tags' : '/api/topics', body);
 }

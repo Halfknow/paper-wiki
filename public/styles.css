@@ -359,25 +359,18 @@ body.is-resizing { cursor:col-resize; user-select:none; }
 .paper-list.compact .mini-metric { flex:0 0 auto; }
 .paper-item .progress-bar > i { display:block; height:100%; background:var(--accent); }
 
-/* 标签 / 主题 胶囊 */
+/* 标签 / 主题 胶囊：颜色由 JS 内联应用（CHIP_PALETTE 统一配色），这里只定布局/排版兜底 */
 .tag {
   background:#f1f5f9; border:1px solid #e2e8f0; color:#475569;
   padding:1px 7px; border-radius:6px; font-size:11px; white-space:nowrap;
 }
 .tag.muted { color:var(--muted2); background:var(--panel); }
-/* topic 基础规则作为兜底；实际颜色由 .topic.c0..c5 轮换类覆盖（见下） */
+/* topic：内联配色接管（JS 注入 background/color/border-color）；主题字重略重于标签 */
 .topic {
   background:var(--accent-soft); color:var(--accent-strong);
   padding:1px 7px; border-radius:6px; font-size:11px; white-space:nowrap; font-weight:650;
   border:1px solid #c7d2fe;
 }
-/* 主题轮换色：每个主题按名 hash 落到 c0..c5，高区分度 */
-.topic.c0 { background:var(--accent-soft);  color:var(--accent);  border-color:#c7d2fe; }   /* indigo */
-.topic.c1 { background:var(--violet-soft);  color:var(--violet);  border-color:#ddd6fe; }   /* violet */
-.topic.c2 { background:var(--cyan-soft);    color:var(--cyan);    border-color:#a5f3fc; }   /* cyan */
-.topic.c3 { background:var(--blue-soft);    color:var(--blue);    border-color:#bfdbfe; }   /* blue */
-.topic.c4 { background:var(--pink-soft);    color:var(--pink);    border-color:#fbcfe8; }   /* pink */
-.topic.c5 { background:var(--amber-soft);   color:var(--amber);   border-color:#fde68a; }   /* amber */
 .read-chip, .mini-metric {
   display:inline-flex; align-items:center; border-radius:6px;
   padding:1px 6px; font-size:11px; line-height:1.5;
