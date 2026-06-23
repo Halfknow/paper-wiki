@@ -493,10 +493,13 @@ body.is-resizing { cursor:col-resize; user-select:none; }
   border-radius:var(--radius); padding:16px 18px;
   box-shadow:var(--shadow); margin-bottom:14px;
 }
+/* detail 头：标题与按钮 flex-wrap——短标题同行；长标题时按钮整体换到标题下方，不挤压标题换行 */
 .dh { display:flex; align-items:flex-start; gap:12px; flex-wrap:wrap; margin-bottom:8px; }
-.title-block { flex:1; min-width:220px; }
+.title-block { flex:1 1 320px; min-width:0; }
+.dh-actions { flex:0 0 auto; }
 .detail-state { display:flex; flex-wrap:wrap; align-items:center; gap:6px; margin-bottom:6px; }
-.dh h2 { margin:0; font-size:21px; flex:1; min-width:200px; line-height:1.32; font-weight:720; }
+/* h2 长标题在 title-block 内自然换行，不被按钮挤窄到中间断行 */
+.dh h2 { margin:0; font-size:21px; line-height:1.32; font-weight:720; word-break:break-word; }
 .dh-actions { display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
 .dh-actions .dh-spacer { flex:1 1 auto; }
 /* 星级评分控件：与按钮等高（min-height:34px 对齐 .btn.sm），作为论文评分属性独占左侧。 */
