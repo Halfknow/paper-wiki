@@ -254,6 +254,12 @@ body.is-resizing { cursor:col-resize; user-select:none; }
 .side-item .folder-edit { opacity:0; width:18px; cursor:pointer; transition:opacity .12s ease; }
 .side-item:hover .folder-edit { opacity:.7; }
 .side-item .folder-edit:hover { opacity:1; color:var(--accent-strong); }
+/* 拖拽收藏夹反馈：起拖的列表项半透明降权；收藏夹 drop 目标 Indigo 描边高亮。 */
+.paper-item.dragging { opacity:.45; box-shadow:var(--shadow-lg); }
+.side-item.drop-target {
+  background:var(--accent-soft); border-color:var(--accent); color:var(--accent-strong);
+  box-shadow:0 0 0 2px var(--accent-soft), inset 3px 0 0 var(--accent);
+}
 
 /* ---------- 论文列表 ---------- */
 /* 工具栏固定在顶部（flex 项，不滚动） */

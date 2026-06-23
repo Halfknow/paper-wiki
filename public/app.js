@@ -273,6 +273,7 @@ function renderSidebar() {
   for (const fo of state.folders) {
     const el = document.createElement('div');
     el.className = 'side-item' + (state.filter.folder === fo.id ? ' active' : '');
+    el.dataset.folderId = fo.id;
     el.innerHTML = `<span class="swatch" style="background:${escapeHtml(fo.color)}"></span>
       <span>${escapeHtml(fo.name)}</span>
       <span class="count">${fo.count || ''}</span>
@@ -281,8 +282,52 @@ function renderSidebar() {
       if (e.target.dataset.edit) { openFolderModal(fo); return; }
       setView({ folder: fo.id, mode: '', starred: false, readStatus: '', status: '' });
     };
+    setupFolderDropTarget(el, fo);
     fl.appendChild(el);
   }
+}
+
+/** 把论文拖入收藏夹：dragover 高亮目标，drop 把 id 加入该收藏夹（去重），批量多选一次性处理。 */
+function setupFolderDropTarget(el, fo) {
+  const readIds = (e) => {
+    try { return JSON.parse(e.dataTransfer.getData('text/paperwiki-ids') || '[]'); }
+    catch { return []; }
+  };
+  el.addEventListener('dragover', (e) => {
+    if (!e.dataTransfer.types.includes('text/paperwiki-ids')) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+    el.classList.add('drop-target');
+  });
+  el.addEventListener('dragleave', () => el.classList.remove('drop-target'));
+  el.addEventListener('drop', async (e) => {
+    const ids = readIds(e);
+    if (!ids.length) return;
+    e.preventDefault();
+    el.classList.remove('drop-target');
+    await addPapersToFolder(ids, fo.id);
+  });
+}
+
+/** 把若干论文加入收藏夹（合并去重，仅 PATCH 真正变动的论文）。 */
+async function addPapersToFolder(ids, folderId) {
+  const toUpdate = [];
+  for (const id of ids) {
+    const p = state.papers.find((x) => x.id === id);
+    if (!p) continue;
+    const cur = new Set(p.folders || []);
+    if (cur.has(folderId)) continue; // 已在该夹，跳过
+    cur.add(folderId);
+    toUpdate.push({ id, folders: [...cur] });
+  }
+  if (!toUpdate.length) { toast('这些论文已在该收藏夹'); return; }
+  let okN = 0;
+  for (const u of toUpdate) {
+    const r = await PATCH('/api/papers/' + encodeURIComponent(u.id), { folders: u.folders });
+    if (r.ok) okN++;
+  }
+  toast(okN === toUpdate.length ? `已把 ${okN} 篇加入收藏夹` : `已加入 ${okN}/${toUpdate.length} 篇（部分失败）`, okN === toUpdate.length ? 'success' : 'error');
+  refresh();
 }
 
 function setView(patch) {
@@ -377,6 +422,18 @@ function renderList() {
     }
     li.onclick = () => state.pickMode ? togglePick(p.id) : select(p.id);
     li.ondblclick = () => openReader(p);
+    // 拖入收藏夹：draggable 起拖时把 id 集（多选=全部选中、否则=本篇）写入 dataTransfer。
+    li.draggable = true;
+    li.addEventListener('dragstart', (e) => {
+      const ids = state.pickMode && state.selected.size ? [...state.selected] : [p.id];
+      e.dataTransfer.effectAllowed = 'copy';
+      e.dataTransfer.setData('text/paperwiki-ids', JSON.stringify(ids));
+      li.classList.add('dragging');
+    });
+    li.addEventListener('dragend', () => {
+      li.classList.remove('dragging');
+      document.querySelectorAll('.side-item.drop-target').forEach((el) => el.classList.remove('drop-target'));
+    });
     ul.appendChild(li);
   }
 }
