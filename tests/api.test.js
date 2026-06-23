@@ -981,7 +981,14 @@ test('POST /api/papers/:id/summarize 文件存在时正常入队（不误伤）'
   assert.strictEqual(r.status, 200);
   assert.strictEqual(r.json.data.queued, 'a');
   assert.deepStrictEqual(enqueued, ['a'], '应正常 enqueue');
-  assert.strictEqual(store.papers.a.status, 'ready', '不应改状态');
+  // 立即标 pending：让串行队列里排队的论文显示为「排队」忙碌态（而非停留在 ready）
+  assert.strictEqual(store.papers.a.status, 'pending', 'summarize 入队应立即标 pending');
+  assert.strictEqual(store.papers.a.error, null, '清空旧错误');
+  // parse 同样标 pending
+  store.papers.a.status = 'ready';
+  const r2 = await call(port, 'POST', '/api/papers/a/parse');
+  assert.strictEqual(r2.status, 200);
+  assert.strictEqual(store.papers.a.status, 'pending', 'parse 入队也标 pending');
   server.close();
   fs.rmSync(dir, { recursive: true, force: true });
 });
