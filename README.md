@@ -24,7 +24,7 @@
   - 🗑️ **删除批注**：编辑模式下点选批注后按 Delete
 - 🧠 **AI 概念清单**：所有论文涉及的关键概念由 AI 抽取后维护在一份清单里（去重归并），页面有专门入口查看/搜索/编辑，可导出 Markdown
   - 选中多篇论文 → 「抽取并追加概念」，AI 只返回**新**概念追加到清单后
-- ✏️ **可调提示词**：顶栏「提示词」入口在线编辑总结 system prompt，写入 store 即时生效（无需重启），留空则用内置默认；可折叠查看默认提示词参考
+- ⚙️ **设置中心**：左下角「⚙️ 设置」入口，全屏视图 + 分组导航（概览 / AI 接口 / 总结·标签主题提示词 / 文件扫描 / arXiv 元数据 / 主题发现 / 主题与标签 / 系统信息）+ 设置内搜索。**把 config.json 的可调项全部纳入界面并运行时热生效**（无需重启 pm2）：AI 接口（Base / Key 掩码 / 模型 / 超时 + 测试连接）、文件扫描间隔（即时重置定时器）、arXiv 补全开关与阈值、主题发现的召回规模/来源/复合排序权重。每项标注「生效值 / config 默认 / 是否已覆盖」、可一键恢复默认；「概览」首页汇总当前生效配置与服务状态；提示词总结/标签主题分离管理（Markdown vs JSON，互不冲突）；主题/标签可重命名（合并）/删除；「系统信息」展示服务级只读项 + 脱敏 config.json
 - 📊 **处理可见化**：顶栏 stats 显示当前处理阶段（解析中/补元数据/总结中 各几篇），列表项 busy 状态实时刷新
 - ⌨️ **键盘导航**：列表 ↑↓ 选择 / Enter 打开 PDF / S 收藏
 - 🔗 **arXiv 元数据**：按文件名清洗标题查 arXiv API 补全（匹配失败则 AI 兜底并标注）
@@ -90,7 +90,10 @@ npm run scan        # 扫描并处理完队列后退出
 | `discover.openAlex` | `true` | S2 缺失时是否用 OpenAlex 按 arXiv DOI 兜底引用量 |
 | `discover.weights` | `{rel:.45,auth:.35,rec:.2}` | 复合排序权重：相关度 / 权威(引用量) / 新近 |
 | `discover.queryEngine` | `auto` | 查询理解引擎：`auto`(claude→网关→原始) / `claude` / `gateway` |
-| `summaryPrompt` | — | 自定义总结 system prompt（留空用内置） |
+| `summaryPrompt` | — | 自定义总结 system prompt（留空用内置默认，输出 Markdown） |
+| `tagsPrompt` | — | 自定义标签/主题 system prompt（留空用内置默认，输出 JSON `{tags,topics,metadata}`） |
+
+> **设置中心**：左下角「⚙️ 设置」可在浏览器里在线配置上表里**几乎所有运行时可调项**——AI 接口、扫描间隔、arXiv 补全、主题发现参数、提示词，并管理主题/标签。改动写入 `store.settings` 并经 `applySettingsOverride` 运行时覆盖 config.json，**保存即生效、无需重启**（扫描间隔会即时重置定时器）；每项可「恢复默认」回到 config.json。`host/port/papersDir` 等服务级项在「系统信息」只读展示（改它们仍需改 config.json + 重启）。建议首次使用先在设置中心配好，不必手改 config.json。
 
 ## 工作方式
 
@@ -127,8 +130,8 @@ data/          papers.json + text/ + backups/（运行时数据，gitignore）
 config.json    实际配置（gitignore，含 key）；模板见 config.example.json
 lib/           后端模块：util/store/parser/arxiv/ai/scanner/api/annotations/discover/claude
 public/        前端静态页（无构建，原生 ESM）
-  ├─ index.html   三栏布局（侧栏/列表/详情）+ 阅读器 + 概念/提示词视图
-  ├─ app.js       主逻辑：路由/列表/详情/收藏夹/主题/概念/多选/导入/键盘导航
+  ├─ index.html   三栏布局（侧栏/列表/详情）+ 阅读器 + 概念视图 + 设置中心（AI接口/提示词/主题标签管理/关于）
+  ├─ app.js       主逻辑：路由/列表/详情/收藏夹/主题/概念/多选/导入/设置中心/键盘导航
   ├─ reader.js    pdf.js 阅读器（双页/批注/缩放/续读）
   └─ styles.css   Indigo 主题
 scripts/       scan-once.js（CLI 扫描）+ e2e-bootstrap.js（e2e 数据准备）
@@ -152,26 +155,33 @@ ecosystem.config.cjs   pm2 配置
 | POST | `/api/discover` | body `{topic}`：非流式发现（兜底/脚本用） |
 | POST | `/api/import` | body `{url, meta?}`：arXiv 网址/ID 导入；带 meta 时按「作者-年份-标题」命名并预填 |
 | POST | `/api/scan` | 手动扫描 |
-| GET/PATCH | `/api/tags` | 标签字典（合并/删除） |
-| GET | `/api/topics` | 主题字典 + 计数 |
+| GET/PATCH | `/api/tags` | 标签字典（`{merge,into}` 重命名 / `{delete}` 删除） |
+| GET/PATCH | `/api/topics` | 主题字典 + 计数（`{merge,into}` / `{delete}`，对齐标签） |
 | GET/POST/PATCH/DELETE | `/api/folders[/:id]` | 收藏夹 CRUD |
 | GET | `/api/concepts` | 概念清单（`?q=`/`?paper=`） |
 | GET | `/api/concepts.md` | 概念清单 Markdown 文档 |
 | PATCH/DELETE | `/api/concepts/:id` | 编辑/删除概念 |
-| GET | `/api/settings` | 读取 summaryPrompt + configPrompt + 内置默认 |
+| GET | `/api/settings` | 读取全段「生效值 + config 原值」（ai/scan/arxiv/discover）+ 提示词 + `overrides`（已覆盖字段）+ `system`（只读 + 脱敏 rawConfig），密钥掩码 |
 | PUT | `/api/settings/summary-prompt` | body `{value}`：更新总结提示词（空串=恢复默认） |
+| PUT | `/api/settings/tags-prompt` | body `{value}`：更新标签/主题提示词（空串=恢复默认） |
+| PUT | `/api/settings/ai` | body `{baseURL?,apiKey?,model?,maxInputChars?,timeoutMs?}`：运行时覆盖 config.ai（热生效） |
+| PUT | `/api/settings/scan` | body `{scanIntervalMinutes}`：热改扫描间隔并重置定时器（0=关闭定时扫描） |
+| PUT | `/api/settings/arxiv` | body `{enabled?,titleSimilarityThreshold?,minIntervalMs?}`：运行时覆盖 arxiv 段 |
+| PUT | `/api/settings/discover` | body `{maxResults?,perAxis?,semanticScholar?,openAlex?,recencyWindowYears?,titleSimThreshold?,semanticScholarApiKey?,weights?}`：运行时覆盖 discover 段 |
+| POST | `/api/settings/reset` | body `{section}` 或 `{all:true}`：清除运行时覆盖，恢复 config.json 默认 |
+| POST | `/api/settings/test` | 用当前生效配置发 ping，验证 AI 连通性 |
 | GET | `/api/stats` | 统计（含 folders/topics/concepts 计数） |
 
 ## 测试
 
 ```bash
-npm test            # node --test，跑 lib 各模块单元测试（119 例）
+npm test            # node --test，跑 lib 各模块单元测试（142 例）
 npm run lint        # ESLint
 npm run format:check # Prettier 格式检查
 npm run test:e2e    # Playwright e2e（reader 渲染 + 高亮往返）
 ```
 
-覆盖 store v2 迁移、原子写/串行锁/损坏自愈、annotations TypedArray 归一化、AI prompt/增量抽取解析、arXiv 网址解析、API 全端点（含 discover / import-with-meta / delete）、health 端点；**发现**全链路（多轴召回 / 复合排序 / claude→网关兜底 / OpenAlex 兜底 / 进度回调）、命名 helper、裸 ID 识别+改名+空总结守卫。e2e 用 Playwright 跑真实浏览器，覆盖 PDF 打开渲染 + 高亮创建持久化往返。
+覆盖 store v2 迁移、原子写/串行锁/损坏自愈、annotations TypedArray 归一化、AI prompt/增量抽取解析、arXiv 网址解析、API 全端点（含 discover / import-with-meta / delete / settings 各段 ai·scan·arxiv·discover·reset / settings/test / topics PATCH）、health 端点；**发现**全链路（多轴召回 / 复合排序 / claude→网关兜底 / OpenAlex 兜底 / 进度回调）、命名 helper、裸 ID 识别+改名+空总结守卫、**两次独立 AI 调用**（summarize Markdown + extractTagsTopics JSON）+ applySettingsOverride 配置覆盖（ai/scan/arxiv/discover）+ scanner.reschedule 热改间隔 + arxiv 读 effConfig。e2e 用 Playwright 跑真实浏览器，覆盖 PDF 打开渲染 + 高亮创建持久化往返。
 
 CI（GitHub Actions）在每次 push/PR 自动跑 lint + 单测 + e2e。
 

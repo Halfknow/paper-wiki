@@ -55,14 +55,14 @@ test('createScanner.scan 发现新 PDF 入库并入队，流水线将其处理�
       extractArxivId: () => null,
     },
     ai: {
-      summarize: async () => ({
-        tldr: '短',
-        contributions: ['x'],
-        method: 'm',
+      summarize: async () => '## TL;DR\n短\n\n## 关键贡献\n- x\n\n## 方法\nm',
+      extractTagsTopics: async () => ({
         tags: ['demo'],
+        topics: [],
         metadata: { title: 'Sample', authors: ['A'], year: 2024 },
       }),
-      buildSummaryMarkdown: (o) => '## TL;DR\n' + o.tldr,
+      buildSummaryMarkdown: (md) => md,
+      applySettingsOverride: (c) => c,
     },
     saveStore: async () => {},
     mergeTags: (s, tags) => {
@@ -132,8 +132,10 @@ test('processOne 已知 arxivId 时用 id: 精确查元数据（URL 导入路径
       extractArxivId: () => '2401.12345',
     },
     ai: {
-      summarize: async () => ({ tldr: 't', contributions: [], method: '', tags: ['x'], metadata: {} }),
-      buildSummaryMarkdown: (o) => o.tldr,
+      summarize: async () => '## TL;DR\nt',
+      extractTagsTopics: async () => ({ tags: ['x'], topics: [], metadata: {} }),
+      buildSummaryMarkdown: (md) => md,
+      applySettingsOverride: (c) => c,
     },
     saveStore: async () => {},
     mergeTags: (s, t) => {
@@ -203,8 +205,10 @@ test('processOne 裸ID文件名自动识别 → id: 精确查 + 补年份 + 重�
       extractArxivId: () => '2012.12556',
     },
     ai: {
-      summarize: async () => ({ tldr: 't', contributions: [], method: '', tags: ['vision-transformer'], topics: ['计算机视觉'] }),
-      buildSummaryMarkdown: (o) => (o ? '## TL;DR\n' + (o.tldr || '') : 'FAILED'),
+      summarize: async () => '## TL;DR\nt',
+      extractTagsTopics: async () => ({ tags: ['vision-transformer'], topics: ['计算机视觉'], metadata: {} }),
+      buildSummaryMarkdown: (md) => md,
+      applySettingsOverride: (c) => c,
     },
     saveStore: async () => {},
     mergeTags: (s, t) => {
@@ -227,6 +231,107 @@ test('processOne 裸ID文件名自动识别 → id: 精确查 + 补年份 + 重�
   scanner.stop();
 });
 
+test('reschedule 热改定时扫描间隔（新间隔触发多次扫描；reschedule(0) 关闭）', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pwresched-'));
+  const storePath = path.join(dir, 'papers.json');
+  const store = { version: 2, tags: [], papers: {} };
+  let saves = 0;
+  const deps = {
+    parser: { extractText: async () => ({ text: '', charCount: 0, numPages: 0 }) },
+    arxiv: {
+      cleanFilenameToTitle: (f) => f,
+      searchArxiv: async () => ({ entries: [] }),
+      pickBest: () => ({ best: null, confidence: 0, source: 'none' }),
+      extractArxivId: () => null,
+    },
+    ai: { applySettingsOverride: (c) => c },
+    saveStore: async () => {
+      saves++;
+    },
+    mergeTags: () => {},
+    config: { ai: {}, arxiv: {} },
+    rateLimitArxiv: async () => {},
+  };
+  const scanner = createScanner({ store, storePath, papersDir: dir, deps, scanIntervalMs: 0 });
+  scanner.reschedule(0.001); // 0.001 分钟 ≈ 60ms
+  await new Promise((r) => setTimeout(r, 220));
+  scanner.reschedule(0); // 关闭定时扫描
+  const after = saves;
+  assert.ok(after >= 2, `新间隔应触发多次扫描，实际 saveStore=${after}`);
+  await new Promise((r) => setTimeout(r, 150));
+  assert.strictEqual(saves, after, 'reschedule(0) 后不应再触发扫描');
+  scanner.stop();
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('processOne arxiv 段读 effConfig（store.settings.arxiv.enabled:false 热关闭补全）', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pwarxiveff-'));
+  fs.writeFileSync(path.join(dir, 'x.pdf'), Buffer.from('%PDF-1.4\n%placeholder\n'));
+  const storePath = path.join(dir, 'papers.json');
+  const store = {
+    version: 2,
+    tags: [],
+    settings: { arxiv: { enabled: false } }, // 运行时关闭，覆盖 config 的默认开启
+    papers: {
+      x: {
+        id: 'x',
+        filename: 'x.pdf',
+        filepath: path.join(dir, 'x.pdf'),
+        title: 'T',
+        abstract: 'A',
+        authors: ['A'],
+        year: 2024,
+        arxivId: null,
+        tags: [],
+        topics: [],
+        status: 'pending',
+        error: null,
+        updatedAt: 0,
+      },
+    },
+  };
+  let searchCalled = false;
+  const deps = {
+    parser: { extractText: async () => ({ text: '全文', charCount: 2, numPages: 1 }) },
+    arxiv: {
+      cleanFilenameToTitle,
+      searchArxiv: async () => {
+        searchCalled = true;
+        return { entries: [] };
+      },
+      pickBest: () => ({ best: null, confidence: 0, source: 'none' }),
+      extractArxivId: () => null,
+    },
+    ai: {
+      summarize: async () => '## TL;DR\nt',
+      extractTagsTopics: async () => ({ tags: [], topics: [], metadata: {} }),
+      buildSummaryMarkdown: (md) => md,
+      // 真实合并语义：store.settings.arxiv 覆盖 config.arxiv
+      applySettingsOverride: (config, settings) => ({
+        ...config,
+        arxiv: { ...config.arxiv, ...((settings && settings.arxiv) || {}) },
+      }),
+    },
+    saveStore: async () => {},
+    mergeTags: (s, t) => {
+      s.tags = Array.from(new Set([...s.tags, ...t]));
+    },
+    config: { ai: { model: 'm' }, arxiv: { enabled: true } }, // config 默认开启
+    rateLimitArxiv: async () => {},
+  };
+  const scanner = createScanner({ store, storePath, papersDir: dir, deps, scanIntervalMs: 0 });
+  scanner.enqueue(['x']);
+  await new Promise((r) => setTimeout(r, 80));
+  assert.strictEqual(
+    searchCalled,
+    false,
+    'effConfig.arxiv.enabled=false 时不应调用 searchArxiv（说明读的是 effConfig 而非 config）',
+  );
+  assert.strictEqual(store.papers.x.status, 'ready');
+  scanner.stop();
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
 test('processOne 空总结不被当作成功（存可重试占位、不写误导性空 TL;DR）', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pwscan4-'));
   fs.writeFileSync(path.join(dir, 'x.pdf'), Buffer.from('%PDF-1.4\n%placeholder\n'));
@@ -235,7 +340,20 @@ test('processOne 空总结不被当作成功（存可重试占位、不写误导
     version: 2,
     tags: [],
     papers: {
-      x: { id: 'x', filename: 'x.pdf', filepath: path.join(dir, 'x.pdf'), title: 'T', authors: ['A'], year: 2024, arxivId: null, tags: [], topics: [], status: 'pending', error: null, updatedAt: 0 },
+      x: {
+        id: 'x',
+        filename: 'x.pdf',
+        filepath: path.join(dir, 'x.pdf'),
+        title: 'T',
+        authors: ['A'],
+        year: 2024,
+        arxivId: null,
+        tags: [],
+        topics: [],
+        status: 'pending',
+        error: null,
+        updatedAt: 0,
+      },
     },
   };
   const deps = {
@@ -247,8 +365,11 @@ test('processOne 空总结不被当作成功（存可重试占位、不写误导
       extractArxivId: () => null,
     },
     ai: {
-      summarize: async () => ({}), // 模型返回空对象（瞬时失败）
-      buildSummaryMarkdown: (o) => (o ? '## TL;DR\n' + (o.tldr || '') : '*（总结生成失败，可点击「重新总结」重试）*'),
+      // 模型返回空字符串（瞬时失败 / 被网关清空）
+      summarize: async () => '',
+      extractTagsTopics: async () => ({ tags: [], topics: [], metadata: {} }),
+      buildSummaryMarkdown: (md) => (md && String(md).trim() ? md : '*（总结生成失败，可点击「重新总结」重试）*'),
+      applySettingsOverride: (c) => c,
     },
     saveStore: async () => {},
     mergeTags: (s, t) => {

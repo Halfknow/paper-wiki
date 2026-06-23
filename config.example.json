@@ -22,5 +22,6 @@
     "titleSimThreshold": 0.85,
     "weights": { "rel": 0.45, "auth": 0.35, "rec": 0.2 }
   },
-  "summaryPrompt": ""
+  "summaryPrompt": "",
+  "tagsPrompt": ""
 }

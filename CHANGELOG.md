@@ -2,11 +2,39 @@
 
 本文件记录 PaperWiki 每个版本的显著变更。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/)，版本号语义化。
 
-## [Unreleased]
+## [2.4.0] — 2026-06-23
 
-_下一个版本的改动会写在这里。_
+> **设置中心（全配置接管 + 概览仪表盘 + 状态增强）+ 总结/标签提示词解耦。**
+> 左下角「⚙️ 设置」改为分组导航（概览 / AI 接口 / 总结·标签主题提示词 / 文件扫描 / arXiv 元数据 / 主题发现 / 主题与标签 / 系统信息）：把 config.json 的扫描间隔、arxiv、discover 全部纳入界面并运行时热生效，每项标注「生效值 / config 默认 / 是否已覆盖」、可一键恢复默认；新增概览仪表盘与设置内搜索。另修复自定义总结提示词导致空总结+空标签的根因——总结与标签/主题拆成两次独立 AI 调用。
+
+### Added — 设置中心（左下角入口，全屏视图 + 分组导航 + 设置内搜索）
+- **分组导航 + 概览仪表盘 + 设置内搜索**：左侧导航分组（总览 / 智能 / 采集 / 数据与系统）。「概览」首页用 metric 卡展示当前生效配置（模型 / 端点 / 扫描间隔 / arXiv 开关 / 发现来源 / 论文数 / 版本 / 服务状态），并汇总「N 项已覆盖 config.json」+ 一键全部恢复默认；顶部搜索框按关键词过滤设置项。
+- **全配置接管（运行时热生效，无需重启 pm2）**：把 config.json 的可调项全部纳入界面，保存即写 `store.settings` 并经 `applySettingsOverride` 覆盖——
+  - **AI 接口**：API Base / Key（密码框 + 掩码回显，提交掩码不误清空）/ 模型 / 最大输入字符 / 超时；「测试连接」发 ping 校验连通性。
+  - **文件扫描**：`scanIntervalMinutes`，保存后即时重置定时器（`scanner.reschedule`），设 0 关闭定时扫描。
+  - **arXiv 元数据**：`enabled`（开关）/ `titleSimilarityThreshold` / `minIntervalMs`。
+  - **主题发现**：`maxResults` / `perAxis` / `recencyWindowYears` / `titleSimThreshold` / `semanticScholar` / `openAlex` / `semanticScholarApiKey`（掩码）/ 复合排序权重 `weights{rel,auth,rec}`。
+- **逐项状态增强**：每个可编辑项展示「生效值」+「config.json 默认值」提示 +「已覆盖 config」徽标（仅当被 `store.settings` 覆盖时显示），支持按段「恢复默认」（清除该段运行时覆盖回到 config）。
+- **提示词分离管理**：总结提示词 / 标签主题提示词两个独立面板，各自「恢复默认 / 保存 / 查看内置默认」（总结输出 Markdown、标签主题输出 JSON，互不冲突）。
+- **主题与标签管理**：双栏（主题 / 标签）列表 + 计数，支持重命名（合并）、删除。新增 `PATCH /api/topics`（`{merge,into}` / `{delete}`，对齐既有 `PATCH /api/tags`）。
+- **系统信息**：服务级只读项（host / port / papersDir / 版本 / 论文数 / 运行时长）+ 可折叠「原始 config.json（密钥脱敏，只读）」。
+
+### Fixed — 自定义总结提示词导致空总结+空标签（根因修复）
+- **根因**：`lib/ai.js` 的 `callChat` 把 `response_format:{type:'json_object'}` 写死，与用户自定义的 Markdown 总结提示词（要求输出 `## 章节` / LaTeX）直接冲突 → 模型被强制走 JSON 模式却要写 Markdown → 返回空 `{}` → 触发空总结守卫 → summary 存占位 + tags/topics 全空。
+- **修复**：拆成**两次独立调用**——`summarize`（`jsonMode:false`，自由 Markdown，用你的自定义提示词）+ `extractTagsTopics`（`jsonMode:true`，强制 JSON `{tags,topics,metadata}`，用内置或自定义的标签提示词）。两次各自 try/catch：总结失败不阻塞标签，标签失败不回滚总结，任一成功即 `ready`。
+- **拆分**：`DEFAULT_PROMPT` 拆为 `DEFAULT_SUMMARY_PROMPT`（Markdown）+ `DEFAULT_TAGS_PROMPT`（JSON）；`summarize` 返回字符串而非 JSON 对象；`buildSummaryMarkdown` 入参改为字符串。
+
+### Changed
+- **配置覆盖链路（泛化）**：`applySettingsOverride(config, store.settings)` 从只覆盖 `ai` 扩展为同时覆盖 `scanIntervalMinutes / arxiv / discover`（`weights` 深合并），新增段用「`!== undefined` 即覆盖」规则正确处理布尔 `false` 与数值 `0`（如间隔设 0 关闭扫描）。scanner 的 arxiv 补全改读 effectiveConfig（原读死 `config`，覆盖不生效）；scanner 新增 `reschedule(minutes)` 供扫描间隔热改；discover 网关规划同样走 effectiveConfig。
+- **提示词优先级**（各自独立三级）：总结 = `store.settings.summaryPrompt > config.summaryPrompt > DEFAULT_SUMMARY_PROMPT`；标签/主题 = `store.settings.tagsPrompt > config.tagsPrompt > DEFAULT_TAGS_PROMPT`。
+- 顶栏「提示词」按钮改为快捷入口，跳转到设置中心·总结提示词 tab（原独立 prompt-view 已迁移进设置中心并删除）；左下角「设置」入口默认进「概览」。
+- `GET /api/settings` 进一步扩展返回各采集段「生效值 + config 原值」（`scan/configScan`、`arxiv/configArxiv`、`discover/configDiscover`）、`overrides`（哪些字段被 `store.settings` 覆盖，驱动徽标）、`system`（host/port/papersDir/版本/论文数/脱敏 `rawConfig`）；保留旧字段（`summaryPrompt/configPrompt/defaultPrompt/tagsPrompt/defaultTagsPrompt/ai/configAi`）向后兼容。新增 `PUT /api/settings/{scan,arxiv,discover}` 与 `POST /api/settings/reset`（按段 `{section}` / 全部 `{all:true}` 恢复默认）。
+
+### Tests
+- 由 119 例增至 **142 例**：新增 `extractTagsTopics` / `parseTagsResult` / `applySettingsOverride`（ai 覆盖/空串/无 settings + scan/arxiv/discover 合并：布尔 `false`、数值 `0`、`weights` 深合并、未设透传、密钥空串）/ `summarize` 返回字符串 + `jsonMode:false` 校验 / `callChat` 双模式 / scanner 两次调用 mock + `reschedule` 热改间隔 + arxiv 读 effConfig；API 新增 `GET /api/settings` 全段字段（采集段 + overrides + system）、`PUT /api/settings/{ai,scan,arxiv,discover}`（白名单 / 掩码 / 空串清空 / 未传保留）、`POST /api/settings/reset`（按段 + 全部）、`PATCH /api/topics`（重命名/删除）。e2e（reader 渲染 + 高亮往返）保持全绿。
 
 ---
+
 
 ## [2.3.0] — 2026-06-22
 

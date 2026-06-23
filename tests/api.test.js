@@ -498,8 +498,20 @@ test('DELETE /api/papers/:id 删除条目 + PDF + 全文，并清理概念引用
 });
 
 test('DELETE /api/papers/:id 文件缺失也能删条目（不抛）；不存在返回 404', async () => {
-  const store = { version: 2, tags: [], topics: [], folders: [], concepts: [], papers: { a: { id: 'a', filename: 'gone.pdf', filepath: '/no/such/gone.pdf', status: 'missing' } } };
-  const ctx = { store, save: async () => {}, scanner: { scan: async () => ({}), enqueue: () => {} }, config: { ai: {}, papersDir: '/tmp' } };
+  const store = {
+    version: 2,
+    tags: [],
+    topics: [],
+    folders: [],
+    concepts: [],
+    papers: { a: { id: 'a', filename: 'gone.pdf', filepath: '/no/such/gone.pdf', status: 'missing' } },
+  };
+  const ctx = {
+    store,
+    save: async () => {},
+    scanner: { scan: async () => ({}), enqueue: () => {} },
+    config: { ai: {}, papersDir: '/tmp' },
+  };
   const router = createApiRouter(ctx);
   const server = await startServer(router.handle);
   const port = server.address().port;
@@ -527,6 +539,307 @@ test('PUT /api/settings/summary-prompt 持久化并 trim', async () => {
   assert.ok(saved, 'save should be called');
   // 空串 = 恢复默认
   const r2 = await call(port, 'PUT', '/api/settings/summary-prompt', { value: '   ' });
+  assert.strictEqual(r2.status, 200);
   assert.strictEqual(store.settings.summaryPrompt, '');
+  server.close();
+});
+
+test('GET /api/settings 返回新字段（tagsPrompt / ai 掩码 / defaultTagsPrompt）', async () => {
+  const store = {
+    version: 2,
+    tags: [],
+    topics: [],
+    folders: [],
+    concepts: [],
+    settings: {
+      summaryPrompt: '总结',
+      tagsPrompt: '标签',
+      ai: { baseURL: 'http://x/v1', apiKey: 'sk-1234567890abcdef', model: 'glm' },
+    },
+    papers: {},
+  };
+  const router = createApiRouter({
+    ...baseCtx(store),
+    config: { ai: { baseURL: 'http://config/v1', model: 'cfg-model' } },
+  });
+  const server = await startServer(router.handle);
+  const port = server.address().port;
+  const r = await call(port, 'GET', '/api/settings');
+  assert.strictEqual(r.json.data.summaryPrompt, '总结');
+  assert.strictEqual(r.json.data.tagsPrompt, '标签');
+  assert.ok(r.json.data.defaultTagsPrompt && r.json.data.defaultTagsPrompt.length > 20);
+  // 生效 AI 配置 = store.settings.ai 覆盖 config.ai
+  assert.strictEqual(r.json.data.ai.baseURL, 'http://x/v1');
+  assert.strictEqual(r.json.data.ai.model, 'glm');
+  assert.strictEqual(r.json.data.ai.hasApiKey, true);
+  assert.ok(r.json.data.ai.apiKeyMasked.includes('****'), 'apiKey 应掩码');
+  assert.ok(!r.json.data.ai.apiKeyMasked.includes('1234567890abcdef'), '完整 key 不应泄露');
+  // config.json 原值（只读参考）
+  assert.strictEqual(r.json.data.configAi.baseURL, 'http://config/v1');
+  assert.strictEqual(r.json.data.configAi.model, 'cfg-model');
+  server.close();
+});
+
+test('PUT /api/settings/ai 持久化、白名单字段、apiKey 掩码回传不覆盖', async () => {
+  const store = { version: 2, tags: [], topics: [], folders: [], concepts: [], settings: {}, papers: {} };
+  const router = createApiRouter(baseCtx(store));
+  const server = await startServer(router.handle);
+  const port = server.address().port;
+  // 首次写入
+  const r1 = await call(port, 'PUT', '/api/settings/ai', {
+    baseURL: 'http://new/v1',
+    apiKey: 'sk-newkey123456',
+    model: 'gpt-4o',
+    maxInputChars: 50000,
+    timeoutMs: 90000,
+  });
+  assert.strictEqual(r1.status, 200);
+  assert.strictEqual(store.settings.ai.baseURL, 'http://new/v1');
+  assert.strictEqual(store.settings.ai.apiKey, 'sk-newkey123456');
+  assert.strictEqual(store.settings.ai.model, 'gpt-4o');
+  assert.strictEqual(store.settings.ai.maxInputChars, 50000);
+  assert.strictEqual(store.settings.ai.timeoutMs, 90000);
+  assert.ok(r1.json.data.ai.apiKeyMasked.includes('****'));
+  // 再次提交掩码（模拟前端回显误传）→ apiKey 不应被覆盖/清空
+  const r2 = await call(port, 'PUT', '/api/settings/ai', { apiKey: '****' });
+  assert.strictEqual(r2.status, 200);
+  assert.strictEqual(store.settings.ai.apiKey, 'sk-newkey123456', '掩码回传不应覆盖原 key');
+  // 显式空串 = 清空 apiKey
+  const r3 = await call(port, 'PUT', '/api/settings/ai', { apiKey: '' });
+  assert.strictEqual(r3.status, 200);
+  assert.strictEqual(store.settings.ai.apiKey, '', '空串应清空 apiKey');
+  // 未传字段保留原值
+  const r4 = await call(port, 'PUT', '/api/settings/ai', { model: 'claude' });
+  assert.strictEqual(r4.status, 200);
+  assert.strictEqual(store.settings.ai.model, 'claude');
+  assert.strictEqual(store.settings.ai.baseURL, 'http://new/v1', '未传字段保留原值');
+  server.close();
+});
+
+test('PATCH /api/topics 主题重命名/删除（对齐标签 PATCH）', async () => {
+  const store = {
+    version: 2,
+    tags: [],
+    topics: ['强化学习', '推理', '对齐'],
+    folders: [],
+    concepts: [],
+    papers: {
+      a: { id: 'a', tags: [], topics: ['强化学习', '推理'], folders: [] },
+      b: { id: 'b', tags: [], topics: ['强化学习'], folders: [] },
+    },
+  };
+  const router = createApiRouter(baseCtx(store));
+  const server = await startServer(router.handle);
+  const port = server.address().port;
+  // 合并：强化学习 → RL
+  const r1 = await call(port, 'PATCH', '/api/topics', { merge: '强化学习', into: 'RL' });
+  assert.strictEqual(r1.status, 200);
+  assert.deepStrictEqual(store.papers.a.topics.sort(), ['RL', '推理']);
+  assert.deepStrictEqual(store.papers.b.topics, ['RL']);
+  assert.ok(store.topics.includes('RL'));
+  assert.ok(!store.topics.includes('强化学习'));
+  // 删除：推理
+  const r2 = await call(port, 'PATCH', '/api/topics', { delete: '推理' });
+  assert.strictEqual(r2.status, 200);
+  assert.deepStrictEqual(store.papers.a.topics, ['RL']);
+  assert.ok(!store.topics.includes('推理'));
+  server.close();
+});
+
+test('GET /api/settings 返回采集段（scan/arxiv/discover）+ overrides + system 只读', async () => {
+  const store = {
+    version: 2,
+    tags: [],
+    topics: [],
+    folders: [],
+    concepts: [],
+    settings: {
+      scanIntervalMinutes: 15,
+      arxiv: { enabled: false },
+      discover: { maxResults: 12, semanticScholarApiKey: 's2-secret-key-123', weights: { rec: 0.4 } },
+    },
+    papers: { a: {}, b: {} },
+  };
+  const router = createApiRouter({
+    ...baseCtx(store),
+    config: {
+      host: '127.0.0.1',
+      port: 8888,
+      papersDir: 'papers',
+      ai: { baseURL: 'http://cfg/v1', model: 'm', apiKey: 'sk-cfgsecret999' },
+      scanIntervalMinutes: 5,
+      arxiv: { enabled: true, titleSimilarityThreshold: 0.75, minIntervalMs: 3000 },
+      discover: {
+        maxResults: 40,
+        perAxis: 25,
+        semanticScholar: true,
+        openAlex: true,
+        recencyWindowYears: 8,
+        titleSimThreshold: 0.85,
+        weights: { rel: 0.45, auth: 0.35, rec: 0.2 },
+      },
+    },
+  });
+  const server = await startServer(router.handle);
+  const port = server.address().port;
+  const r = await call(port, 'GET', '/api/settings');
+  const d = r.json.data;
+  // 生效值 = store.settings 覆盖 config
+  assert.strictEqual(d.scan.scanIntervalMinutes, 15);
+  assert.strictEqual(d.configScan.scanIntervalMinutes, 5);
+  assert.strictEqual(d.arxiv.enabled, false); // 覆盖
+  assert.strictEqual(d.configArxiv.enabled, true); // config 原值
+  assert.strictEqual(d.discover.maxResults, 12); // 覆盖
+  assert.strictEqual(d.discover.perAxis, 25); // 未覆盖透传
+  assert.strictEqual(d.discover.weights.rec, 0.4); // weights 深合并
+  assert.strictEqual(d.discover.weights.rel, 0.45);
+  assert.strictEqual(d.configDiscover.maxResults, 40);
+  // S2 key 掩码，不泄露明文
+  assert.strictEqual(d.discover.hasS2Key, true);
+  assert.ok(!JSON.stringify(d).includes('s2-secret-key-123'), 'S2 key 明文不应出现在响应');
+  // overrides 标记（驱动前端「已覆盖」徽标）
+  assert.ok(d.overrides.discover.includes('maxResults'));
+  assert.ok(d.overrides.arxiv.includes('enabled'));
+  assert.strictEqual(d.overrides.scan, true);
+  // system 只读
+  assert.strictEqual(d.system.host, '127.0.0.1');
+  assert.strictEqual(d.system.port, 8888);
+  assert.strictEqual(d.system.papers, 2);
+  assert.ok(d.system.version, '应含版本号');
+  assert.ok(!JSON.stringify(d.system.rawConfig).includes('sk-cfgsecret999'), 'config apiKey 不应明文出现在 rawConfig');
+  server.close();
+});
+
+test('PUT /api/settings/scan 持久化 + 调用 scanner.reschedule（热生效，允许 0 关闭）', async () => {
+  const store = { version: 2, tags: [], topics: [], folders: [], concepts: [], settings: {}, papers: {} };
+  let rescheduled = null;
+  const ctx = {
+    store,
+    save: async () => {},
+    scanner: {
+      scan: async () => ({}),
+      enqueue: () => {},
+      extractConcepts: async () => ({}),
+      reschedule: (m) => {
+        rescheduled = m;
+      },
+    },
+    config: { ai: {}, scanIntervalMinutes: 5 },
+  };
+  const router = createApiRouter(ctx);
+  const server = await startServer(router.handle);
+  const port = server.address().port;
+  const r = await call(port, 'PUT', '/api/settings/scan', { scanIntervalMinutes: 30 });
+  assert.strictEqual(r.status, 200);
+  assert.strictEqual(store.settings.scanIntervalMinutes, 30);
+  assert.strictEqual(r.json.data.scan.scanIntervalMinutes, 30);
+  assert.strictEqual(rescheduled, 30, '应热重置定时器');
+  const r2 = await call(port, 'PUT', '/api/settings/scan', { scanIntervalMinutes: 0 });
+  assert.strictEqual(r2.status, 200);
+  assert.strictEqual(store.settings.scanIntervalMinutes, 0, '0=关闭定时扫描应合法');
+  assert.strictEqual(rescheduled, 0);
+  server.close();
+});
+
+test('PUT /api/settings/arxiv 持久化（布尔 enabled / 阈值 / 间隔，未传字段保留）', async () => {
+  const store = { version: 2, tags: [], topics: [], folders: [], concepts: [], settings: {}, papers: {} };
+  const router = createApiRouter(baseCtx(store));
+  const server = await startServer(router.handle);
+  const port = server.address().port;
+  const r = await call(port, 'PUT', '/api/settings/arxiv', {
+    enabled: false,
+    titleSimilarityThreshold: 0.9,
+    minIntervalMs: 5000,
+  });
+  assert.strictEqual(r.status, 200);
+  assert.strictEqual(store.settings.arxiv.enabled, false);
+  assert.strictEqual(store.settings.arxiv.titleSimilarityThreshold, 0.9);
+  assert.strictEqual(store.settings.arxiv.minIntervalMs, 5000);
+  assert.strictEqual(r.json.data.arxiv.enabled, false);
+  await call(port, 'PUT', '/api/settings/arxiv', { enabled: true });
+  assert.strictEqual(store.settings.arxiv.enabled, true);
+  assert.strictEqual(store.settings.arxiv.titleSimilarityThreshold, 0.9, '未传字段保留');
+  server.close();
+});
+
+test('PUT /api/settings/discover 持久化（白名单 + weights + S2 key 掩码保护）', async () => {
+  const store = { version: 2, tags: [], topics: [], folders: [], concepts: [], settings: {}, papers: {} };
+  const router = createApiRouter({
+    ...baseCtx(store),
+    config: { ai: {}, discover: { weights: { rel: 0.45, auth: 0.35, rec: 0.2 } } },
+  });
+  const server = await startServer(router.handle);
+  const port = server.address().port;
+  const r = await call(port, 'PUT', '/api/settings/discover', {
+    maxResults: 20,
+    semanticScholar: false,
+    weights: { rel: 0.6, auth: 0.3, rec: 0.1 },
+    semanticScholarApiKey: 'new-s2-key',
+  });
+  assert.strictEqual(r.status, 200);
+  assert.strictEqual(store.settings.discover.maxResults, 20);
+  assert.strictEqual(store.settings.discover.semanticScholar, false);
+  assert.strictEqual(store.settings.discover.weights.rel, 0.6);
+  assert.strictEqual(store.settings.discover.semanticScholarApiKey, 'new-s2-key');
+  assert.strictEqual(r.json.data.discover.hasS2Key, true);
+  assert.ok(!JSON.stringify(r.json.data).includes('new-s2-key'), '回显 S2 key 应掩码');
+  // 掩码回传（前端回显占位）不应覆盖
+  await call(port, 'PUT', '/api/settings/discover', { semanticScholarApiKey: '********' });
+  assert.strictEqual(store.settings.discover.semanticScholarApiKey, 'new-s2-key', '掩码回传不应覆盖原 key');
+  // 空串=清空
+  await call(port, 'PUT', '/api/settings/discover', { semanticScholarApiKey: '' });
+  assert.strictEqual(store.settings.discover.semanticScholarApiKey, '');
+  server.close();
+});
+
+test('POST /api/settings/reset 按段清除覆盖 + all 全清 + scan 重置定时器', async () => {
+  const store = {
+    version: 2,
+    tags: [],
+    topics: [],
+    folders: [],
+    concepts: [],
+    settings: {
+      scanIntervalMinutes: 9,
+      arxiv: { enabled: false },
+      discover: { maxResults: 5 },
+      summaryPrompt: 'x',
+      ai: { model: 'm' },
+    },
+    papers: {},
+  };
+  let rescheduled = null;
+  const ctx = {
+    store,
+    save: async () => {},
+    scanner: {
+      scan: async () => ({}),
+      enqueue: () => {},
+      extractConcepts: async () => ({}),
+      reschedule: (m) => {
+        rescheduled = m;
+      },
+    },
+    config: { ai: {}, scanIntervalMinutes: 5 },
+  };
+  const router = createApiRouter(ctx);
+  const server = await startServer(router.handle);
+  const port = server.address().port;
+  // 单段
+  const r1 = await call(port, 'POST', '/api/settings/reset', { section: 'arxiv' });
+  assert.strictEqual(r1.status, 200);
+  assert.strictEqual(store.settings.arxiv, undefined, 'arxiv 覆盖应被清除');
+  assert.strictEqual(store.settings.discover.maxResults, 5, '其它段不受影响');
+  // scan 段：清除并回到 config 默认间隔
+  const r2 = await call(port, 'POST', '/api/settings/reset', { section: 'scan' });
+  assert.strictEqual(r2.status, 200);
+  assert.strictEqual(store.settings.scanIntervalMinutes, undefined);
+  assert.strictEqual(rescheduled, 5, 'scan 重置应按 config 默认重排定时器');
+  // all 全清
+  const r3 = await call(port, 'POST', '/api/settings/reset', { all: true });
+  assert.strictEqual(r3.status, 200);
+  assert.strictEqual(store.settings.discover, undefined);
+  assert.strictEqual(store.settings.ai, undefined);
+  assert.strictEqual(store.settings.summaryPrompt, undefined);
   server.close();
 });

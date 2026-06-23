@@ -33,7 +33,7 @@
     </div>
     <div class="top-actions">
       <button id="btn-concepts" class="btn ghost" title="查看 AI 维护的概念清单">概念</button>
-      <button id="btn-prompt" class="btn ghost" title="编辑总结提示词">提示词</button>
+      <button id="btn-prompt" class="btn ghost" title="编辑总结提示词（设置中心）">提示词</button>
       <button id="btn-import" class="btn ghost" title="从 arXiv 网址(abs/pdf/html)或 ID 导入">导入</button>
       <button id="btn-discover" class="btn ghost" title="按主题发现 arXiv 论文（claude 生成检索式 + 引用量排序）">发现</button>
       <button id="btn-scan" class="btn" title="扫描 papers/ 目录">扫描</button>
@@ -61,6 +61,11 @@
         <div class="side-title">收藏夹</div>
         <div id="folder-list"></div>
         <div id="folder-empty" class="side-item" style="color:var(--muted2);cursor:default;">（无收藏夹）</div>
+      </div>
+      <div class="side-footer">
+        <button class="side-settings" id="btn-settings" title="设置（AI 接口 / 提示词 / 采集 / 主题标签 / 系统）">
+          <span class="ico"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></span><span>设置</span>
+        </button>
       </div>
     </aside>
     <!-- 侧栏收起后展开用的细条 -->
@@ -131,28 +136,288 @@
     <div id="concepts-grid" class="concepts-grid"></div>
   </main>
 
-  <!-- 提示词编辑视图 -->
-  <main class="pane page-view" id="prompt-view" style="display:none;">
-    <div class="concepts-head">
-      <div>
-        <h2>总结提示词</h2>
-        <p>保存后会写入 store，下次重新总结时使用。</p>
-      </div>
-      <span class="spacer" style="flex:1"></span>
-      <button class="btn ghost sm" id="btn-prompt-default">恢复默认</button>
-      <button class="btn ghost sm" id="btn-prompt-close">← 返回</button>
-    </div>
-    <div class="prompt-panel">
-      <p class="save-hint">留空则使用内置默认；如果你在本页修改了提示词，记得保存后再回到论文详情重跑总结。</p>
-      <textarea id="prompt-edit" placeholder="正在加载…"></textarea>
-      <div class="editor-actions">
-        <button class="btn" id="btn-prompt-save">保存</button>
-        <span class="save-hint" id="prompt-hint"></span>
-      </div>
-      <details>
-        <summary class="save-hint">查看内置默认提示词（参考）</summary>
-        <pre id="prompt-default-pre" class="md"></pre>
-      </details>
+  <!-- 设置中心视图（左下角入口；迁移并扩展原 prompt-view） -->
+  <main class="pane page-view" id="settings-view" style="display:none;">
+    <div class="settings-shell">
+      <aside class="settings-nav" id="settings-nav">
+        <div class="settings-search">
+          <input type="text" id="settings-search-input" placeholder="搜索设置项…" autocomplete="off" />
+        </div>
+        <div class="settings-nav-group">总览</div>
+        <div class="settings-nav-item active" data-tab="overview" data-kw="概览 仪表盘 状态 生效"><span class="sni"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="8" height="8" rx="1.5"/><rect x="13" y="3" width="8" height="5" rx="1.5"/><rect x="13" y="10" width="8" height="11" rx="1.5"/><rect x="3" y="13" width="8" height="8" rx="1.5"/></svg></span><span>概览</span></div>
+        <div class="settings-nav-group">智能</div>
+        <div class="settings-nav-item" data-tab="ai" data-kw="ai 接口 api key 模型 model 网关"><span class="sni"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3v5"/><path d="M15 3v5"/><path d="M6 8h12v3a6 6 0 0 1-12 0V8z"/><path d="M12 17v4"/></svg></span><span>AI 接口</span></div>
+        <div class="settings-nav-item" data-tab="summary" data-kw="总结 提示词 prompt summary"><span class="sni"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="3" width="14" height="18" rx="2"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="9" y1="12" x2="15" y2="12"/><line x1="9" y1="16" x2="13" y2="16"/></svg></span><span>总结提示词</span></div>
+        <div class="settings-nav-item" data-tab="tags" data-kw="标签 主题 tags topics 提示词"><span class="sni"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M20.6 13.4l-7.2 7.2a2 2 0 0 1-2.8 0L2 12V2h10l8.6 8.6a2 2 0 0 1 0 2.8z"/><circle cx="7.5" cy="7.5" r="1.3"/></svg></span><span>标签 / 主题提示词</span></div>
+        <div class="settings-nav-group">采集</div>
+        <div class="settings-nav-item" data-tab="scan" data-kw="扫描 间隔 定时 scan"><span class="sni"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><polyline points="21 3 21 8 16 8"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/><polyline points="3 21 3 16 8 16"/></svg></span><span>文件扫描</span></div>
+        <div class="settings-nav-item" data-tab="arxiv" data-kw="arxiv 元数据 补全 阈值"><span class="sni"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span><span>arXiv 元数据</span></div>
+        <div class="settings-nav-item" data-tab="discover" data-kw="发现 discover 召回 权重 semantic scholar openalex"><span class="sni"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><polygon points="16 8 13.5 13.5 8 16 10.5 10.5 16 8"/></svg></span><span>主题发现</span></div>
+        <div class="settings-nav-group">数据与系统</div>
+        <div class="settings-nav-item" data-tab="taxonomy" data-kw="主题 标签 管理 合并 重命名"><span class="sni"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg></span><span>主题与标签</span></div>
+        <div class="settings-nav-item" data-tab="system" data-kw="系统 信息 端口 目录 版本 健康 config"><span class="sni"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="3" width="19" height="7" rx="2"/><rect x="2.5" y="14" width="19" height="7" rx="2"/><line x1="6" y1="6.5" x2="6.01" y2="6.5"/><line x1="6" y1="17.5" x2="6.01" y2="17.5"/></svg></span><span>系统信息</span></div>
+        <div class="settings-nav-foot">
+          <button class="btn ghost sm" id="btn-settings-close">← 返回</button>
+        </div>
+      </aside>
+
+      <section class="settings-body">
+        <!-- 概览 -->
+        <div class="settings-panel" data-panel="overview">
+          <div class="settings-head">
+            <div><h2>概览</h2><p>当前生效配置与服务状态一览</p></div>
+          </div>
+          <div class="ov-metrics" id="ov-metrics"></div>
+          <div class="ov-override-bar" id="ov-override-bar" hidden>
+            <span class="ov-override-text" id="ov-override-text"></span>
+            <button class="btn ghost sm danger" id="btn-reset-all">全部恢复默认</button>
+          </div>
+          <div class="ov-quick">
+            <div class="ov-quick-title">快捷入口</div>
+            <div class="ov-quick-links">
+              <button class="btn ghost sm" data-goto="ai">AI 接口</button>
+              <button class="btn ghost sm" data-goto="scan">文件扫描</button>
+              <button class="btn ghost sm" data-goto="arxiv">arXiv 元数据</button>
+              <button class="btn ghost sm" data-goto="discover">主题发现</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- AI 接口 -->
+        <div class="settings-panel" data-panel="ai" hidden>
+          <div class="settings-head">
+            <div><h2>AI 接口 <span class="ovr-badge" id="ovr-ai" hidden>已覆盖 config</span></h2><p>OpenAI 兼容的 API 配置。保存后立即生效，无需重启服务。</p></div>
+          </div>
+          <div class="settings-form">
+            <div class="field">
+              <label>API Base URL</label>
+              <input type="text" id="ai-baseurl" placeholder="https://api.openai.com/v1" autocomplete="off" />
+              <span class="hint">网关地址，需含到 <code>/v1</code>。代码会自动拼接 <code>/chat/completions</code>。</span>
+            </div>
+            <div class="field">
+              <label>API Key</label>
+              <input type="password" id="ai-apikey" placeholder="sk-..." autocomplete="off" />
+              <span class="hint">密钥只存本地，前端只回显掩码。留空保存=清空。</span>
+            </div>
+            <div class="field">
+              <label>模型</label>
+              <input type="text" id="ai-model" placeholder="gpt-4o / deepseek-chat / glm-4.6" autocomplete="off" />
+            </div>
+            <div class="field-row">
+              <div class="field">
+                <label>最大输入字符</label>
+                <input type="number" id="ai-maxinput" min="1000" step="1000" />
+                <span class="hint">超长论文按此截断喂给模型。</span>
+              </div>
+              <div class="field">
+                <label>请求超时（秒）</label>
+                <input type="number" id="ai-timeout" min="10" step="10" />
+                <span class="hint">单次调用超时，超时后指数退避重试。</span>
+              </div>
+            </div>
+          </div>
+          <div class="editor-actions">
+            <button class="btn ghost sm" id="btn-ai-test">测试连接</button>
+            <button class="btn ghost sm danger" id="btn-ai-reset">恢复 config 默认</button>
+            <button class="btn" id="btn-ai-save">保存配置</button>
+            <span class="save-hint" id="ai-hint"></span>
+          </div>
+          <div class="config-ref">
+            <div class="ref-title">来自 config.json 的原始值（只读参考）</div>
+            <div class="ref-grid" id="ai-config-ref"></div>
+          </div>
+        </div>
+
+        <!-- 总结提示词 -->
+        <div class="settings-panel" data-panel="summary" hidden>
+          <div class="settings-head">
+            <div><h2>总结提示词 <span class="ovr-badge" id="ovr-summary" hidden>自定义</span></h2><p>用于生成论文总结（Markdown 正文）。留空则使用内置默认。</p></div>
+          </div>
+          <div class="prompt-panel">
+            <p class="save-hint">提示词直接输出 Markdown（不包裹 JSON、不包代码块）。保存后对「重新总结」生效。</p>
+            <textarea id="summary-prompt-edit" placeholder="正在加载…"></textarea>
+            <div class="editor-actions">
+              <button class="btn ghost sm" id="btn-summary-prompt-default">恢复默认</button>
+              <button class="btn" id="btn-summary-prompt-save">保存</button>
+              <span class="save-hint" id="summary-prompt-hint"></span>
+            </div>
+            <details>
+              <summary class="save-hint">查看内置默认总结提示词（参考）</summary>
+              <pre id="summary-prompt-default-pre" class="md"></pre>
+            </details>
+          </div>
+        </div>
+
+        <!-- 标签主题提示词 -->
+        <div class="settings-panel" data-panel="tags" hidden>
+          <div class="settings-head">
+            <div><h2>标签 / 主题提示词 <span class="ovr-badge" id="ovr-tags" hidden>自定义</span></h2><p>用于抽取英文标签与中文主题（强制 JSON 输出）。与总结提示词相互独立。</p></div>
+          </div>
+          <div class="prompt-panel">
+            <p class="save-hint">模型必须输出 JSON：<code>{"tags":[...],"topics":[...],"metadata":{...}}</code>。留空则使用内置默认。</p>
+            <textarea id="tags-prompt-edit" placeholder="正在加载…"></textarea>
+            <div class="editor-actions">
+              <button class="btn ghost sm" id="btn-tags-prompt-default">恢复默认</button>
+              <button class="btn" id="btn-tags-prompt-save">保存</button>
+              <span class="save-hint" id="tags-prompt-hint"></span>
+            </div>
+            <details>
+              <summary class="save-hint">查看内置默认标签/主题提示词（参考）</summary>
+              <pre id="tags-prompt-default-pre" class="md"></pre>
+            </details>
+          </div>
+        </div>
+
+        <!-- 文件扫描 -->
+        <div class="settings-panel" data-panel="scan" hidden>
+          <div class="settings-head">
+            <div><h2>文件扫描</h2><p>定时扫描 papers 目录，自动入库并处理新论文。保存后立即重置定时器，无需重启。</p></div>
+          </div>
+          <div class="settings-form">
+            <div class="field">
+              <label>扫描间隔（分钟）<span class="ovr-badge" id="ovr-scan" hidden>已覆盖 config</span></label>
+              <input type="number" id="scan-interval" min="0" step="1" style="max-width:220px" />
+              <span class="hint" id="scan-default-hint"></span>
+            </div>
+          </div>
+          <div class="editor-actions">
+            <button class="btn ghost sm danger" id="btn-scan-reset">恢复默认</button>
+            <button class="btn" id="btn-scan-save">保存</button>
+            <span class="save-hint" id="scan-hint"></span>
+          </div>
+        </div>
+
+        <!-- arXiv 元数据 -->
+        <div class="settings-panel" data-panel="arxiv" hidden>
+          <div class="settings-head">
+            <div><h2>arXiv 元数据</h2><p>入库时自动从 arXiv 补全标题 / 作者 / 摘要 / 年份。关闭后仅依赖文件名与 AI 兜底。</p></div>
+          </div>
+          <div class="settings-form">
+            <div class="toggle-field">
+              <div class="toggle-main">
+                <label>自动补全元数据 <span class="ovr-badge" id="ovr-arxiv-enabled" hidden>已覆盖</span></label>
+                <span class="hint">关闭后不再请求 arXiv API。</span>
+              </div>
+              <label class="switch"><input type="checkbox" id="arxiv-enabled" /><span class="switch-track"></span></label>
+            </div>
+            <div class="field-row">
+              <div class="field">
+                <label>标题相似度阈值 <span class="ovr-badge" id="ovr-arxiv-thr" hidden>已覆盖</span></label>
+                <input type="number" id="arxiv-thr" min="0" max="1" step="0.05" />
+                <span class="hint" id="arxiv-thr-hint">0–1，越高越严格（避免误匹配）。</span>
+              </div>
+              <div class="field">
+                <label>请求最小间隔（ms）<span class="ovr-badge" id="ovr-arxiv-interval" hidden>已覆盖</span></label>
+                <input type="number" id="arxiv-interval" min="0" step="500" />
+                <span class="hint" id="arxiv-interval-hint">遵守 arXiv 礼貌限速，建议 ≥3000。</span>
+              </div>
+            </div>
+          </div>
+          <div class="editor-actions">
+            <button class="btn ghost sm danger" id="btn-arxiv-reset">恢复默认</button>
+            <button class="btn" id="btn-arxiv-save">保存</button>
+            <span class="save-hint" id="arxiv-hint"></span>
+          </div>
+        </div>
+
+        <!-- 主题发现 -->
+        <div class="settings-panel" data-panel="discover" hidden>
+          <div class="settings-head">
+            <div><h2>主题发现</h2><p>按主题多轴召回候选论文，复合排序（相关 · 权威 · 新近）。下列参数调节召回规模与排序权重。</p></div>
+          </div>
+          <div class="settings-form">
+            <div class="field-row">
+              <div class="field">
+                <label>最大结果数 <span class="ovr-badge" id="ovr-discover-maxResults" hidden>已覆盖</span></label>
+                <input type="number" id="disc-maxresults" min="1" step="5" />
+                <span class="hint" id="disc-maxresults-hint"></span>
+              </div>
+              <div class="field">
+                <label>每轴召回数 <span class="ovr-badge" id="ovr-discover-perAxis" hidden>已覆盖</span></label>
+                <input type="number" id="disc-peraxis" min="1" step="5" />
+                <span class="hint" id="disc-peraxis-hint"></span>
+              </div>
+            </div>
+            <div class="field-row">
+              <div class="field">
+                <label>新近窗口（年）<span class="ovr-badge" id="ovr-discover-recencyWindowYears" hidden>已覆盖</span></label>
+                <input type="number" id="disc-recency" min="1" step="1" />
+                <span class="hint">只在近 N 年内计新近分。</span>
+              </div>
+              <div class="field">
+                <label>去重标题阈值 <span class="ovr-badge" id="ovr-discover-titleSimThreshold" hidden>已覆盖</span></label>
+                <input type="number" id="disc-titlesim" min="0" max="1" step="0.05" />
+                <span class="hint">0–1，越高越不易判为重复。</span>
+              </div>
+            </div>
+            <div class="toggle-field">
+              <div class="toggle-main">
+                <label>Semantic Scholar 来源 <span class="ovr-badge" id="ovr-discover-semanticScholar" hidden>已覆盖</span></label>
+                <span class="hint">作为召回与权威度来源之一。</span>
+              </div>
+              <label class="switch"><input type="checkbox" id="disc-s2" /><span class="switch-track"></span></label>
+            </div>
+            <div class="toggle-field">
+              <div class="toggle-main">
+                <label>OpenAlex 来源 <span class="ovr-badge" id="ovr-discover-openAlex" hidden>已覆盖</span></label>
+                <span class="hint">开放学术图谱，补充引用与机构信号。</span>
+              </div>
+              <label class="switch"><input type="checkbox" id="disc-openalex" /><span class="switch-track"></span></label>
+            </div>
+            <div class="field">
+              <label>Semantic Scholar API Key <span class="ovr-badge" id="ovr-discover-semanticScholarApiKey" hidden>已覆盖</span></label>
+              <input type="password" id="disc-s2key" autocomplete="off" placeholder="可选，留空走匿名额度" />
+              <span class="hint">密钥只存本地，前端只回显掩码。留空保存=不改。</span>
+            </div>
+            <div class="field">
+              <label>复合排序权重 <span class="ovr-badge" id="ovr-discover-weights" hidden>已覆盖</span></label>
+              <div class="weights-row">
+                <div class="weight-cell"><span>相关 rel</span><input type="number" id="disc-w-rel" min="0" max="1" step="0.05" /></div>
+                <div class="weight-cell"><span>权威 auth</span><input type="number" id="disc-w-auth" min="0" max="1" step="0.05" /></div>
+                <div class="weight-cell"><span>新近 rec</span><input type="number" id="disc-w-rec" min="0" max="1" step="0.05" /></div>
+              </div>
+              <span class="hint" id="disc-weights-hint">建议三者之和为 1。</span>
+            </div>
+          </div>
+          <div class="editor-actions">
+            <button class="btn ghost sm danger" id="btn-discover-reset">恢复默认</button>
+            <button class="btn" id="btn-discover-save">保存</button>
+            <span class="save-hint" id="discover-hint"></span>
+          </div>
+        </div>
+
+        <!-- 主题与标签管理 -->
+        <div class="settings-panel" data-panel="taxonomy" hidden>
+          <div class="settings-head">
+            <div><h2>主题与标签管理</h2><p>重命名 / 合并 / 删除全局主题与标签。改动会同步到所有论文。</p></div>
+          </div>
+          <div class="taxonomy-grid">
+            <div class="tax-col">
+              <div class="tax-title">主题（中文大方向）<span class="tax-count" id="tax-topic-count"></span></div>
+              <div class="tax-list" id="tax-topic-list"></div>
+            </div>
+            <div class="tax-col">
+              <div class="tax-title">标签（英文细粒度）<span class="tax-count" id="tax-tag-count"></span></div>
+              <div class="tax-list" id="tax-tag-list"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 系统信息 -->
+        <div class="settings-panel" data-panel="system" hidden>
+          <div class="settings-head">
+            <div><h2>系统信息</h2><p>服务级配置运行时只读，修改需改 config.json 并重启 <code>pm2 restart paper-wiki</code>。</p></div>
+          </div>
+          <div class="about-card" id="system-card"></div>
+          <div class="about-actions">
+            <button class="btn ghost sm" id="btn-system-health">刷新服务状态</button>
+          </div>
+          <details class="raw-config">
+            <summary class="save-hint">查看原始 config.json（密钥已脱敏，只读）</summary>
+            <pre id="system-raw" class="md"></pre>
+          </details>
+        </div>
+      </section>
     </div>
   </main>
 

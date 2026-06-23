@@ -95,7 +95,12 @@ test('safeFilename 去除文件系统非法字符并净化', () => {
 
 test('buildPaperFilename 生成 「作者 等 - 年份 - 标题.pdf」', () => {
   assert.strictEqual(
-    buildPaperFilename({ authors: ['Kai Han', 'Yunhe Wang'], year: 2024, title: 'A Survey on Visual Transformer', arxivId: '2012.12556' }),
+    buildPaperFilename({
+      authors: ['Kai Han', 'Yunhe Wang'],
+      year: 2024,
+      title: 'A Survey on Visual Transformer',
+      arxivId: '2012.12556',
+    }),
     'Han 等 - 2024 - A Survey on Visual Transformer.pdf',
   );
   assert.strictEqual(
@@ -111,13 +116,25 @@ test('buildPaperFilename 生成 「作者 等 - 年份 - 标题.pdf」', () => {
 
 test('buildPaperFilename 缺字段时的回退', () => {
   // 无标题 → 回退 arxivId
-  assert.strictEqual(buildPaperFilename({ authors: ['A'], year: 2024, title: '', arxivId: '2401.00001' }), '2401.00001.pdf');
+  assert.strictEqual(
+    buildPaperFilename({ authors: ['A'], year: 2024, title: '', arxivId: '2401.00001' }),
+    '2401.00001.pdf',
+  );
   // 无作者 → 「年份 - 标题」
-  assert.strictEqual(buildPaperFilename({ authors: [], year: 2024, title: 'Lonely Title', arxivId: 'x' }), '2024 - Lonely Title.pdf');
+  assert.strictEqual(
+    buildPaperFilename({ authors: [], year: 2024, title: 'Lonely Title', arxivId: 'x' }),
+    '2024 - Lonely Title.pdf',
+  );
   // 无年份 → 「作者 等 - 标题」
-  assert.strictEqual(buildPaperFilename({ authors: ['Han', 'X'], year: null, title: 'No Year', arxivId: 'x' }), 'Han 等 - No Year.pdf');
+  assert.strictEqual(
+    buildPaperFilename({ authors: ['Han', 'X'], year: null, title: 'No Year', arxivId: 'x' }),
+    'Han 等 - No Year.pdf',
+  );
   // 全缺但有 arxivId
-  assert.strictEqual(buildPaperFilename({ authors: [], year: null, title: '', arxivId: '2401.00002' }), '2401.00002.pdf');
+  assert.strictEqual(
+    buildPaperFilename({ authors: [], year: null, title: '', arxivId: '2401.00002' }),
+    '2401.00002.pdf',
+  );
   // 全缺且无 arxivId → null
   assert.strictEqual(buildPaperFilename({ authors: [], year: null, title: '', arxivId: null }), null);
 });

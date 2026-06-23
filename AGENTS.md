@@ -20,9 +20,10 @@ lib/
   store.js   ★         数据模型 v2：papers/tags/topics/folders/concepts/settings
                         原子写、串行锁、v1→v2 迁移、损坏自愈、backupStore 每日备份
   scanner.js ★         增量扫描 + 串行流水线（parse→arxiv→ai）+ extractConcepts + drain
-  ai.js      ★         OpenAI 兼容 chat 调用：summarize / extractConcepts
-                        含 429/5xx 指数退避重试、JSON 容错解析
+  ai.js      ★         OpenAI 兼容 chat 调用：summarize(自由Markdown) / extractTagsTopics(JSON) / extractConcepts
+                        含 429/5xx 指数退避重试、JSON 容错解析、applySettingsOverride（store.settings 覆盖 config 的 ai/scan/arxiv/discover）
   api.js     ★         REST 路由：health/papers/tags/topics/folders/concepts/settings/stats/import/discover；paper DELETE
+                        settings 含 GET（全段生效值+config原值+overrides+system）/ PUT summary-prompt|tags-prompt|ai|scan|arxiv|discover / POST test|reset；PATCH /topics
   discover.js ★        按主题发现：检索计划(claude→网关→原始)/多轴召回/S2+OpenAlex 引用量/复合排序/去重
   claude.js  ★         spawn `claude -p --output-format json` 子进程（永不抛错，失败回退网关）
   annotations.js       批注归一化层：pdf.js TypedArray(quadPoints) 经 JSON 退化的双向修复
@@ -36,7 +37,7 @@ public/
   styles.css ★         Indigo 主题（grid + flex 列布局，列表独立滚动，reader 深灰底白页）
 scripts/scan-once.js   不启 HTTP，扫一次处理完队列后退出（初始化/排错）
 scripts/e2e-bootstrap.js  e2e 测试数据准备（预置 config/PDF/papers.json）
-tests/*.test.js        node --test，覆盖全部 lib 模块（119 例）
+tests/*.test.js        node --test，覆盖全部 lib 模块（142 例）
 tests/e2e/             Playwright e2e（reader 渲染 + 高亮往返）
 tests/fixtures/        sample.pdf（2 页带文本层，e2e 用）
 config.json            实际配置（gitignore，含 key）；模板 config.example.json
@@ -47,7 +48,7 @@ papers/                你的 PDF（只读扫描，gitignore）
 .prettierrc/.eslintrc.json  代码质量（仅格式化 lib/server/tests，public/ 排除）
 ```
 
-★ = v2.2 / v2.3 重点改动文件（v2.3：discover/claude/util/arxiv/api/scanner）。
+★ = v2.2 / v2.3 / v2.4 重点改动文件（v2.4：ai/api/scanner + 前端设置中心 index/app/styles；v2.3：discover/claude/util/arxiv/api/scanner）。
 
 ## 数据模型（store v2，`data/papers.json`）
 
@@ -77,11 +78,21 @@ papers/                你的 PDF（只读扫描，gitignore）
   "topics":   [...],                       // 全局主题字典
   "folders":  [ { "id", "name", "color", "createdAt" } ],
   "concepts": [ { "id", "term", "definition", "paperIds", "createdAt", "updatedAt" } ],
-  "settings": { "summaryPrompt": "...", "updatedAt" }   // 在线编辑的总结提示词
+  "settings": {                       // 在线编辑的设置（见陷阱 2/3/19/20）—— 运行时覆盖 config，仅存被改过的字段
+    "summaryPrompt": "...",            // 总结提示词（Markdown 自由输出）
+    "tagsPrompt": "...",               // 标签/主题提示词（强制 JSON）
+    "ai": { "baseURL": "...", "apiKey": "...", "model": "...", "maxInputChars": 24000, "timeoutMs": 120000 },
+    "scanIntervalMinutes": 5,          // 覆盖扫描间隔（热改 → scanner.reschedule；0=关闭定时扫描）
+    "arxiv": { "enabled": true, "titleSimilarityThreshold": 0.75, "minIntervalMs": 3000 },
+    "discover": { "maxResults": 40, "perAxis": 25, "semanticScholar": true, "openAlex": true,
+                  "recencyWindowYears": 8, "titleSimThreshold": 0.85,
+                  "semanticScholarApiKey": "...", "weights": { "rel": 0.45, "auth": 0.35, "rec": 0.2 } },
+    "updatedAt": 0
+  }
 }
 ```
 
-**向后兼容**：`loadStore` → `migrateStore` 自动把 v1 数据补齐为 v2（加 topics/folders/concepts/settings/annotations 字段、规范化每篇论文）。**损坏自愈**：`papers.json` 若是非 JSON 或非对象，自动备份为 `.corrupt-<ts>` 并回空 store。
+**向后兼容**：`loadStore` → `migrateStore` 自动把 v1 数据补齐为 v2（加 topics/folders/concepts/settings/annotations 字段、规范化每篇论文）。`migrateStore` 只确保 `settings` 是对象，不强行塞 key——新字段靠读取时 `?? default` 兜底。**损坏自愈**：`papers.json` 若是非 JSON 或非对象，自动备份为 `.corrupt-<ts>` 并回空 store。
 
 ## 核心数据流
 
@@ -97,12 +108,16 @@ scan() 一篇新论文:
   → enqueue(added) → pump() 串行处理队列
 
 processOne(id):                     ← 串行，避免限速
+  effConfig = applySettingsOverride(config, store.settings)   ← 顶部算一次；ai/arxiv/discover 段统一走它（设置热生效）
   1. parsing    parser.extractText → 写 data/text/<id>.txt
-  2. enriching  arxiv 查元数据：p.arxivId 或 parseArxivUrl(文件名) 命中 → id: 精确查；
-                否则 cleanFilenameToTitle + ti: + pickBest（阈值 0.75，限速 3s）。补 year(published)
-  3. summarizing ai.summarize(prompt = store.settings.summaryPrompt
-                              || config.summaryPrompt || DEFAULT_PROMPT)
-     → 有内容才写 summary/tags/topics/concepts；空对象 → 存可重试占位（见陷阱 13）
+  2. enriching  按 **effConfig.arxiv**（enabled/minIntervalMs/titleSimilarityThreshold 可热改，见陷阱 20）查元数据：
+                p.arxivId 或 parseArxivUrl(文件名) 命中 → id: 精确查；
+                否则 cleanFilenameToTitle + ti: + pickBest（阈值默认 0.75，限速 3s）。补 year(published)
+  3. summarizing **两次独立 AI 调用**（见陷阱 18）：
+     3a. ai.summarize(prompt = summaryPrompt 三级, jsonMode:false) → 自由 Markdown 字符串
+         → 有内容写 summary（buildSummaryMarkdown 归一化）；空 → 存可重试占位（陷阱 13）
+     3b. ai.extractTagsTopics(prompt = tagsPrompt 三级, jsonMode:true) → {tags,topics,metadata}
+         → 写 tags（小写英文）/topics（中文，≤3）/metadata 兜底（仅标题缺失时）；独立 try/catch
   4. 规范命名   裸 ID 文件名 → buildPaperFilename「作者 等 - 年份 - 标题.pdf」并 rename（id 不变）
   finally: deps.saveStore(store)   ← 单参！见下方陷阱
 
@@ -133,9 +148,15 @@ arXiv 导入 (POST /api/import { url, meta? }):
 1. **`deps.saveStore` 是单参闭包**：`saveStore: (s) => saveStore(storePath, s)`。
    scanner 必须调 `deps.saveStore(store)`（**一个参数**）。历史上曾误写成两参，导致把 storePath 字符串当 store 存进 `papers.json`，把库整个写坏。已加单测防回归。
 
-2. **提示词优先级**：`store.settings.summaryPrompt`（在线编辑）> `config.summaryPrompt` > `DEFAULT_PROMPT`（lib/ai.js）。
+2. **提示词优先级（各自独立三级）**：
+   - 总结：`store.settings.summaryPrompt` > `config.summaryPrompt` > `DEFAULT_SUMMARY_PROMPT`（lib/ai.js）。
+   - 标签/主题：`store.settings.tagsPrompt` > `config.tagsPrompt` > `DEFAULT_TAGS_PROMPT`。
+   - （`DEFAULT_PROMPT` 是 `DEFAULT_SUMMARY_PROMPT` 的别名，向后兼容保留。）
 
-3. **AI 输出必须是 JSON object**：`response_format:{type:'json_object'}`。`summarize` 期望 `{tldr,contributions,method,tags,topics,concepts,metadata}`；改字段要同步改 `scanner.processOne` 的消费逻辑与 `buildSummaryMarkdown`。
+3. **总结与标签/主题是两次独立 AI 调用（陷阱 18 详解）**：不要合并回单次。
+   - `summarize`：`jsonMode:false`，返回**自由 Markdown 字符串**（不再 JSON）。用户可自定义提示词输出任意 Markdown/LaTeX。
+   - `extractTagsTopics`：`jsonMode:true`，强制 `response_format:{type:'json_object'}`，返回 `{tags,topics,metadata}`。
+   - `buildSummaryMarkdown(md)` 入参是**字符串**（剥围栏 + 空则占位），不再是对象。
 
 4. **概念去重 key**：`normalizeTerm`（小写 + 折叠空白）；`conceptIdFor` 基于归一化 term 的稳定 hash，保证跨论文可归并。别用随机 id。
 
@@ -165,9 +186,15 @@ arXiv 导入 (POST /api/import { url, meta? }):
 
 17. **改名/删除以内容 sha1 为 id**：paper id = `sha1(文件内容)前16位`，与文件名无关。所以 `processOne` 改名、`DELETE` 删文件都不影响 id / `data/text/<id>.txt` / 概念 / 批注。改名撞名时加 ` (arxivId)` 后缀；删文件限定 `papersDir` 内防越界。
 
+18. **总结与标签/主题必须分两次调用，不能合并**（v2.4 根因修复）：历史上二者在同一次 `response_format:json_object` 调用里返回，用户自定义总结提示词（要 Markdown 章节/LaTeX）与 JSON 硬约束冲突 → 模型返回空 `{}` → 空总结 + 空标签。现 `summarize`（jsonMode:false，自由 Markdown）与 `extractTagsTopics`（jsonMode:true，JSON）分开，各自 try/catch。**改 AI 逻辑勿合并回单次调用**。`callChat` 的 `jsonMode` 参数默认 `true`（向后兼容 extractConcepts/extractTagsTopics），`summarize` 显式传 `false`。
+
+19. **配置覆盖层（store.settings）不改 config.json，已泛化到多段**：`applySettingsOverride(config, store.settings)` 返回**新对象**，把 `store.settings` 的 `ai / scanIntervalMinutes / arxiv / discover` 合并到 config 之上（`discover.weights` 深合并），不修改原 config（保持只读语义）。scanner/api 每次调用前合成 effectiveConfig。**合并规则分两类**：`ai` 段沿用历史（`!== undefined && !== ''` 才覆盖，空串 apiKey 视为未设置）；新增段（scan/arxiv/discover）用 **`!== undefined` 即覆盖**，以正确处理布尔 `false`（如 `arxiv.enabled:false`）与数值 `0`（如 `scanIntervalMinutes:0`）——**勿对新增段套 `!== ''`，会吞掉 false/0**。`semanticScholarApiKey` 空串沿用密钥语义（不覆盖、回退 config）。`config.json` 仍启动时一次性读盘，设置改动只落 `store.settings`（papers.json），无需重启；`POST /api/settings/reset {section|all}` 删除对应覆盖回到 config 默认。
+
+20. **扫描间隔热改 + arxiv 必须读 effConfig**：scanner 定时器在 `createScanner` 按 `scanIntervalMs` 建一次，改 `store.settings.scanIntervalMinutes` 后必须调 `scanner.reschedule(minutes)`（`PUT /api/settings/scan` 已接线）重置定时器（0=停表），否则间隔改动不生效。另：`processOne` 的 arxiv 补全段读 **`effConfig.arxiv` 而非 `deps.config.arxiv`**（历史上读死 config → 设置面板关 arxiv / 改阈值不生效）；effConfig 在 processOne 顶部算一次，ai/arxiv/discover 共用。
+
 ## 工程化
 
-- **测试**：`npm test`（node --test，119 例，覆盖全 lib）；`npm run test:e2e`（Playwright，reader 渲染 + 高亮往返）。
+- **测试**：`npm test`（node --test，142 例，覆盖全 lib）；`npm run test:e2e`（Playwright，reader 渲染 + 高亮往返）。
 - **代码质量**：`npm run lint`（ESLint，`eqeqeq` 配 `null:ignore` 容纳 `== null`）；`npm run format`/`format:check`（Prettier，**仅 lib/server/tests**，public/ 排除因无分号风格冲突）。
 - **CI**：`.github/workflows/ci.yml` 两个 job——lint-and-unit、e2e。push/PR 触发。
 - **运维**：`GET /api/health` 探活；`NODE_ENV=production` 错误响应脱敏；`backupStore` 每日备份 `data/backups/papers-YYYYMMDD.json`（保留 7 份）。
@@ -178,7 +205,7 @@ arXiv 导入 (POST /api/import { url, meta? }):
 ```bash
 npm start                 # 前台，http://127.0.0.1:8888
 npm run scan              # 只扫一次，不启 HTTP（初始化/排错）
-npm test                  # node --test（119 例）
+npm test                  # node --test（142 例）
 npm run test:e2e          # Playwright（reader + 高亮往返）
 npm run lint              # ESLint
 npm run format:check      # Prettier 检查

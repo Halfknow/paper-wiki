@@ -306,7 +306,7 @@ function renderList() {
             <li><b>2.</b> 点右上角「扫描」，等待 AI 处理（可在顶栏看进度）</li>
             <li><b>3.</b> 左侧列表选一篇，看总结 · 双击或回车打开 PDF 做高亮笔记</li>
           </ol>
-          <p class="eg-tip">💡 首次使用记得在「提示词」里配置你的 AI 接口（config.json）。</p>
+          <p class="eg-tip">💡 首次使用：点左下角「⚙️ 设置」配置 AI 接口（API Base / Key / 模型），即可开始自动总结。</p>
         </div>
       </li>`;
     } else {
@@ -677,14 +677,14 @@ async function openReader(paper) {
   reader.open(paper, paper.readProgress, paper.annotations);
 }
 
-// ---- 视图切换：library / concepts / prompt ----
+// ---- 视图切换：library / concepts / settings ----
 function showView(name) {
   $('library-view').style.display = (name === 'library') ? '' : 'none';
   $('concepts-view').style.display = (name === 'concepts') ? '' : 'none';
-  $('prompt-view').style.display = (name === 'prompt') ? '' : 'none';
+  $('settings-view').style.display = (name === 'settings') ? '' : 'none';
   document.body.dataset.view = name;
   $('btn-concepts').classList.toggle('active', name === 'concepts');
-  $('btn-prompt').classList.toggle('active', name === 'prompt');
+  $('btn-prompt').classList.toggle('active', name === 'settings');
 }
 
 // ---- 概念清单视图 ----
@@ -773,46 +773,470 @@ function openFolderModal(folder) {
   setTimeout(() => $('folder-name-input').focus(), 30);
 }
 
-// ---- 视图切换（概念/库/提示词） ----
+// ---- 视图切换（概念/库/设置） ----
 function showLibrary() { showView('library'); }
 
-// ---- 提示词编辑视图 ----
-async function showPrompt() {
-  showView('prompt');
-  const ta = $('prompt-edit');
-  const hint = $('prompt-hint');
-  ta.value = ''; ta.placeholder = '加载中…';
-  hint.textContent = '';
+// ---- 设置中心（迁移并扩展原 prompt-view） ----
+const APIKEY_MASK = '********'; // 占位，表示「未改动」
+
+async function openSettings(tab) {
+  showView('settings');
+  settingsSwitchTab(tab || 'overview');
+  await loadSettingsData();
+}
+
+function settingsSwitchTab(tab) {
+  document.querySelectorAll('.settings-nav-item').forEach((el) => {
+    el.classList.toggle('active', el.dataset.tab === tab);
+  });
+  document.querySelectorAll('.settings-panel').forEach((el) => {
+    el.hidden = el.dataset.panel !== tab;
+  });
+  if (tab === 'taxonomy') loadTaxonomy();
+}
+
+function fmtDef(v) {
+  return v === undefined || v === null || v === '' ? '未设置' : v;
+}
+
+async function loadSettingsData() {
   try {
     const { data } = await jget('/api/settings');
-    ta.placeholder = '（留空使用内置默认提示词）';
-    ta.value = data.summaryPrompt || '';
-    $('prompt-default-pre').textContent = data.defaultPrompt || '';
-    state.promptDirty = false;
+    // ---- AI 接口（apiKey 显示占位，保存时若未改则不传）----
+    $('ai-baseurl').value = data.ai.baseURL || '';
+    $('ai-apikey').value = data.ai.hasApiKey ? APIKEY_MASK : '';
+    $('ai-apikey').dataset.masked = data.ai.hasApiKey ? '1' : '';
+    $('ai-model').value = data.ai.model || '';
+    $('ai-maxinput').value = data.ai.maxInputChars || '';
+    $('ai-timeout').value = Math.round((data.ai.timeoutMs || 120000) / 1000);
+    $('ai-hint').textContent = '';
+    $('ai-config-ref').innerHTML =
+      `<span><span class="ref-k">Base URL</span><span class="ref-v">${escapeHtml(data.configAi.baseURL || '（未设置）')}</span></span>` +
+      `<span><span class="ref-k">Model</span><span class="ref-v">${escapeHtml(data.configAi.model || '（未设置）')}</span></span>`;
+    // ---- 提示词 ----
+    $('summary-prompt-edit').value = data.summaryPrompt || '';
+    $('summary-prompt-default-pre').textContent = data.defaultPrompt || '';
+    $('tags-prompt-edit').value = data.tagsPrompt || '';
+    $('tags-prompt-default-pre').textContent = data.defaultTagsPrompt || '';
+    // ---- 文件扫描 ----
+    $('scan-interval').value = data.scan.scanIntervalMinutes ?? 5;
+    $('scan-default-hint').textContent = `config.json 默认：${data.configScan.scanIntervalMinutes} 分钟 · 设为 0 关闭定时扫描，仅手动 / 导入触发`;
+    // ---- arXiv 元数据 ----
+    $('arxiv-enabled').checked = data.arxiv.enabled !== false;
+    $('arxiv-thr').value = data.arxiv.titleSimilarityThreshold ?? '';
+    $('arxiv-interval').value = data.arxiv.minIntervalMs ?? '';
+    $('arxiv-thr-hint').textContent = `0–1，越高越严格（避免误匹配）。config 默认：${fmtDef(data.configArxiv.titleSimilarityThreshold)}`;
+    $('arxiv-interval-hint').textContent = `遵守 arXiv 礼貌限速，建议 ≥3000。config 默认：${fmtDef(data.configArxiv.minIntervalMs)}`;
+    // ---- 主题发现 ----
+    const d = data.discover;
+    const cd = data.configDiscover;
+    $('disc-maxresults').value = d.maxResults ?? '';
+    $('disc-peraxis').value = d.perAxis ?? '';
+    $('disc-recency').value = d.recencyWindowYears ?? '';
+    $('disc-titlesim').value = d.titleSimThreshold ?? '';
+    $('disc-s2').checked = d.semanticScholar !== false;
+    $('disc-openalex').checked = d.openAlex !== false;
+    $('disc-s2key').value = d.hasS2Key ? APIKEY_MASK : '';
+    $('disc-s2key').dataset.masked = d.hasS2Key ? '1' : '';
+    const w = d.weights || {};
+    $('disc-w-rel').value = w.rel ?? '';
+    $('disc-w-auth').value = w.auth ?? '';
+    $('disc-w-rec').value = w.rec ?? '';
+    $('disc-maxresults-hint').textContent = `config 默认：${fmtDef(cd.maxResults)}`;
+    $('disc-peraxis-hint').textContent = `config 默认：${fmtDef(cd.perAxis)}`;
+    // ---- 概览 / 系统 / 覆盖徽标 ----
+    renderOverview(data);
+    renderSystem(data);
+    markOverrides(data.overrides);
   } catch (e) {
-    ta.placeholder = '加载失败：' + (e.message || e);
+    toast('加载设置失败：' + (e.message || e), 'error');
   }
 }
-async function savePrompt() {
-  const ta = $('prompt-edit');
-  const hint = $('prompt-hint');
-  const btn = $('btn-prompt-save');
-  btn.disabled = true; hint.textContent = '保存中…';
+
+/** 概览仪表盘：生效配置 metric 卡 + 「已覆盖」汇总。 */
+function renderOverview(data) {
+  const m = $('ov-metrics');
+  if (!m) return;
+  const arxivOn = data.arxiv.enabled !== false;
+  const sources = [data.discover.semanticScholar !== false ? 'S2' : null, data.discover.openAlex !== false ? 'OpenAlex' : null]
+    .filter(Boolean)
+    .join(' · ');
+  const cards = [
+    ['当前模型', data.ai.model || '（未设置）', ''],
+    ['API 端点', data.ai.baseURL || '（未设置）', ''],
+    ['扫描间隔', data.scan.scanIntervalMinutes ? data.scan.scanIntervalMinutes + ' 分钟' : '已关闭', ''],
+    ['arXiv 自动补全', arxivOn ? '开启' : '关闭', arxivOn ? 'good' : 'muted'],
+    ['发现来源', sources || '（无）', ''],
+    ['论文总数', String(data.system.papers ?? '?'), ''],
+    ['版本', 'v' + (data.system.version || '?'), ''],
+    ['服务状态', '运行中', 'good'],
+  ];
+  m.innerHTML = cards
+    .map(
+      ([k, v, tone]) =>
+        `<div class="ov-card"><div class="ov-k">${escapeHtml(k)}</div><div class="ov-v ${tone}">${escapeHtml(String(v))}</div></div>`,
+    )
+    .join('');
+  const ov = data.overrides || {};
+  const count =
+    (ov.ai || []).length +
+    (ov.arxiv || []).length +
+    (ov.discover || []).length +
+    (ov.scan ? 1 : 0) +
+    (ov.summaryPrompt ? 1 : 0) +
+    (ov.tagsPrompt ? 1 : 0);
+  const bar = $('ov-override-bar');
+  if (count > 0) {
+    bar.hidden = false;
+    $('ov-override-text').innerHTML = `有 <b>${count} 项</b> 设置已覆盖 config.json 默认`;
+  } else {
+    bar.hidden = true;
+  }
+}
+
+/** 系统信息：服务级只读项 + 脱敏 config.json。 */
+function renderSystem(data) {
+  const c = $('system-card');
+  if (!c) return;
+  const sys = data.system || {};
+  const rows = [
+    ['版本', 'v' + (sys.version || '?')],
+    ['监听地址', (sys.host || '?') + ' : ' + (sys.port ?? '?')],
+    ['论文目录', sys.papersDir || '?'],
+    ['论文总数', String(sys.papers ?? '?')],
+    ['运行时长', sys.uptime != null ? Math.round(sys.uptime / 60) + ' 分钟' : '?'],
+  ];
+  c.innerHTML = rows
+    .map(
+      ([k, v]) =>
+        `<div class="about-row"><span class="about-k">${escapeHtml(k)}</span><span class="about-v">${escapeHtml(v)}</span></div>`,
+    )
+    .join('');
+  $('system-raw').textContent = JSON.stringify(sys.rawConfig || {}, null, 2);
+}
+
+/** 依据后端 overrides 显隐各字段的「已覆盖」徽标。 */
+function markOverrides(ov) {
+  ov = ov || {};
+  const show = (id, on) => {
+    const el = $(id);
+    if (el) el.hidden = !on;
+  };
+  show('ovr-ai', (ov.ai || []).length > 0);
+  show('ovr-summary', !!ov.summaryPrompt);
+  show('ovr-tags', !!ov.tagsPrompt);
+  show('ovr-scan', !!ov.scan);
+  const ax = ov.arxiv || [];
+  show('ovr-arxiv-enabled', ax.includes('enabled'));
+  show('ovr-arxiv-thr', ax.includes('titleSimilarityThreshold'));
+  show('ovr-arxiv-interval', ax.includes('minIntervalMs'));
+  const dv = ov.discover || [];
+  for (const k of [
+    'maxResults',
+    'perAxis',
+    'recencyWindowYears',
+    'titleSimThreshold',
+    'semanticScholar',
+    'openAlex',
+    'semanticScholarApiKey',
+    'weights',
+  ]) {
+    show('ovr-discover-' + k, dv.includes(k));
+  }
+}
+
+async function saveAiConfig() {
+  const btn = $('btn-ai-save');
+  const hint = $('ai-hint');
+  const payload = {
+    baseURL: $('ai-baseurl').value.trim(),
+    model: $('ai-model').value.trim(),
+    maxInputChars: parseInt($('ai-maxinput').value, 10) || 24000,
+    timeoutMs: (parseInt($('ai-timeout').value, 10) || 120) * 1000,
+  };
+  // apiKey：用户没改（仍是占位）则不传，避免误清空；改成新值或清空则传
+  const keyVal = $('ai-apikey').value;
+  if (keyVal !== APIKEY_MASK) payload.apiKey = keyVal;
+  setBusy(btn, true, '保存中…');
   try {
-    const r = await PUT('/api/settings/summary-prompt', { value: ta.value });
+    const r = await PUT('/api/settings/ai', payload);
     if (r.ok) {
-      state.promptDirty = false;
-      hint.textContent = '已保存 · ' + new Date().toLocaleTimeString() + '（下次「重新总结」生效）';
-      toast('提示词已保存');
+      await loadSettingsData(); // 刷新表单 / 概览 / 覆盖徽标
+      hint.textContent = '已保存 · ' + new Date().toLocaleTimeString();
+      toast('AI 配置已保存，立即生效');
     } else {
       hint.textContent = '保存失败：' + (r.error || '');
-      toast(r.error || '提示词保存失败', 'error');
+      toast(r.error || '保存失败', 'error');
     }
   } catch (e) {
     hint.textContent = '保存失败：' + (e.message || e);
-    toast('提示词保存失败', 'error');
+    toast('保存失败', 'error');
   }
-  btn.disabled = false;
+  setBusy(btn, false);
+}
+
+async function testAiConnection() {
+  const btn = $('btn-ai-test');
+  const hint = $('ai-hint');
+  setBusy(btn, true, '测试中…');
+  hint.textContent = '正在用当前配置发送测试请求…';
+  try {
+    const r = await POST('/api/settings/test');
+    if (r.ok) {
+      hint.textContent = '✓ 连接成功 · ' + new Date().toLocaleTimeString();
+      toast('连接成功', 'good');
+    } else {
+      hint.textContent = '✗ ' + (r.error || '连接失败');
+      toast(r.error || '连接失败', 'error');
+    }
+  } catch (e) {
+    hint.textContent = '✗ ' + (e.message || e);
+    toast('连接失败', 'error');
+  }
+  setBusy(btn, false);
+}
+
+async function saveSummaryPrompt() {
+  const ta = $('summary-prompt-edit');
+  const btn = $('btn-summary-prompt-save');
+  const hint = $('summary-prompt-hint');
+  setBusy(btn, true, '保存中…');
+  try {
+    const r = await PUT('/api/settings/summary-prompt', { value: ta.value });
+    if (r.ok) {
+      hint.textContent = '已保存 · ' + new Date().toLocaleTimeString() + '（下次「重新总结」生效）';
+      toast('总结提示词已保存');
+    } else {
+      hint.textContent = '保存失败：' + (r.error || '');
+      toast(r.error || '保存失败', 'error');
+    }
+  } catch (e) {
+    hint.textContent = '保存失败：' + (e.message || e);
+    toast('保存失败', 'error');
+  }
+  setBusy(btn, false);
+}
+
+async function saveTagsPrompt() {
+  const ta = $('tags-prompt-edit');
+  const btn = $('btn-tags-prompt-save');
+  const hint = $('tags-prompt-hint');
+  setBusy(btn, true, '保存中…');
+  try {
+    const r = await PUT('/api/settings/tags-prompt', { value: ta.value });
+    if (r.ok) {
+      hint.textContent = '已保存 · ' + new Date().toLocaleTimeString();
+      toast('标签/主题提示词已保存');
+    } else {
+      hint.textContent = '保存失败：' + (r.error || '');
+      toast(r.error || '保存失败', 'error');
+    }
+  } catch (e) {
+    hint.textContent = '保存失败：' + (e.message || e);
+    toast('保存失败', 'error');
+  }
+  setBusy(btn, false);
+}
+
+// ---- 采集：文件扫描 / arXiv / 主题发现 ----
+async function saveScan() {
+  const btn = $('btn-scan-save');
+  const hint = $('scan-hint');
+  let n = parseInt($('scan-interval').value, 10);
+  if (!Number.isFinite(n) || n < 0) n = 0;
+  setBusy(btn, true, '保存中…');
+  try {
+    const r = await PUT('/api/settings/scan', { scanIntervalMinutes: n });
+    if (r.ok) {
+      await loadSettingsData();
+      hint.textContent = '已保存 · ' + new Date().toLocaleTimeString() + '（定时器已重置）';
+      toast(n > 0 ? `扫描间隔已设为 ${n} 分钟，立即生效` : '定时扫描已关闭');
+    } else {
+      hint.textContent = '保存失败：' + (r.error || '');
+      toast(r.error || '保存失败', 'error');
+    }
+  } catch (e) {
+    hint.textContent = '保存失败：' + (e.message || e);
+    toast('保存失败', 'error');
+  }
+  setBusy(btn, false);
+}
+
+async function saveArxiv() {
+  const btn = $('btn-arxiv-save');
+  const hint = $('arxiv-hint');
+  const payload = { enabled: $('arxiv-enabled').checked };
+  const thr = parseFloat($('arxiv-thr').value);
+  if (Number.isFinite(thr)) payload.titleSimilarityThreshold = thr;
+  const intv = parseInt($('arxiv-interval').value, 10);
+  if (Number.isFinite(intv)) payload.minIntervalMs = intv;
+  setBusy(btn, true, '保存中…');
+  try {
+    const r = await PUT('/api/settings/arxiv', payload);
+    if (r.ok) {
+      await loadSettingsData();
+      hint.textContent = '已保存 · ' + new Date().toLocaleTimeString();
+      toast('arXiv 设置已保存，立即生效');
+    } else {
+      hint.textContent = '保存失败：' + (r.error || '');
+      toast(r.error || '保存失败', 'error');
+    }
+  } catch (e) {
+    hint.textContent = '保存失败：' + (e.message || e);
+    toast('保存失败', 'error');
+  }
+  setBusy(btn, false);
+}
+
+async function saveDiscover() {
+  const btn = $('btn-discover-save');
+  const hint = $('discover-hint');
+  const payload = { semanticScholar: $('disc-s2').checked, openAlex: $('disc-openalex').checked };
+  const setInt = (id, key) => {
+    const v = parseInt($(id).value, 10);
+    if (Number.isFinite(v)) payload[key] = v;
+  };
+  const setFloat = (id, key) => {
+    const v = parseFloat($(id).value);
+    if (Number.isFinite(v)) payload[key] = v;
+  };
+  setInt('disc-maxresults', 'maxResults');
+  setInt('disc-peraxis', 'perAxis');
+  setInt('disc-recency', 'recencyWindowYears');
+  setFloat('disc-titlesim', 'titleSimThreshold');
+  const weights = {};
+  for (const [id, k] of [
+    ['disc-w-rel', 'rel'],
+    ['disc-w-auth', 'auth'],
+    ['disc-w-rec', 'rec'],
+  ]) {
+    const v = parseFloat($(id).value);
+    if (Number.isFinite(v)) weights[k] = v;
+  }
+  if (Object.keys(weights).length) payload.weights = weights;
+  // S2 key：未改（仍是掩码占位）则不传；改成新值或清空则传
+  const keyVal = $('disc-s2key').value;
+  if (keyVal !== APIKEY_MASK) payload.semanticScholarApiKey = keyVal;
+  setBusy(btn, true, '保存中…');
+  try {
+    const r = await PUT('/api/settings/discover', payload);
+    if (r.ok) {
+      await loadSettingsData();
+      hint.textContent = '已保存 · ' + new Date().toLocaleTimeString();
+      toast('主题发现设置已保存，立即生效');
+    } else {
+      hint.textContent = '保存失败：' + (r.error || '');
+      toast(r.error || '保存失败', 'error');
+    }
+  } catch (e) {
+    hint.textContent = '保存失败：' + (e.message || e);
+    toast('保存失败', 'error');
+  }
+  setBusy(btn, false);
+}
+
+/** 清除某段运行时覆盖，回到 config.json 默认。 */
+async function resetSection(section, label) {
+  if (!confirm(`将「${label}」恢复为 config.json 默认？这会清除该项的运行时覆盖。`)) return;
+  try {
+    const r = await POST('/api/settings/reset', { section });
+    if (r.ok) {
+      await loadSettingsData();
+      toast(`「${label}」已恢复默认`);
+    } else toast(r.error || '操作失败', 'error');
+  } catch (e) {
+    toast('操作失败：' + (e.message || e), 'error');
+  }
+}
+
+/** 清空全部运行时覆盖。 */
+async function resetAllSettings() {
+  if (!confirm('清空全部运行时覆盖，所有设置恢复为 config.json 默认？此操作不可撤销。')) return;
+  try {
+    const r = await POST('/api/settings/reset', { all: true });
+    if (r.ok) {
+      await loadSettingsData();
+      toast('已全部恢复为 config.json 默认');
+    } else toast(r.error || '操作失败', 'error');
+  } catch (e) {
+    toast('操作失败：' + (e.message || e), 'error');
+  }
+}
+
+/** 设置内搜索：按标题 / 关键词过滤左侧导航条目。 */
+function filterSettingsNav(q) {
+  q = (q || '').trim().toLowerCase();
+  document.querySelectorAll('.settings-nav-item').forEach((el) => {
+    const hay = (el.textContent + ' ' + (el.dataset.kw || '')).toLowerCase();
+    el.style.display = !q || hay.includes(q) ? '' : 'none';
+  });
+  document.querySelectorAll('.settings-nav-group').forEach((g) => {
+    g.style.display = q ? 'none' : '';
+  });
+}
+
+// ---- 主题与标签管理 ----
+async function loadTaxonomy() {
+  try {
+    const [tr, tg] = await Promise.all([jget('/api/topics'), jget('/api/tags')]);
+    renderTaxList($('tax-topic-list'), tr.data || [], 'topic');
+    renderTaxList($('tax-tag-list'), tg.data || [], 'tag');
+    $('tax-topic-count').textContent = (tr.data || []).length;
+    $('tax-tag-count').textContent = (tg.data || []).length;
+  } catch (e) {
+    toast('加载主题/标签失败', 'error');
+  }
+}
+
+function renderTaxList(container, items, kind) {
+  container.innerHTML = '';
+  if (!items.length) {
+    container.innerHTML = '<div class="empty-state">暂无' + (kind === 'topic' ? '主题' : '标签') + '</div>';
+    return;
+  }
+  for (const it of items) {
+    const card = document.createElement('div');
+    card.className = 'tax-card';
+    card.innerHTML =
+      '<div class="tax-card-main"><span class="tax-name"></span><span class="tax-cnt">' +
+      it.count +
+      ' 篇</span></div>' +
+      '<div class="tax-card-actions">' +
+      '<button class="btn ghost sm" data-act="rename">重命名</button>' +
+      '<button class="btn ghost sm danger" data-act="delete">删除</button>' +
+      '</div>';
+    card.querySelector('.tax-name').textContent = it.name;
+    card.querySelector('[data-act="rename"]').addEventListener('click', () => taxRename(kind, it.name));
+    card.querySelector('[data-act="delete"]').addEventListener('click', () => taxDelete(kind, it.name, it.count));
+    container.appendChild(card);
+  }
+}
+
+async function taxRename(kind, name) {
+  const into = prompt('把「' + name + '」重命名 / 合并为：', name);
+  if (into === null || into.trim() === '' || into.trim() === name) return;
+  const path = kind === 'topic' ? '/api/topics' : '/api/tags';
+  const r = await PATCH(path, { merge: name, into: into.trim() });
+  if (r.ok) {
+    toast('已重命名 / 合并');
+    loadTaxonomy();
+  } else toast(r.error || '操作失败', 'error');
+}
+
+async function taxDelete(kind, name, count) {
+  if (!confirm('确定删除「' + name + '」？将从 ' + count + ' 篇论文中移除。')) return;
+  const path = kind === 'topic' ? '/api/topics' : '/api/tags';
+  const r = await PATCH(path, { delete: name });
+  if (r.ok) {
+    toast('已删除');
+    loadTaxonomy();
+  } else toast(r.error || '操作失败', 'error');
+}
+
+// ---- 系统信息：刷新服务状态（重载设置数据，更新运行时长 / 概览）----
+async function refreshSystemHealth() {
+  await loadSettingsData();
+  toast('服务状态已刷新');
 }
 
 // ---- 侧栏收起 ----
@@ -1208,19 +1632,53 @@ function bind() {
   $('btn-concepts-close').onclick = showLibrary;
   $('concept-q').oninput = renderConcepts;
 
-  // 提示词
-  $('btn-prompt').onclick = showPrompt;
-  $('btn-prompt-close').onclick = showLibrary;
-  $('btn-prompt-save').onclick = savePrompt;
-  $('btn-prompt-default').onclick = () => {
-    if (confirm('清空当前编辑内容并恢复为内置默认提示词？（保存后生效）')) {
-      $('prompt-edit').value = $('prompt-default-pre').textContent || '';
-      state.promptDirty = true;
-      $('prompt-hint').textContent = '已载入默认提示词，尚未保存';
+  // 设置中心（原「提示词」入口）
+  $('btn-prompt').onclick = () => openSettings('summary'); // 顶栏「提示词」→ 设置中心·总结提示词
+  $('btn-settings').onclick = () => openSettings('overview'); // 左下角「设置」→ 概览
+  $('btn-settings-close').onclick = showLibrary;
+  // 设置 tab 导航
+  document.querySelectorAll('.settings-nav-item').forEach((el) => {
+    el.onclick = () => settingsSwitchTab(el.dataset.tab);
+  });
+  // AI 接口
+  $('btn-ai-save').onclick = saveAiConfig;
+  $('btn-ai-test').onclick = testAiConnection;
+  // 总结提示词
+  $('btn-summary-prompt-save').onclick = saveSummaryPrompt;
+  $('btn-summary-prompt-default').onclick = () => {
+    if (confirm('清空当前编辑内容并恢复为内置默认总结提示词？（保存后生效）')) {
+      $('summary-prompt-edit').value = $('summary-prompt-default-pre').textContent || '';
+      $('summary-prompt-hint').textContent = '已载入默认提示词，尚未保存';
       toast('已载入默认提示词');
     }
   };
-  $('prompt-edit').oninput = () => { state.promptDirty = true; $('prompt-hint').textContent = '未保存的修改'; };
+  // 标签/主题提示词
+  $('btn-tags-prompt-save').onclick = saveTagsPrompt;
+  $('btn-tags-prompt-default').onclick = () => {
+    if (confirm('清空当前编辑内容并恢复为内置默认标签/主题提示词？（保存后生效）')) {
+      $('tags-prompt-edit').value = $('tags-prompt-default-pre').textContent || '';
+      $('tags-prompt-hint').textContent = '已载入默认提示词，尚未保存';
+      toast('已载入默认提示词');
+    }
+  };
+  // 采集：文件扫描 / arXiv / 主题发现
+  $('btn-scan-save').onclick = saveScan;
+  $('btn-scan-reset').onclick = () => resetSection('scan', '文件扫描');
+  $('btn-arxiv-save').onclick = saveArxiv;
+  $('btn-arxiv-reset').onclick = () => resetSection('arxiv', 'arXiv 元数据');
+  $('btn-discover-save').onclick = saveDiscover;
+  $('btn-discover-reset').onclick = () => resetSection('discover', '主题发现');
+  // AI 接口恢复默认
+  $('btn-ai-reset').onclick = () => resetSection('ai', 'AI 接口');
+  // 概览：全部恢复默认 + 快捷入口
+  $('btn-reset-all').onclick = resetAllSettings;
+  document.querySelectorAll('.ov-quick-links [data-goto]').forEach((b) => {
+    b.onclick = () => settingsSwitchTab(b.dataset.goto);
+  });
+  // 系统信息：刷新服务状态
+  $('btn-system-health').onclick = refreshSystemHealth;
+  // 设置内搜索
+  $('settings-search-input').oninput = (e) => filterSettingsNav(e.target.value);
 
   // 多选
   $('btn-pick').onclick = () => togglePickMode(!state.pickMode);
@@ -1296,11 +1754,12 @@ function bind() {
       if (e.key === '=' || e.key === '+') { e.preventDefault(); reader.scale = Math.min(3, +(reader.scale + 0.2).toFixed(2)); reader.rerender(); return; }
       if (e.key === '-' || e.key === '_') { e.preventDefault(); reader.scale = Math.max(0.5, +(reader.scale - 0.2).toFixed(2)); reader.rerender(); return; }
     }
-    // 列表键盘导航：仅在不输入、不开阅读器、不开模态时生效
+    // 列表键盘导航：仅在不输入、不开阅读器、不开模态、不在设置/概念视图时生效
     if (!$('reader-view').classList.contains('active')
         && !$('folder-modal').classList.contains('active')
         && !$('import-modal').classList.contains('active')
         && !$('discover-modal').classList.contains('active')
+        && document.body.dataset.view === 'library'
         && !['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName)
         && state.papers.length) {
       const curIdx = state.papers.findIndex((p) => p.id === state.current);
@@ -1321,6 +1780,7 @@ function bind() {
       $('folder-modal').classList.remove('active');
       $('import-modal').classList.remove('active');
       $('discover-modal').classList.remove('active');
+      if (document.body.dataset.view === 'settings') showLibrary();
     }
   });
 }

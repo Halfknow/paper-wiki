@@ -61,7 +61,12 @@ test('parseClaudeOutput 解析新版数组消息格式（取 result 消息里的
   const arr = [
     { type: 'system', subtype: 'init' },
     { type: 'assistant', message: {} },
-    { type: 'result', subtype: 'success', is_error: false, result: JSON.stringify({ queries: ['ti:"x"'], keyterms: ['x'], note: 'n' }) },
+    {
+      type: 'result',
+      subtype: 'success',
+      is_error: false,
+      result: JSON.stringify({ queries: ['ti:"x"'], keyterms: ['x'], note: 'n' }),
+    },
   ];
   const r = parseClaudeOutput(JSON.stringify(arr));
   assert.deepStrictEqual(r.queries, ['ti:"x"']);
@@ -92,7 +97,12 @@ test('planViaGateway: 网关报错返回 null', async () => {
 
 test('buildDiscoveryQuery: claude 失败时用网关(gateway)兜底生成计划', async () => {
   const fakeClaude = async () => ({ ok: false, reason: 'nonzero', stdout: '', code: 1 });
-  const fakeGateway = async () => ({ queries: ['ti:"rag"'], keyterms: ['rag'], categories: ['cs.CL'], note: '网关生成' });
+  const fakeGateway = async () => ({
+    queries: ['ti:"rag"'],
+    keyterms: ['rag'],
+    categories: ['cs.CL'],
+    note: '网关生成',
+  });
   const r = await buildDiscoveryQuery('检索增强', { runClaude: fakeClaude, generateViaGateway: fakeGateway });
   assert.strictEqual(r.usedClaude, false);
   assert.strictEqual(r.engine, 'gateway');
@@ -102,7 +112,12 @@ test('buildDiscoveryQuery: claude 失败时用网关(gateway)兜底生成计划'
 
 test('buildDiscoveryQuery: claude 成功时不调用网关，engine=claude', async () => {
   let gwCalled = false;
-  const fakeClaude = async () => ({ ok: true, stdout: claudeStdout({ queries: ['ti:"a"'], keyterms: ['a'], note: 'n' }), code: 0, reason: null });
+  const fakeClaude = async () => ({
+    ok: true,
+    stdout: claudeStdout({ queries: ['ti:"a"'], keyterms: ['a'], note: 'n' }),
+    code: 0,
+    reason: null,
+  });
   const r = await buildDiscoveryQuery('t', {
     runClaude: fakeClaude,
     generateViaGateway: async () => {
@@ -122,7 +137,11 @@ test('buildDiscoveryQuery: queryEngine=gateway 时跳过 claude 直接用网关'
     return { ok: true, stdout: claudeStdout({ queries: ['x'] }), code: 0, reason: null };
   };
   const fakeGateway = async () => ({ queries: ['ti:"g"'], keyterms: ['g'], note: 'n' });
-  const r = await buildDiscoveryQuery('t', { runClaude: fakeClaude, generateViaGateway: fakeGateway, queryEngine: 'gateway' });
+  const r = await buildDiscoveryQuery('t', {
+    runClaude: fakeClaude,
+    generateViaGateway: fakeGateway,
+    queryEngine: 'gateway',
+  });
   assert.strictEqual(claudeCalled, false, 'queryEngine=gateway 不应调用 claude');
   assert.strictEqual(r.engine, 'gateway');
 });
@@ -394,8 +413,18 @@ test('discoverPapers: 两轴命中同一篇时去重为一条', async () => {
 
 test('discoverPapers: 相关度参与排序（同引用同年，相关者在前）', async () => {
   const store = { papers: {} };
-  const P = { ...ENTRY_B, id: 'http://arxiv.org/abs/2501.00001v1', title: 'Mixture of Experts routing', summary: 'sparse mixture of experts model' };
-  const Q = { ...ENTRY_B, id: 'http://arxiv.org/abs/2501.00002v1', title: 'Unrelated diffusion imaging', summary: 'medical imaging methods' };
+  const P = {
+    ...ENTRY_B,
+    id: 'http://arxiv.org/abs/2501.00001v1',
+    title: 'Mixture of Experts routing',
+    summary: 'sparse mixture of experts model',
+  };
+  const Q = {
+    ...ENTRY_B,
+    id: 'http://arxiv.org/abs/2501.00002v1',
+    title: 'Unrelated diffusion imaging',
+    summary: 'medical imaging methods',
+  };
   const fakeClaude = async () => ({
     ok: true,
     stdout: claudeStdout({ queries: ['q'], keyterms: ['mixture of experts'], note: 'n' }),
@@ -404,7 +433,14 @@ test('discoverPapers: 相关度参与排序（同引用同年，相关者在前�
   });
   const fakeSearch = async (query, _f, opts) => ({ entries: opts.sortBy === 'relevance' ? [P, Q] : [], query });
   const fakeFetch = async () => ({ ok: true, json: async () => [{ citationCount: 10 }, { citationCount: 10 }] });
-  const r = await discoverPapers({ topic: 't', store, runClaude: fakeClaude, searchArxiv: fakeSearch, fetchImpl: fakeFetch, nowYear: 2025 });
+  const r = await discoverPapers({
+    topic: 't',
+    store,
+    runClaude: fakeClaude,
+    searchArxiv: fakeSearch,
+    fetchImpl: fakeFetch,
+    nowYear: 2025,
+  });
   assert.strictEqual(r.results[0].arxivId, '2501.00001', '相关论文应排前');
   assert.ok(r.results[0].relevance > r.results[1].relevance);
 });
@@ -421,7 +457,14 @@ test('discoverPapers: 引用量参与排序（同相关同年，高引在前）+
   });
   const fakeSearch = async (query, _f, opts) => ({ entries: opts.sortBy === 'relevance' ? [P, Q] : [], query });
   const fakeFetch = async () => ({ ok: true, json: async () => [{ citationCount: 5 }, { citationCount: 900 }] });
-  const r = await discoverPapers({ topic: 't', store, runClaude: fakeClaude, searchArxiv: fakeSearch, fetchImpl: fakeFetch, nowYear: 2025 });
+  const r = await discoverPapers({
+    topic: 't',
+    store,
+    runClaude: fakeClaude,
+    searchArxiv: fakeSearch,
+    fetchImpl: fakeFetch,
+    nowYear: 2025,
+  });
   assert.strictEqual(r.results[0].arxivId, '2501.00004');
   assert.strictEqual(r.results[0].citationCount, 900);
   assert.strictEqual(r.citationsAvailable, true);
@@ -429,8 +472,20 @@ test('discoverPapers: 引用量参与排序（同相关同年，高引在前）+
 
 test('discoverPapers: 新近度参与排序（同相关无引用，新者在前）', async () => {
   const store = { papers: {} };
-  const OLD = { ...ENTRY_A, id: 'http://arxiv.org/abs/2001.00001v1', published: '2020-01-01T00:00:00Z', title: 'foo', summary: 'bar' };
-  const NEW = { ...ENTRY_A, id: 'http://arxiv.org/abs/2505.00001v1', published: '2025-05-01T00:00:00Z', title: 'foo', summary: 'bar' };
+  const OLD = {
+    ...ENTRY_A,
+    id: 'http://arxiv.org/abs/2001.00001v1',
+    published: '2020-01-01T00:00:00Z',
+    title: 'foo',
+    summary: 'bar',
+  };
+  const NEW = {
+    ...ENTRY_A,
+    id: 'http://arxiv.org/abs/2505.00001v1',
+    published: '2025-05-01T00:00:00Z',
+    title: 'foo',
+    summary: 'bar',
+  };
   const fakeClaude = async () => ({
     ok: true,
     stdout: claudeStdout({ queries: ['q'], keyterms: ['zzz'], note: 'n' }),
@@ -464,7 +519,10 @@ test('discoverPapers: S2 缺失时用 OpenAlex 兜底引用量', async () => {
   const fakeFetch = async (url) => {
     if (/semanticscholar/.test(url)) return { ok: false, status: 429, json: async () => [] };
     if (/openalex/.test(url))
-      return { ok: true, json: async () => ({ results: [{ doi: 'https://doi.org/10.48550/arxiv.2502.22222', cited_by_count: 77 }] }) };
+      return {
+        ok: true,
+        json: async () => ({ results: [{ doi: 'https://doi.org/10.48550/arxiv.2502.22222', cited_by_count: 77 }] }),
+      };
     return { ok: false, json: async () => ({}) };
   };
   const r = await discoverPapers({
