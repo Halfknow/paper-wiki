@@ -362,15 +362,18 @@ body.is-resizing { cursor:col-resize; user-select:none; }
 .paper-item .progress-bar > i { display:block; height:100%; background:var(--accent); }
 
 /* 标签 / 主题 胶囊：颜色由 JS 内联应用（CHIP_PALETTE 统一配色），这里只定布局/排版兜底 */
+/* inline-flex + align-items:center：文字在框内垂直居中（与 .badge 一致），避免基线导致的偏下；纵向 padding 收紧让框更矮。 */
 .tag {
+  display:inline-flex; align-items:center; vertical-align:middle;
   background:#f1f5f9; border:1px solid #e2e8f0; color:#475569;
-  padding:1px 7px; border-radius:6px; font-size:11px; white-space:nowrap;
+  padding:0 7px; border-radius:6px; font-size:11px; line-height:1.6; white-space:nowrap;
 }
 .tag.muted { color:var(--muted2); background:var(--panel); }
 /* topic：内联配色接管（JS 注入 background/color/border-color）；主题字重略重于标签 */
 .topic {
+  display:inline-flex; align-items:center; vertical-align:middle;
   background:var(--accent-soft); color:var(--accent-strong);
-  padding:1px 7px; border-radius:6px; font-size:11px; white-space:nowrap; font-weight:650;
+  padding:0 7px; border-radius:6px; font-size:11px; line-height:1.6; white-space:nowrap; font-weight:650;
   border:1px solid #c7d2fe;
 }
 .read-chip, .mini-metric {
