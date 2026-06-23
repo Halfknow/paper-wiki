@@ -489,16 +489,14 @@ function renderDetail() {
   const d = $('detail');
   if (!p) { d.innerHTML = '<div class="empty"><span class="big"><svg viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5a1 1 0 0 1 1-1h9l6 6v9a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1z"/><path d="M14 4v6h6"/><path d="M8 13h6"/><path d="M8 16h4"/></svg></span>从左侧选择一篇论文</div>'; return; }
   const authorsStr = (p.authors && p.authors.length) ? p.authors.join(', ') : '未知作者';
-  // tail 拼接：year 紧贴 category badge（无分隔点），其余段之间用 ·
+  // tail 拼接：year / category badge / arXiv 链接 / 来源徽标，各段之间用 · 分隔
   const tailYear = p.year ? escapeHtml(p.year) : '';
   const tailCat = p.primaryCategory ? `<span class="badge">arXiv ${escapeHtml(p.primaryCategory)}</span>` : '';
   const tailLink = p.arxivUrl ? `<a href="${escapeHtml(p.arxivUrl)}" target="_blank">arXiv ${escapeHtml(p.arxivId || '')} ↗</a>` : '';
   const tailSrc = p.metaSource === 'ai-fallback'
     ? '<span class="badge warn">元数据为 AI 推断</span>'
     : (p.metaSource ? `<span class="badge src">${escapeHtml(p.metaSource)}</span>` : '');
-  const head = (tailYear + tailCat);                 // year + category 紧邻，无分隔
-  const rest = [tailLink, tailSrc].filter(Boolean).join(' · ');
-  const metaTail = [head, rest].filter(Boolean).join(' · ');
+  const metaTail = [tailYear, tailCat, tailLink, tailSrc].filter(Boolean).join(' · ');
   const meta = `<span class="meta-authors">${escapeHtml(authorsStr)}</span><span class="meta-tail">${metaTail}</span>`;
   const topics = chipList(p.topics, 'topic', 5);
   const tags = chipList(p.tags, 'tag', 12);
