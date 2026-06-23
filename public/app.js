@@ -288,7 +288,7 @@ function renderSidebar() {
   // 收藏夹列表
   const fl = $('folder-list');
   fl.innerHTML = '';
-  $('folder-empty').style.display = state.folders.length ? 'none' : '';
+  $('folder-empty').hidden = state.folders.length > 0;
   for (const fo of state.folders) {
     const el = document.createElement('div');
     el.className = 'side-item' + (state.filter.folder === fo.id ? ' active' : '');
