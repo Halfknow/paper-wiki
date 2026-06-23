@@ -44,7 +44,9 @@ input,select,textarea { font:inherit; color:var(--text); }
 
 /* ---------- 顶栏 ---------- */
 .topbar {
-  display:grid; grid-template-columns:auto minmax(240px, 430px) minmax(320px, 1fr) auto;
+  /* 4 列：品牌 / 搜索（可弹性伸缩，优先吸收宽度变化）/ 筛选（自然宽不增长）/ 动作（自然宽）。
+     浏览器变窄时，搜索框先收缩（min 140px），筛选/动作按钮保持一行不换行。 */
+  display:grid; grid-template-columns:auto minmax(140px, 1fr) auto auto;
   align-items:center; gap:10px;
   padding:10px 14px; background:rgba(255,255,255,.9);
   border-bottom:1px solid var(--border); position:relative; z-index:30;
@@ -71,7 +73,8 @@ input,select,textarea { font:inherit; color:var(--text); }
   color:var(--muted2); border:1px solid var(--border2); border-radius:5px;
   padding:1px 5px; font-size:10px; background:var(--panel);
 }
-.filter-strip, .top-actions { display:flex; align-items:center; gap:7px; min-width:0; flex-wrap:wrap; }
+/* filter-strip / top-actions：不换行（nowrap），浏览器变窄时由搜索框收缩吸收宽度 */
+.filter-strip, .top-actions { display:flex; align-items:center; gap:7px; min-width:0; flex-wrap:nowrap; }
 .filter-strip { justify-content:flex-start; }
 .top-actions { justify-content:flex-end; }
 /* 主题/标签筛选触发器：与 .topbar select 同设计语言（圆角、边框、箭头、焦点光环），
@@ -1167,8 +1170,8 @@ body.is-resizing { cursor:col-resize; user-select:none; }
 
 /* 响应式 */
 @media (max-width:1240px) {
-  .topbar { grid-template-columns:auto minmax(220px, 1fr) auto; }
-  .filter-strip { grid-column:2 / 4; }
+  /* 中等宽度：搜索框继续作为弹性收缩列，筛选/动作保持一行不换行 */
+  .topbar { grid-template-columns:auto minmax(120px, 1fr) auto auto; }
   .layout { grid-template-columns:210px minmax(320px, var(--list-width, 380px)) 8px minmax(0, 1fr); }
   .layout.sidebar-collapsed { grid-template-columns:56px minmax(320px, var(--list-width, 380px)) 8px minmax(0, 1fr); }
   .compact-row { grid-template-columns:auto auto minmax(0, 1fr); }
