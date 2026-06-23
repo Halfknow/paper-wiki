@@ -895,3 +895,57 @@ test('GET /api/papers 列表含 rating，支持 ratingDesc 排序', async () => 
   assert.strictEqual(r.json.data[2].id, 'c');
   server.close();
 });
+
+test('POST /api/papers/:id/summarize 文件缺失时返回 409 + 标 missing，不入队', async () => {
+  // 真实临时目录：p.filepath 指向一个不存在的文件（模拟 PDF 被移走/删除的孤立条目）。
+  const dir = fs.mkdtempSync(pathm.join(os.tmpdir(), 'pw-missing-'));
+  const ghost = pathm.join(dir, 'ghost.pdf'); // 故意不创建
+  let enqueued = null;
+  const store = {
+    version: 2,
+    tags: [], topics: [], folders: [], concepts: [],
+    papers: { a: { id: 'a', title: 'T', filename: 'ghost.pdf', filepath: ghost, status: 'ready', updatedAt: 0 } },
+  };
+  const router = createApiRouter(baseCtx(store, async () => {}));
+  // 替换 ctx 的 enqueue 为可观测的（baseCtx 里是 no-op）
+  const ctx = baseCtx(store, async () => {});
+  ctx.scanner.enqueue = (ids) => { enqueued = ids; };
+  const router2 = createApiRouter(ctx);
+  const server = await startServer(router2.handle);
+  const port = server.address().port;
+  const r = await call(port, 'POST', '/api/papers/a/summarize');
+  assert.strictEqual(r.status, 409, '缺失文件应返回 409');
+  assert.strictEqual(r.json.ok, false);
+  assert.ok(/缺失|不存在|missing/i.test(r.json.error), '错误信息应说明文件缺失');
+  assert.strictEqual(store.papers.a.status, 'missing', '应把状态标为 missing 而非 error');
+  assert.deepStrictEqual(enqueued, null, '不应 enqueue');
+  // parse 入口同样防护
+  const r2 = await call(port, 'POST', '/api/papers/a/parse');
+  assert.strictEqual(r2.status, 409);
+  assert.deepStrictEqual(enqueued, null, 'parse 也不应 enqueue');
+  server.close();
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('POST /api/papers/:id/summarize 文件存在时正常入队（不误伤）', async () => {
+  const dir = fs.mkdtempSync(pathm.join(os.tmpdir(), 'pw-ok-'));
+  const real = pathm.join(dir, 'real.pdf');
+  fs.writeFileSync(real, '%PDF-1.4 fake');
+  let enqueued = null;
+  const store = {
+    version: 2,
+    tags: [], topics: [], folders: [], concepts: [],
+    papers: { a: { id: 'a', title: 'T', filename: 'real.pdf', filepath: real, status: 'ready', updatedAt: 0 } },
+  };
+  const ctx = baseCtx(store, async () => {});
+  ctx.scanner.enqueue = (ids) => { enqueued = ids; };
+  const server = await startServer(createApiRouter(ctx).handle);
+  const port = server.address().port;
+  const r = await call(port, 'POST', '/api/papers/a/summarize');
+  assert.strictEqual(r.status, 200);
+  assert.strictEqual(r.json.data.queued, 'a');
+  assert.deepStrictEqual(enqueued, ['a'], '应正常 enqueue');
+  assert.strictEqual(store.papers.a.status, 'ready', '不应改状态');
+  server.close();
+  fs.rmSync(dir, { recursive: true, force: true });
+});
