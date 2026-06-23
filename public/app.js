@@ -276,7 +276,7 @@ function renderSidebar() {
     el.innerHTML = `<span class="swatch" style="background:${escapeHtml(fo.color)}"></span>
       <span>${escapeHtml(fo.name)}</span>
       <span class="count">${fo.count || ''}</span>
-      <span class="ico" data-edit="${fo.id}" title="编辑收藏夹" style="margin-left:2px;cursor:pointer;">⋯</span>`;
+      <span class="ico folder-edit" data-edit="${fo.id}" title="编辑收藏夹" aria-label="编辑收藏夹"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></span>`;
     el.onclick = (e) => {
       if (e.target.dataset.edit) { openFolderModal(fo); return; }
       setView({ folder: fo.id, mode: '', starred: false, readStatus: '', status: '' });
@@ -299,10 +299,12 @@ function renderList() {
   const ul = $('paper-list');
   ul.innerHTML = '';
   ul.classList.toggle('compact', state.compact);
-  $('btn-compact').textContent = state.compact ? '☰' : '≐';
+  // 紧凑/舒适视图切换：换线性 SVG（紧凑＝单行条；舒适＝三行）。紧凑态加 active 强调。
+  $('btn-compact').innerHTML = state.compact
+    ? '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="6" width="18" height="12" rx="2"/><line x1="3" y1="12" x2="21" y2="12"/></svg>'
+    : '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="3.5" rx="1"/><rect x="3" y="11" width="18" height="3.5" rx="1"/><rect x="3" y="17" width="18" height="2.5" rx="1"/></svg>';
   $('btn-compact').title = state.compact ? '切回舒适视图' : '切到紧凑视图';
-  $('btn-compact').classList.toggle('ghost', !state.compact);
-  $('btn-compact').classList.toggle('subtle', state.compact);
+  $('btn-compact').classList.toggle('active', state.compact);
   if (!state.papers.length) {
     const f = state.filter;
     const hasFilter = f.q || f.status || f.readStatus || f.tag || f.topic || f.starred || f.folder || f.mode;
@@ -794,8 +796,10 @@ function togglePickMode(on) {
   $('bulk-bar').classList.toggle('active', on);
   if (!on) state.selected.clear();
   $('sel-count').textContent = '已选 ' + state.selected.size + ' 篇';
-  $('btn-pick').textContent = on ? '退出多选' : '多选';
-  $('btn-pick').classList.toggle('active', on);
+  const pickBtn = $('btn-pick');
+  pickBtn.querySelector('.btn-text').textContent = on ? '退出多选' : '多选';
+  pickBtn.classList.toggle('active', on);
+  pickBtn.classList.toggle('subtle', !on);
   renderList();
 }
 
