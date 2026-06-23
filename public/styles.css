@@ -1239,7 +1239,11 @@ iframe.pdf { width:100%; height:calc(100vh - 200px); border:1px solid var(--bord
 }
 .tax-row-name:hover { color:var(--accent-strong); }
 .tax-row-name.strike { text-decoration:line-through; color:var(--muted2); cursor:default; font-weight:500; }
-.tax-bar { flex:1; height:5px; min-width:40px; background:var(--panel3); border-radius:3px; overflow:hidden; }
+/* 数量条：固定高度 + align-self:center，杜绝 flex 行内交叉轴被拉伸导致粗细不均 */
+.tax-bar {
+  flex:1 1 100px; height:6px; align-self:center;
+  min-width:40px; background:var(--panel3); border-radius:3px; overflow:hidden;
+}
 .tax-bar span { display:block; height:100%; border-radius:3px; }
 .tax-cnt {
   flex:0 0 auto; min-width:44px; text-align:right; font-size:12px; color:var(--muted);
