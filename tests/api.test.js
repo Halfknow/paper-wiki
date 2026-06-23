@@ -843,3 +843,55 @@ test('POST /api/settings/reset 按段清除覆盖 + all 全清 + scan 重置定�
   assert.strictEqual(store.settings.summaryPrompt, undefined);
   server.close();
 });
+
+test('PATCH /api/papers/:id 星级 rating：clamp 0-5 且与 starred 互为镜像', async () => {
+  const store = {
+    version: 2,
+    tags: [],
+    topics: [],
+    folders: [],
+    concepts: [],
+    papers: { a: { id: 'a', title: 'T', status: 'ready', rating: 0, starred: false, updatedAt: 0 } },
+  };
+  const router = createApiRouter(baseCtx(store));
+  const server = await startServer(router.handle);
+  const port = server.address().port;
+  const r = await call(port, 'PATCH', '/api/papers/a', { rating: 4 });
+  assert.strictEqual(r.status, 200);
+  assert.strictEqual(store.papers.a.rating, 4);
+  assert.strictEqual(store.papers.a.starred, true, 'rating>0 → starred true');
+  assert.strictEqual(r.json.data.rating, 4, 'detailView 应回传 rating');
+  await call(port, 'PATCH', '/api/papers/a', { rating: 9 });
+  assert.strictEqual(store.papers.a.rating, 5, '超界 clamp 到 5');
+  await call(port, 'PATCH', '/api/papers/a', { rating: 0 });
+  assert.strictEqual(store.papers.a.rating, 0);
+  assert.strictEqual(store.papers.a.starred, false, '0 星 → starred false');
+  await call(port, 'PATCH', '/api/papers/a', { starred: true });
+  assert.strictEqual(store.papers.a.rating, 5, '旧 starred:true → 5 星');
+  assert.strictEqual(store.papers.a.starred, true);
+  server.close();
+});
+
+test('GET /api/papers 列表含 rating，支持 ratingDesc 排序', async () => {
+  const store = {
+    version: 2,
+    tags: [],
+    topics: [],
+    folders: [],
+    concepts: [],
+    papers: {
+      a: { id: 'a', title: 'A', status: 'ready', rating: 2, addedAt: 1 },
+      b: { id: 'b', title: 'B', status: 'ready', rating: 5, addedAt: 2 },
+      c: { id: 'c', title: 'C', status: 'ready', rating: 0, addedAt: 3 },
+    },
+  };
+  const router = createApiRouter(baseCtx(store));
+  const server = await startServer(router.handle);
+  const port = server.address().port;
+  const r = await call(port, 'GET', '/api/papers?sort=ratingDesc');
+  assert.strictEqual(r.json.data[0].id, 'b');
+  assert.strictEqual(r.json.data[0].rating, 5);
+  assert.strictEqual(r.json.data[1].id, 'a');
+  assert.strictEqual(r.json.data[2].id, 'c');
+  server.close();
+});

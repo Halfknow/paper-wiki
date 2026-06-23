@@ -53,9 +53,9 @@
             <button class="side-icon-btn" id="btn-collapse" title="收起侧栏" aria-label="收起侧栏"><span>‹</span></button>
           </span>
         </div>
-        <div class="side-item active" data-folder="" data-mode="all"><span class="ico">🗂️</span><span>全部论文</span><span class="count" id="cnt-all"></span></div>
-        <div class="side-item" data-folder="" data-mode="starred"><span class="ico">⭐</span><span>星标</span><span class="count" id="cnt-star"></span></div>
-        <div class="side-item" data-folder="" data-mode="unread"><span class="ico">📘</span><span>未读</span><span class="count" id="cnt-unread"></span></div>
+        <div class="side-item active" data-folder="" data-mode="all"><span class="ico"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></span><span>全部论文</span><span class="count" id="cnt-all"></span></div>
+        <div class="side-item" data-folder="" data-mode="starred"><span class="ico"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2.6l2.9 6.05 6.6.78-4.9 4.5 1.32 6.52L12 17.9l-5.92 3.07 1.32-6.52-4.9-4.5 6.6-.78z"/></svg></span><span>星标</span><span class="count" id="cnt-star"></span></div>
+        <div class="side-item" data-folder="" data-mode="unread"><span class="ico"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5a1 1 0 0 1 1-1h9l6 6v9a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1z"/><path d="M14 4v6h6"/></svg></span><span>未读</span><span class="count" id="cnt-unread"></span></div>
       </div>
       <div class="side-section">
         <div class="side-title">收藏夹</div>
@@ -97,6 +97,7 @@
             <optgroup label="阅读">
               <option value="progressDesc">阅读进度</option>
               <option value="conceptDesc">概念最多</option>
+              <option value="ratingDesc">评分最高</option>
             </optgroup>
           </select>
         </label>
@@ -109,7 +110,7 @@
         <span class="sel-count" id="sel-count">已选 0 篇</span>
         <span class="spacer" style="flex:1"></span>
         <button class="btn ghost sm" id="btn-pick-cancel">取消</button>
-        <button class="btn sm" id="btn-pick-concepts">🧠 抽取并追加概念</button>
+        <button class="btn sm" id="btn-pick-concepts"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18h6"/><path d="M10 21h4"/><path d="M12 3a6 6 0 0 0-4 10.5c.6.6 1 1.4 1 2.5h6c0-1.1.4-1.9 1-2.5A6 6 0 0 0 12 3z"/></svg> 抽取并追加概念</button>
       </div>
     </section>
 
@@ -118,7 +119,7 @@
     </div>
 
     <section id="detail" class="pane detail-pane">
-      <div class="empty"><span class="big">📚</span>从左侧选择一篇论文<br/>查看 AI 总结、笔记与元数据</div>
+      <div class="empty"><span class="big"><svg viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5a1 1 0 0 1 1-1h9l6 6v9a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1z"/><path d="M14 4v6h6"/><path d="M8 13h6"/><path d="M8 16h4"/></svg></span>从左侧选择一篇论文<br/>查看 AI 总结、笔记与元数据</div>
     </section>
   </main>
 
@@ -338,37 +339,6 @@
                 <span class="hint" id="disc-peraxis-hint"></span>
               </div>
             </div>
-            <div class="field-row">
-              <div class="field">
-                <label>新近窗口（年）<span class="ovr-badge" id="ovr-discover-recencyWindowYears" hidden>已覆盖</span></label>
-                <input type="number" id="disc-recency" min="1" step="1" />
-                <span class="hint">只在近 N 年内计新近分。</span>
-              </div>
-              <div class="field">
-                <label>去重标题阈值 <span class="ovr-badge" id="ovr-discover-titleSimThreshold" hidden>已覆盖</span></label>
-                <input type="number" id="disc-titlesim" min="0" max="1" step="0.05" />
-                <span class="hint">0–1，越高越不易判为重复。</span>
-              </div>
-            </div>
-            <div class="toggle-field">
-              <div class="toggle-main">
-                <label>Semantic Scholar 来源 <span class="ovr-badge" id="ovr-discover-semanticScholar" hidden>已覆盖</span></label>
-                <span class="hint">作为召回与权威度来源之一。</span>
-              </div>
-              <label class="switch"><input type="checkbox" id="disc-s2" /><span class="switch-track"></span></label>
-            </div>
-            <div class="toggle-field">
-              <div class="toggle-main">
-                <label>OpenAlex 来源 <span class="ovr-badge" id="ovr-discover-openAlex" hidden>已覆盖</span></label>
-                <span class="hint">开放学术图谱，补充引用与机构信号。</span>
-              </div>
-              <label class="switch"><input type="checkbox" id="disc-openalex" /><span class="switch-track"></span></label>
-            </div>
-            <div class="field">
-              <label>Semantic Scholar API Key <span class="ovr-badge" id="ovr-discover-semanticScholarApiKey" hidden>已覆盖</span></label>
-              <input type="password" id="disc-s2key" autocomplete="off" placeholder="可选，留空走匿名额度" />
-              <span class="hint">密钥只存本地，前端只回显掩码。留空保存=不改。</span>
-            </div>
             <div class="field">
               <label>复合排序权重 <span class="ovr-badge" id="ovr-discover-weights" hidden>已覆盖</span></label>
               <div class="weights-row">
@@ -376,8 +346,49 @@
                 <div class="weight-cell"><span>权威 auth</span><input type="number" id="disc-w-auth" min="0" max="1" step="0.05" /></div>
                 <div class="weight-cell"><span>新近 rec</span><input type="number" id="disc-w-rec" min="0" max="1" step="0.05" /></div>
               </div>
-              <span class="hint" id="disc-weights-hint">建议三者之和为 1。</span>
+              <div class="weight-prop" id="disc-weight-prop" aria-hidden="true"></div>
+              <div class="weight-prop-meta">
+                <span class="hint" id="disc-weights-hint">建议三者之和为 1。</span>
+                <button class="btn ghost sm" type="button" id="btn-w-norm" title="把三个权重按比例缩放为和=1">归一化为 1</button>
+              </div>
             </div>
+
+            <details class="advanced-fold" id="disc-advanced">
+              <summary><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg> 高级参数<span class="af-hint">新近窗口 · 去重阈值 · 数据源 · API Key</span></summary>
+              <div class="settings-form adv-body">
+                <div class="field-row">
+                  <div class="field">
+                    <label>新近窗口（年）<span class="ovr-badge" id="ovr-discover-recencyWindowYears" hidden>已覆盖</span></label>
+                    <input type="number" id="disc-recency" min="1" step="1" />
+                    <span class="hint">只在近 N 年内计新近分。</span>
+                  </div>
+                  <div class="field">
+                    <label>去重标题阈值 <span class="ovr-badge" id="ovr-discover-titleSimThreshold" hidden>已覆盖</span></label>
+                    <input type="number" id="disc-titlesim" min="0" max="1" step="0.05" />
+                    <span class="hint">0–1，越高越不易判为重复。</span>
+                  </div>
+                </div>
+                <div class="toggle-field">
+                  <div class="toggle-main">
+                    <label>Semantic Scholar 来源 <span class="ovr-badge" id="ovr-discover-semanticScholar" hidden>已覆盖</span></label>
+                    <span class="hint">作为召回与权威度来源之一。</span>
+                  </div>
+                  <label class="switch"><input type="checkbox" id="disc-s2" /><span class="switch-track"></span></label>
+                </div>
+                <div class="toggle-field">
+                  <div class="toggle-main">
+                    <label>OpenAlex 来源 <span class="ovr-badge" id="ovr-discover-openAlex" hidden>已覆盖</span></label>
+                    <span class="hint">开放学术图谱，补充引用与机构信号。</span>
+                  </div>
+                  <label class="switch"><input type="checkbox" id="disc-openalex" /><span class="switch-track"></span></label>
+                </div>
+                <div class="field">
+                  <label>Semantic Scholar API Key <span class="ovr-badge" id="ovr-discover-semanticScholarApiKey" hidden>已覆盖</span></label>
+                  <input type="password" id="disc-s2key" autocomplete="off" placeholder="可选，留空走匿名额度" />
+                  <span class="hint">密钥只存本地，前端只回显掩码。留空保存=不改。</span>
+                </div>
+              </div>
+            </details>
           </div>
           <div class="editor-actions">
             <button class="btn ghost sm danger" id="btn-discover-reset">恢复默认</button>
@@ -389,16 +400,32 @@
         <!-- 主题与标签管理 -->
         <div class="settings-panel" data-panel="taxonomy" hidden>
           <div class="settings-head">
-            <div><h2>主题与标签管理</h2><p>重命名 / 合并 / 删除全局主题与标签。改动会同步到所有论文。</p></div>
+            <div><h2>主题与标签</h2><p>重命名 / 合并 / 删除全局主题与标签，改动同步到所有论文。点击名称即可就地重命名。</p></div>
           </div>
-          <div class="taxonomy-grid">
-            <div class="tax-col">
-              <div class="tax-title">主题（中文大方向）<span class="tax-count" id="tax-topic-count"></span></div>
-              <div class="tax-list" id="tax-topic-list"></div>
+          <div class="tax-manager">
+            <div class="tax-seg" id="tax-seg">
+              <button class="tax-seg-btn active" data-kind="tag">标签 <span class="tax-seg-count" id="tax-tag-count">0</span></button>
+              <button class="tax-seg-btn" data-kind="topic">主题 <span class="tax-seg-count" id="tax-topic-count">0</span></button>
             </div>
-            <div class="tax-col">
-              <div class="tax-title">标签（英文细粒度）<span class="tax-count" id="tax-tag-count"></span></div>
-              <div class="tax-list" id="tax-tag-list"></div>
+            <div class="tax-toolbar">
+              <div class="tax-search">
+                <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                <input type="text" id="tax-search" placeholder="搜索标签…" autocomplete="off" />
+              </div>
+              <select id="tax-sort" aria-label="排序">
+                <option value="countDesc">按使用量</option>
+                <option value="nameAsc">按名称 A–Z</option>
+                <option value="countAsc">最少使用</option>
+              </select>
+              <button class="btn ghost sm" id="tax-select-toggle">多选</button>
+            </div>
+            <div class="tax-rows" id="tax-rows"></div>
+            <div class="tax-batch" id="tax-batch" hidden>
+              <span class="tax-batch-info">已选 <b id="tax-sel-count">0</b></span>
+              <button class="btn ghost sm" id="tax-batch-merge">合并到…</button>
+              <button class="btn ghost sm danger" id="tax-batch-delete">删除选中</button>
+              <span style="flex:1"></span>
+              <button class="btn ghost sm" id="tax-batch-cancel">退出多选</button>
             </div>
           </div>
         </div>

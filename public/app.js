@@ -85,6 +85,18 @@ function escapeHtml(s) {
   return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
+// ---- 星级评分（1–5）----
+// 线性 SVG 星形：filled 表示实心，否则描边。统一替换原 emoji ⭐ / ★ ☆。
+const STAR_PATH = 'M12 2.6l2.9 6.05 6.6.78-4.9 4.5 1.32 6.52L12 17.9l-5.92 3.07 1.32-6.52-4.9-4.5 6.6-.78z';
+function starSvg(filled) {
+  return `<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" fill="${filled ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="${STAR_PATH}"/></svg>`;
+}
+/** 紧凑角标：列表标题后跟单颗星 + 数字。 */
+function starBadge(rating) {
+  const r = Math.max(0, Math.min(5, Math.round(rating || 0)));
+  return r ? `<span class="star-badge"><i class="star on">${starSvg(true)}</i>${r}</span>` : '';
+}
+
 function renderMd(md) {
   const raw = marked.parse(md || '', { breaks: true });
   let html = DOMPurify.sanitize(raw);
@@ -298,7 +310,7 @@ function renderList() {
       // 真正的空库：给新手引导，而不是一句干巴巴的"暂无论文"
       ul.innerHTML = `<li class="paper-item empty-guide">
         <div class="eg-card">
-          <div class="eg-emoji">📚</div>
+          <div class="eg-emoji"><svg viewBox="0 0 24 24" width="42" height="42" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5a1 1 0 0 1 1-1h9l6 6v9a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1z"/><path d="M14 4v6h6"/><path d="M8 13h6"/><path d="M8 16h4"/></svg></div>
           <h3>欢迎来到 PaperWiki</h3>
           <p class="eg-sub">把 arXiv 论文 PDF 丢进来，AI 帮你读、总结、抽概念、打标签。</p>
           <ol class="eg-steps">
@@ -306,7 +318,7 @@ function renderList() {
             <li><b>2.</b> 点右上角「扫描」，等待 AI 处理（可在顶栏看进度）</li>
             <li><b>3.</b> 左侧列表选一篇，看总结 · 双击或回车打开 PDF 做高亮笔记</li>
           </ol>
-          <p class="eg-tip">💡 首次使用：点左下角「⚙️ 设置」配置 AI 接口（API Base / Key / 模型），即可开始自动总结。</p>
+          <p class="eg-tip">首次使用：点左下角「设置」配置 AI 接口（API Base / Key / 模型），即可开始自动总结。</p>
         </div>
       </li>`;
     } else {
@@ -320,7 +332,7 @@ function renderList() {
     li.dataset.status = p.status || '';
     li.setAttribute('aria-selected', state.current === p.id ? 'true' : 'false');
     const sel = state.pickMode && state.selected.has(p.id) ? '☑' : (state.pickMode ? '☐' : '');
-    const title = escapeHtml(p.title || p.filename) + (p.starred ? ' ⭐' : '');
+    const title = escapeHtml(p.title || p.filename) + (p.rating > 0 ? starBadge(p.rating) : '');
     const read = readStatusLabel(p.readStatus);
     const progress = progressPercent(p);
     if (state.compact) {
@@ -335,7 +347,7 @@ function renderList() {
             <div class="compact-title-line">
               <span class="compact-title">${title}</span>
               ${isBusy ? `<span class="busy-tag">${statusLabel(p.status)}</span>` : `<span class="read-chip">${read}</span>`}
-              ${progress != null && progress > 0 ? `<span class="mini-metric">📖 ${progress}%</span>` : ''}
+              ${progress != null && progress > 0 ? `<span class="mini-metric read">${progress}%</span>` : ''}
               ${!isBusy && p.conceptCount ? `<span class="mini-metric">${p.conceptCount}</span>` : ''}
             </div>
             <div class="compact-meta">${meta}</div>
@@ -397,7 +409,7 @@ function renderDetail() {
   flushPendingNotes(); // 轮询刷新也会重建详情面板，先把待存笔记落盘（不 await：值已先从 DOM 读出）
   const p = state.detail;
   const d = $('detail');
-  if (!p) { d.innerHTML = '<div class="empty"><span class="big">📚</span>从左侧选择一篇论文</div>'; return; }
+  if (!p) { d.innerHTML = '<div class="empty"><span class="big"><svg viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5a1 1 0 0 1 1-1h9l6 6v9a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1z"/><path d="M14 4v6h6"/><path d="M8 13h6"/><path d="M8 16h4"/></svg></span>从左侧选择一篇论文</div>'; return; }
   const authorsStr = (p.authors && p.authors.length) ? p.authors.join(', ') : '未知作者';
   // tail 拼接：year 紧贴 category badge（无分隔点），其余段之间用 ·
   const tailYear = p.year ? escapeHtml(p.year) : '';
@@ -431,7 +443,10 @@ function renderDetail() {
         </div>
         <div class="dh-actions">
           <button class="btn sm" id="b-open-pdf">打开 PDF</button>
-          <button class="btn ${p.starred ? '' : 'ghost'} sm" id="b-star">${p.starred ? '★ 已收藏' : '☆ 收藏'}</button>
+          <span class="rate" id="rate" role="radiogroup" aria-label="星级评分">
+            ${[1, 2, 3, 4, 5].map((n) => `<i class="star ${(p.rating || 0) >= n ? 'on' : ''}" data-r="${n}" role="radio" aria-checked="${(p.rating || 0) >= n}" tabindex="0" title="${n} 星">${starSvg((p.rating || 0) >= n)}</i>`).join('')}
+            ${(p.rating || 0) > 0 ? `<button class="rate-clear" id="b-rate-clear" title="清除评分">清除</button>` : ''}
+          </span>
           <button class="btn ghost sm" id="b-read" title="切换阅读状态">${p.readStatus === 'done' ? '✓ 已读' : '标记已读'}</button>
           <button class="btn ghost sm" id="b-resume" title="重新总结（含主题/概念）">重新总结</button>
           <button class="btn ghost sm danger" id="b-delete" title="删除论文（连同本地 PDF 与全文，不可恢复）">删除</button>
@@ -447,10 +462,40 @@ function renderDetail() {
     </div>
     <div id="tab-body" style="padding-top:14px;"></div>`;
   $('b-open-pdf').onclick = () => openReader(p);
-  $('b-star').onclick = async () => {
-    await patch(p.id, { starred: !p.starred });
-    toast(p.starred ? '已取消收藏' : '已收藏');
-  };
+  // 星级评分控件：点击设为 N 星，再点同一颗清零；hover 预览；键盘 ← → 调节、0 清除。
+  (function () {
+    const rate = $('rate');
+    if (!rate) return;
+    const stars = () => Array.from(rate.querySelectorAll('.star'));
+    const paint = (n) => stars().forEach((s) => {
+      const on = Number(s.dataset.r) <= n;
+      s.classList.toggle('on', on);
+      s.setAttribute('aria-checked', String(on));
+      s.innerHTML = starSvg(on);
+    });
+    let cur = Math.max(0, Math.min(5, Math.round(p.rating || 0)));
+    const apply = async (n) => {
+      const next = n === cur ? 0 : n; // 再点同一颗清零
+      cur = next;
+      paint(next);
+      await patch(p.id, { rating: next });
+      toast(next ? `已评 ${next} 星` : '已清除评分');
+    };
+    stars().forEach((s) => {
+      const n = Number(s.dataset.r);
+      s.onclick = (e) => { e.stopPropagation(); apply(n); };
+      s.onmouseenter = () => paint(n);
+      s.onmouseleave = () => paint(cur);
+      s.onkeydown = (e) => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); apply(n); }
+        else if (e.key === 'ArrowRight') { e.preventDefault(); apply(Math.min(5, cur + 1)); }
+        else if (e.key === 'ArrowLeft') { e.preventDefault(); apply(Math.max(0, cur - 1)); }
+        else if (e.key === '0') { e.preventDefault(); apply(0); }
+      };
+    });
+    const clr = $('b-rate-clear');
+    if (clr) clr.onclick = (e) => { e.stopPropagation(); apply(0); };
+  })();
   $('b-read').onclick = async () => {
     const next = p.readStatus === 'done' ? 'unread' : 'done';
     await patch(p.id, { readStatus: next });
@@ -844,6 +889,7 @@ async function loadSettingsData() {
     $('disc-w-rec').value = w.rec ?? '';
     $('disc-maxresults-hint').textContent = `config 默认：${fmtDef(cd.maxResults)}`;
     $('disc-peraxis-hint').textContent = `config 默认：${fmtDef(cd.perAxis)}`;
+    renderWeightProp();
     // ---- 概览 / 系统 / 覆盖徽标 ----
     renderOverview(data);
     renderSystem(data);
@@ -853,7 +899,18 @@ async function loadSettingsData() {
   }
 }
 
-/** 概览仪表盘：生效配置 metric 卡 + 「已覆盖」汇总。 */
+/** 概览仪表盘：生效配置 metric 卡（细线图标 + 点击直达设置页）+ 「已覆盖」汇总 + 实时服务状态点。 */
+// 概览 metric 卡用的线性细线图标。
+const OV_ICON = {
+  model: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M9 9h6v6H9z"/><path d="M9 2v2M15 2v2M9 20v2M15 20v2M2 9h2M2 15h2M20 9h2M20 15h2"/></svg>',
+  endpoint: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a4 4 0 0 1 4 4v4a4 4 0 0 1-8 0V6a4 4 0 0 1 4-4z"/><path d="M5 11a7 7 0 0 0 14 0"/><path d="M12 18v3"/><path d="M9 21h6"/></svg>',
+  scan: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2"/><path d="M3 12h18"/></svg>',
+  arxiv: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><path d="M11 8v6M8 11h6"/></svg>',
+  discover: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><polygon points="16 8 13.5 13.5 8 16 10.5 10.5 16 8"/></svg>',
+  papers: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5a1 1 0 0 1 1-1h9l6 6v9a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1z"/><path d="M14 4v6h6"/></svg>',
+  version: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v4l3 2"/></svg>',
+  status: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12a10 10 0 1 1-3.5-7.6"/><polyline points="22 4 22 9 17 9"/></svg>',
+};
 function renderOverview(data) {
   const m = $('ov-metrics');
   if (!m) return;
@@ -861,22 +918,32 @@ function renderOverview(data) {
   const sources = [data.discover.semanticScholar !== false ? 'S2' : null, data.discover.openAlex !== false ? 'OpenAlex' : null]
     .filter(Boolean)
     .join(' · ');
+  // [key, value, tone, icon, goto?].goto 为可跳转的设置 tab；无 goto 不可点。
   const cards = [
-    ['当前模型', data.ai.model || '（未设置）', ''],
-    ['API 端点', data.ai.baseURL || '（未设置）', ''],
-    ['扫描间隔', data.scan.scanIntervalMinutes ? data.scan.scanIntervalMinutes + ' 分钟' : '已关闭', ''],
-    ['arXiv 自动补全', arxivOn ? '开启' : '关闭', arxivOn ? 'good' : 'muted'],
-    ['发现来源', sources || '（无）', ''],
-    ['论文总数', String(data.system.papers ?? '?'), ''],
-    ['版本', 'v' + (data.system.version || '?'), ''],
-    ['服务状态', '运行中', 'good'],
+    ['当前模型', data.ai.model || '（未设置）', '', OV_ICON.model, 'ai'],
+    ['API 端点', data.ai.baseURL || '（未设置）', '', OV_ICON.endpoint, 'ai'],
+    ['扫描间隔', data.scan.scanIntervalMinutes ? data.scan.scanIntervalMinutes + ' 分钟' : '已关闭', '', OV_ICON.scan, 'scan'],
+    ['arXiv 自动补全', arxivOn ? '开启' : '关闭', arxivOn ? 'good' : 'muted', OV_ICON.arxiv, 'arxiv'],
+    ['发现来源', sources || '（无）', '', OV_ICON.discover, 'discover'],
+    ['论文总数', String(data.system.papers ?? '?'), '', OV_ICON.papers, null],
+    ['版本', 'v' + (data.system.version || '?'), '', OV_ICON.version, null],
+    ['服务状态', '<span class="live-dot"></span>运行中', 'good', OV_ICON.status, null],
   ];
   m.innerHTML = cards
     .map(
-      ([k, v, tone]) =>
-        `<div class="ov-card"><div class="ov-k">${escapeHtml(k)}</div><div class="ov-v ${tone}">${escapeHtml(String(v))}</div></div>`,
+      ([k, v, tone, icon, goto]) =>
+        `<div class="ov-card${goto ? ' jump' : ''}"${goto ? ` data-goto="${goto}" tabindex="0" role="button" title="跳转到${k}设置"` : ''}>` +
+        `<span class="ov-ico">${icon}</span>` +
+        `<div class="ov-card-main"><div class="ov-k">${escapeHtml(k)}</div><div class="ov-v ${tone}">${v}</div></div>` +
+        `</div>`,
     )
     .join('');
+  // 点击 / 回车直达对应设置页
+  m.querySelectorAll('.ov-card.jump').forEach((c) => {
+    const go = () => settingsSwitchTab(c.dataset.goto);
+    c.onclick = go;
+    c.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(); } };
+  });
   const ov = data.overrides || {};
   const count =
     (ov.ai || []).length +
@@ -1088,6 +1155,42 @@ async function saveArxiv() {
   setBusy(btn, false);
 }
 
+/** 实时权重占比条：读取三联输入，按和的比例绘制堆叠条 + 更新提示（和≠1 时提醒）。 */
+function renderWeightProp() {
+  const bar = $('disc-weight-prop');
+  if (!bar) return;
+  const vals = {
+    rel: parseFloat($('disc-w-rel').value),
+    auth: parseFloat($('disc-w-auth').value),
+    rec: parseFloat($('disc-w-rec').value),
+  };
+  const sum = (Number(vals.rel) || 0) + (Number(vals.auth) || 0) + (Number(vals.rec) || 0);
+  // 全空：隐藏条，恢复默认提示
+  if (!sum) { bar.innerHTML = ''; bar.style.opacity = '0'; const h = $('disc-weights-hint'); if (h) h.textContent = '建议三者之和为 1。'; return; }
+  bar.style.opacity = '1';
+  const pct = (k) => (sum > 0 ? ((Number(vals[k]) || 0) / sum) * 100 : 0);
+  bar.innerHTML =
+    `<i class="p-rel" style="width:${pct('rel')}%"></i>` +
+    `<i class="p-auth" style="width:${pct('auth')}%"></i>` +
+    `<i class="p-rec" style="width:${pct('rec')}%"></i>`;
+  const h = $('disc-weights-hint');
+  if (h) {
+    const drift = Math.abs(sum - 1);
+    h.textContent = drift < 0.001 ? '当前和 = 1（已归一化）。' : `当前和 = ${sum.toFixed(2)}，偏离 1。可点「归一化为 1」修正。`;
+  }
+}
+
+/** 把三联权重按比例缩放为和 = 1（空值视为 0；全 0 不动）。 */
+function normalizeWeights() {
+  const ids = ['disc-w-rel', 'disc-w-auth', 'disc-w-rec'];
+  const vals = ids.map((id) => parseFloat($(id).value)).map((v) => (Number.isFinite(v) && v > 0 ? v : 0));
+  const sum = vals.reduce((a, b) => a + b, 0);
+  if (!sum) { toast('三组权重都为 0，无法归一化', 'error'); return; }
+  ids.forEach((id, i) => { $(id).value = Math.round((vals[i] / sum) * 1000) / 1000; });
+  renderWeightProp();
+  toast('已归一化为 1');
+}
+
 async function saveDiscover() {
   const btn = $('btn-discover-save');
   const hint = $('discover-hint');
@@ -1175,62 +1278,364 @@ function filterSettingsNav(q) {
   });
 }
 
-// ---- 主题与标签管理 ----
+// ---- 主题与标签管理（分段单栏 + 搜索/排序/内联重命名/合并/批量，全部复用 PATCH {merge,into}/{delete}）----
+const taxState = { kind: 'tag', data: { tag: [], topic: [] }, q: '', sort: 'countDesc', selectMode: false, selected: new Set() };
+const TAX_PALETTE = ['#4f46e5', '#7c3aed', '#0891b2', '#d97706', '#db2777', '#2563eb', '#16a34a', '#0ea5e9', '#e11d48', '#65a30d'];
+const TAX_ICON = {
+  pencil:
+    '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>',
+  merge:
+    '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="7" r="2.5"/><path d="M6 8.5v7"/><path d="M18 9.5a9 9 0 0 1-9 8.5"/></svg>',
+  trash:
+    '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>',
+};
+const taxLabel = (kind) => (kind === 'tag' ? '标签' : '主题');
+function taxColor(name) {
+  let h = 0;
+  for (const ch of String(name)) h = (h * 31 + ch.charCodeAt(0)) | 0;
+  return TAX_PALETTE[Math.abs(h) % TAX_PALETTE.length];
+}
+function taxPatch(kind, body) {
+  return PATCH(kind === 'tag' ? '/api/tags' : '/api/topics', body);
+}
+
 async function loadTaxonomy() {
   try {
-    const [tr, tg] = await Promise.all([jget('/api/topics'), jget('/api/tags')]);
-    renderTaxList($('tax-topic-list'), tr.data || [], 'topic');
-    renderTaxList($('tax-tag-list'), tg.data || [], 'tag');
-    $('tax-topic-count').textContent = (tr.data || []).length;
-    $('tax-tag-count').textContent = (tg.data || []).length;
+    const [tg, tr] = await Promise.all([jget('/api/tags'), jget('/api/topics')]);
+    taxState.data.tag = tg.data || [];
+    taxState.data.topic = tr.data || [];
+    $('tax-tag-count').textContent = taxState.data.tag.length;
+    $('tax-topic-count').textContent = taxState.data.topic.length;
+    taxState.selected.clear();
+    renderTaxonomy();
   } catch (e) {
     toast('加载主题/标签失败', 'error');
   }
 }
 
-function renderTaxList(container, items, kind) {
-  container.innerHTML = '';
+function taxSwitchKind(kind) {
+  if (taxState.kind === kind) return;
+  taxState.kind = kind;
+  taxState.selected.clear();
+  document.querySelectorAll('.tax-seg-btn').forEach((b) => b.classList.toggle('active', b.dataset.kind === kind));
+  $('tax-search').placeholder = '搜索' + taxLabel(kind) + '…';
+  renderTaxonomy();
+}
+
+function taxToggleSelectMode(on) {
+  taxState.selectMode = on != null ? on : !taxState.selectMode;
+  if (!taxState.selectMode) taxState.selected.clear();
+  $('tax-select-toggle').classList.toggle('active', taxState.selectMode);
+  $('tax-select-toggle').textContent = taxState.selectMode ? '完成' : '多选';
+  renderTaxonomy();
+}
+
+function taxCurrentItems() {
+  let items = taxState.data[taxState.kind].slice();
+  const q = taxState.q.trim().toLowerCase();
+  if (q) items = items.filter((it) => it.name.toLowerCase().includes(q));
+  if (taxState.sort === 'nameAsc') items.sort((a, b) => a.name.localeCompare(b.name));
+  else if (taxState.sort === 'countAsc') items.sort((a, b) => a.count - b.count || a.name.localeCompare(b.name));
+  else items.sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+  return items;
+}
+
+function updateTaxBatchBar() {
+  const bar = $('tax-batch');
+  if (!bar) return;
+  bar.hidden = !taxState.selectMode;
+  if (taxState.selectMode) $('tax-sel-count').textContent = taxState.selected.size;
+}
+
+function renderTaxonomy() {
+  const rows = $('tax-rows');
+  if (!rows) return;
+  const kind = taxState.kind;
+  const items = taxCurrentItems();
+  const max = items.reduce((m, it) => Math.max(m, it.count), 0) || 1;
+  updateTaxBatchBar();
   if (!items.length) {
-    container.innerHTML = '<div class="empty-state">暂无' + (kind === 'topic' ? '主题' : '标签') + '</div>';
+    rows.innerHTML =
+      '<div class="empty-state">' + (taxState.q ? '没有匹配的' + taxLabel(kind) : '暂无' + taxLabel(kind)) + '</div>';
     return;
   }
-  for (const it of items) {
-    const card = document.createElement('div');
-    card.className = 'tax-card';
-    card.innerHTML =
-      '<div class="tax-card-main"><span class="tax-name"></span><span class="tax-cnt">' +
-      it.count +
-      ' 篇</span></div>' +
-      '<div class="tax-card-actions">' +
-      '<button class="btn ghost sm" data-act="rename">重命名</button>' +
-      '<button class="btn ghost sm danger" data-act="delete">删除</button>' +
-      '</div>';
-    card.querySelector('.tax-name').textContent = it.name;
-    card.querySelector('[data-act="rename"]').addEventListener('click', () => taxRename(kind, it.name));
-    card.querySelector('[data-act="delete"]').addEventListener('click', () => taxDelete(kind, it.name, it.count));
-    container.appendChild(card);
+  rows.innerHTML = '';
+  for (const it of items) rows.appendChild(taxRow(it, kind, max));
+}
+
+function taxRow(it, kind, max) {
+  const row = document.createElement('div');
+  row.className = 'tax-row';
+  const pct = Math.max(3, Math.round((it.count / max) * 100));
+  const low = it.count > 0 && it.count <= 2;
+  if (taxState.selectMode) {
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.className = 'tax-check';
+    cb.checked = taxState.selected.has(it.name);
+    row.classList.toggle('sel', cb.checked);
+    cb.onchange = () => {
+      if (cb.checked) taxState.selected.add(it.name);
+      else taxState.selected.delete(it.name);
+      row.classList.toggle('sel', cb.checked);
+      updateTaxBatchBar();
+    };
+    row.appendChild(cb);
   }
+  const dot = document.createElement('span');
+  dot.className = 'tax-dot';
+  dot.style.background = taxColor(it.name);
+  row.appendChild(dot);
+
+  const name = document.createElement('span');
+  name.className = 'tax-row-name';
+  name.textContent = it.name;
+  name.title = '点击重命名';
+  name.onclick = () => {
+    if (!taxState.selectMode) taxEnterRename(row, it, kind);
+  };
+  row.appendChild(name);
+
+  const bar = document.createElement('div');
+  bar.className = 'tax-bar';
+  const fill = document.createElement('span');
+  fill.style.width = pct + '%';
+  fill.style.background = taxColor(it.name);
+  bar.appendChild(fill);
+  row.appendChild(bar);
+
+  const cnt = document.createElement('button');
+  cnt.className = 'tax-cnt' + (low ? ' low' : '');
+  cnt.textContent = low ? '仅 ' + it.count + ' 篇' : it.count;
+  cnt.title = '查看该' + taxLabel(kind) + '下的论文';
+  cnt.onclick = () => taxJumpToLibrary(kind, it.name);
+  row.appendChild(cnt);
+
+  const acts = document.createElement('span');
+  acts.className = 'tax-acts';
+  acts.innerHTML =
+    '<button class="tax-act" data-a="rename" title="重命名" aria-label="重命名">' +
+    TAX_ICON.pencil +
+    '</button>' +
+    '<button class="tax-act" data-a="merge" title="合并到…" aria-label="合并到">' +
+    TAX_ICON.merge +
+    '</button>' +
+    '<button class="tax-act danger" data-a="delete" title="删除" aria-label="删除">' +
+    TAX_ICON.trash +
+    '</button>';
+  acts.querySelector('[data-a="rename"]').onclick = () => taxEnterRename(row, it, kind);
+  acts.querySelector('[data-a="merge"]').onclick = () => taxEnterMerge(row, it, kind);
+  acts.querySelector('[data-a="delete"]').onclick = () => taxConfirmDelete(row, it, kind);
+  row.appendChild(acts);
+  return row;
 }
 
-async function taxRename(kind, name) {
-  const into = prompt('把「' + name + '」重命名 / 合并为：', name);
-  if (into === null || into.trim() === '' || into.trim() === name) return;
-  const path = kind === 'topic' ? '/api/topics' : '/api/tags';
-  const r = await PATCH(path, { merge: name, into: into.trim() });
-  if (r.ok) {
-    toast('已重命名 / 合并');
-    loadTaxonomy();
-  } else toast(r.error || '操作失败', 'error');
+/** 行内重命名（↵ 提交：与现有名相同则忽略；指向已有名即合并）。 */
+function taxEnterRename(row, it, kind) {
+  if (taxState.selectMode) return;
+  row.className = 'tax-row editing';
+  row.innerHTML = '';
+  const dot = document.createElement('span');
+  dot.className = 'tax-dot';
+  dot.style.background = taxColor(it.name);
+  row.appendChild(dot);
+  const inp = document.createElement('input');
+  inp.className = 'tax-edit-input';
+  inp.value = it.name;
+  row.appendChild(inp);
+  const hint = document.createElement('span');
+  hint.className = 'tax-edit-hint';
+  hint.textContent = '↵ 重命名 / 合并 · Esc 取消';
+  row.appendChild(hint);
+  inp.focus();
+  inp.select();
+  let done = false;
+  const cancel = () => {
+    if (done) return;
+    done = true;
+    renderTaxonomy();
+  };
+  const commit = async () => {
+    if (done) return;
+    const v = inp.value.trim();
+    if (!v || v === it.name) return cancel();
+    done = true;
+    const existed = taxState.data[kind].some((x) => x.name === v);
+    const r = await taxPatch(kind, { merge: it.name, into: v });
+    if (r.ok) {
+      toast(existed ? '「' + it.name + '」已合并到「' + v + '」' : '已重命名为「' + v + '」');
+      loadTaxonomy();
+    } else {
+      toast(r.error || '操作失败', 'error');
+      renderTaxonomy();
+    }
+  };
+  inp.onkeydown = (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      commit();
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      cancel();
+    }
+  };
+  inp.onblur = () => setTimeout(cancel, 120);
 }
 
-async function taxDelete(kind, name, count) {
-  if (!confirm('确定删除「' + name + '」？将从 ' + count + ' 篇论文中移除。')) return;
-  const path = kind === 'topic' ? '/api/topics' : '/api/tags';
-  const r = await PATCH(path, { delete: name });
-  if (r.ok) {
-    toast('已删除');
+/** 行内合并到已有项。 */
+function taxEnterMerge(row, it, kind) {
+  if (taxState.selectMode) return;
+  const others = taxState.data[kind]
+    .filter((x) => x.name !== it.name)
+    .map((x) => x.name)
+    .sort((a, b) => a.localeCompare(b));
+  if (!others.length) {
+    toast('没有可合并的目标');
+    return;
+  }
+  row.className = 'tax-row editing';
+  row.innerHTML = '';
+  const dot = document.createElement('span');
+  dot.className = 'tax-dot';
+  dot.style.background = taxColor(it.name);
+  row.appendChild(dot);
+  const lbl = document.createElement('span');
+  lbl.className = 'tax-row-name strike';
+  lbl.textContent = it.name;
+  row.appendChild(lbl);
+  const to = document.createElement('span');
+  to.className = 'tax-merge-to';
+  to.textContent = '合并到';
+  row.appendChild(to);
+  const sel = document.createElement('select');
+  sel.className = 'tax-merge-sel';
+  for (const n of others) {
+    const o = document.createElement('option');
+    o.value = n;
+    o.textContent = n;
+    sel.appendChild(o);
+  }
+  row.appendChild(sel);
+  const ok = document.createElement('button');
+  ok.className = 'btn sm';
+  ok.textContent = '确认';
+  row.appendChild(ok);
+  const no = document.createElement('button');
+  no.className = 'btn ghost sm';
+  no.textContent = '取消';
+  row.appendChild(no);
+  sel.focus();
+  no.onclick = () => renderTaxonomy();
+  ok.onclick = async () => {
+    const target = sel.value;
+    const r = await taxPatch(kind, { merge: it.name, into: target });
+    if (r.ok) {
+      toast('「' + it.name + '」已合并到「' + target + '」');
+      loadTaxonomy();
+    } else {
+      toast(r.error || '操作失败', 'error');
+      renderTaxonomy();
+    }
+  };
+}
+
+/** 行内删除确认（不弹系统对话框）。 */
+function taxConfirmDelete(row, it, kind) {
+  if (taxState.selectMode) return;
+  row.className = 'tax-row editing danger-row';
+  row.innerHTML = '';
+  const warn = document.createElement('span');
+  warn.className = 'tax-del-warn';
+  warn.textContent = '删除「' + it.name + '」？将从 ' + it.count + ' 篇论文移除';
+  row.appendChild(warn);
+  const sp = document.createElement('span');
+  sp.style.flex = '1';
+  row.appendChild(sp);
+  const del = document.createElement('button');
+  del.className = 'btn sm danger';
+  del.textContent = '删除';
+  row.appendChild(del);
+  const no = document.createElement('button');
+  no.className = 'btn ghost sm';
+  no.textContent = '取消';
+  row.appendChild(no);
+  no.onclick = () => renderTaxonomy();
+  del.onclick = async () => {
+    const r = await taxPatch(kind, { delete: it.name });
+    if (r.ok) {
+      toast('已删除「' + it.name + '」');
+      loadTaxonomy();
+    } else {
+      toast(r.error || '操作失败', 'error');
+      renderTaxonomy();
+    }
+  };
+}
+
+async function taxBatchDelete() {
+  const names = [...taxState.selected];
+  if (!names.length) return toast('未选择任何项');
+  if (!confirm('删除选中的 ' + names.length + ' 个' + taxLabel(taxState.kind) + '？将从相关论文移除。')) return;
+  for (const n of names) await taxPatch(taxState.kind, { delete: n });
+  toast('已删除 ' + names.length + ' 个' + taxLabel(taxState.kind));
+  taxState.selected.clear();
+  loadTaxonomy();
+}
+
+function taxBatchMerge() {
+  const names = [...taxState.selected];
+  if (names.length < 2) return toast('请至少选择 2 个用于合并');
+  const bar = $('tax-batch');
+  if (document.getElementById('tax-merge-pick')) return;
+  const pick = document.createElement('span');
+  pick.id = 'tax-merge-pick';
+  pick.className = 'tax-batch-pick';
+  const cand = names
+    .map((n) => taxState.data[taxState.kind].find((x) => x.name === n))
+    .filter(Boolean)
+    .sort((a, b) => b.count - a.count);
+  const to = document.createElement('span');
+  to.textContent = '合并到';
+  pick.appendChild(to);
+  const sel = document.createElement('select');
+  sel.className = 'tax-merge-sel';
+  for (const c of cand) {
+    const o = document.createElement('option');
+    o.value = c.name;
+    o.textContent = c.name + '（' + c.count + '）';
+    sel.appendChild(o);
+  }
+  pick.appendChild(sel);
+  const ok = document.createElement('button');
+  ok.className = 'btn sm';
+  ok.textContent = '合并';
+  pick.appendChild(ok);
+  const no = document.createElement('button');
+  no.className = 'btn ghost sm';
+  no.textContent = '取消';
+  pick.appendChild(no);
+  bar.appendChild(pick);
+  no.onclick = () => pick.remove();
+  ok.onclick = async () => {
+    const target = sel.value;
+    const merges = names.filter((n) => n !== target);
+    for (const n of merges) await taxPatch(taxState.kind, { merge: n, into: target });
+    toast('已合并 ' + merges.length + ' 个到「' + target + '」');
+    taxState.selected.clear();
+    pick.remove();
     loadTaxonomy();
-  } else toast(r.error || '操作失败', 'error');
+  };
+}
+
+/** 点计数/名称跳回主列表并按该标签/主题筛选。 */
+function taxJumpToLibrary(kind, name) {
+  if (kind === 'tag') state.filter.tag = name;
+  else state.filter.topic = name;
+  const selEl = $(kind === 'tag' ? 'filter-tag' : 'filter-topic');
+  if (selEl) selEl.value = name;
+  showLibrary();
+  refresh();
+  toast('已按' + taxLabel(kind) + '「' + name + '」筛选');
 }
 
 // ---- 系统信息：刷新服务状态（重载设置数据，更新运行时长 / 概览）----
@@ -1668,6 +2073,10 @@ function bind() {
   $('btn-arxiv-reset').onclick = () => resetSection('arxiv', 'arXiv 元数据');
   $('btn-discover-save').onclick = saveDiscover;
   $('btn-discover-reset').onclick = () => resetSection('discover', '主题发现');
+  // 主题发现：权重三联实时占比条 + 一键归一化为 1
+  ['disc-w-rel', 'disc-w-auth', 'disc-w-rec'].forEach((id) => { const el = $(id); if (el) el.oninput = renderWeightProp; });
+  const wNorm = $('btn-w-norm');
+  if (wNorm) wNorm.onclick = normalizeWeights;
   // AI 接口恢复默认
   $('btn-ai-reset').onclick = () => resetSection('ai', 'AI 接口');
   // 概览：全部恢复默认 + 快捷入口
@@ -1679,6 +2088,20 @@ function bind() {
   $('btn-system-health').onclick = refreshSystemHealth;
   // 设置内搜索
   $('settings-search-input').oninput = (e) => filterSettingsNav(e.target.value);
+  // 主题与标签管理：分段切换 / 搜索 / 排序 / 多选 / 批量
+  document.querySelectorAll('.tax-seg-btn').forEach((b) => (b.onclick = () => taxSwitchKind(b.dataset.kind)));
+  $('tax-search').oninput = (e) => {
+    taxState.q = e.target.value;
+    renderTaxonomy();
+  };
+  $('tax-sort').onchange = (e) => {
+    taxState.sort = e.target.value;
+    renderTaxonomy();
+  };
+  $('tax-select-toggle').onclick = () => taxToggleSelectMode();
+  $('tax-batch-merge').onclick = taxBatchMerge;
+  $('tax-batch-delete').onclick = taxBatchDelete;
+  $('tax-batch-cancel').onclick = () => taxToggleSelectMode(false);
 
   // 多选
   $('btn-pick').onclick = () => togglePickMode(!state.pickMode);
@@ -1772,7 +2195,8 @@ function bind() {
       if (e.key === 'Enter' && state.current) { e.preventDefault(); openReader(state.papers.find((p) => p.id === state.current)); return; }
       if (e.key.toLowerCase() === 's' && state.current) {
         const cp = state.papers.find((p) => p.id === state.current);
-        if (cp) { e.preventDefault(); patch(cp.id, { starred: !cp.starred }); toast(cp.starred ? '已取消收藏' : '已收藏'); return; }
+        // 星标：无评分↔5 星来回切（兼容旧「收藏」语义）
+        if (cp) { const next = (cp.rating || 0) > 0 ? 0 : 5; e.preventDefault(); patch(cp.id, { rating: next }); toast(next ? '已评 5 星' : '已清除评分'); return; }
       }
     }
     if (e.key === 'Escape') {

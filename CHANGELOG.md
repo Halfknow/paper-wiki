@@ -16,8 +16,13 @@
   - **主题发现**：`maxResults` / `perAxis` / `recencyWindowYears` / `titleSimThreshold` / `semanticScholar` / `openAlex` / `semanticScholarApiKey`（掩码）/ 复合排序权重 `weights{rel,auth,rec}`。
 - **逐项状态增强**：每个可编辑项展示「生效值」+「config.json 默认值」提示 +「已覆盖 config」徽标（仅当被 `store.settings` 覆盖时显示），支持按段「恢复默认」（清除该段运行时覆盖回到 config）。
 - **提示词分离管理**：总结提示词 / 标签主题提示词两个独立面板，各自「恢复默认 / 保存 / 查看内置默认」（总结输出 Markdown、标签主题输出 JSON，互不冲突）。
-- **主题与标签管理**：双栏（主题 / 标签）列表 + 计数，支持重命名（合并）、删除。新增 `PATCH /api/topics`（`{merge,into}` / `{delete}`，对齐既有 `PATCH /api/tags`）。
+- **主题与标签管理（精细化重构）**：分段单栏（标签 / 主题切换）取代旧双栏；每行＝哈希色点 + 名称 + **使用量占比条** + 计数 + 悬停浮现的「重命名 / 合并 / 删除」线性图标。支持**搜索**、**排序**（使用量 / 名称 / 最少使用）、**点名称就地重命名**（↵ 提交、Esc 取消，干掉 `prompt()`）、**合并到已有项**（下拉选目标）、**行内删除确认**（不弹系统对话框）、**多选批量合并 / 删除**、低频项（≤2 篇）高亮便于收敛、**点计数跳回主列表按该项筛选**。全部复用既有 `PATCH /api/tags|topics`（`{merge,into}` / `{delete}`）。
 - **系统信息**：服务级只读项（host / port / papersDir / 版本 / 论文数 / 运行时长）+ 可折叠「原始 config.json（密钥脱敏，只读）」。
+- **去 emoji，统一线性图标**：设置中心 9 个导航项与左下角「设置」入口由 emoji 改为与阅读器工具栏一致的细线 SVG 图标；「设置」入口重做为贴合平台的描边按钮。
+- **全站去 emoji（第二轮）**：侧栏「全部论文 / 星标 / 未读」、批量「抽取并追加概念」、空态「📚」、空引导卡、顶栏「提示词」入口与列表紧凑进度，统一由彩色 emoji 换成线性 SVG；保留 `✓ ✗ ☑` 等单色文字符号。
+- **星级评分（1–5，全栈）**：`starred` 布尔升级为 `rating` 0–5（`starred` 保留为 `rating>0` 的镜像，向后兼容）。`normalizePaper` 迁移（`starred:true→5`、缺省→0、clamp 0–5）；`PATCH /api/papers/:id {rating}` 写入并镜像；`summaryView`/`detailView` 回传 rating；新增 `ratingDesc` 排序。前端详情用 5 颗线性星控件（点击设分、再点同一颗清零、hover 预览、键盘 ← → / 0 / Enter-Space）；列表标题尾角标「★ N」；排序下拉增「评分最高」；`S` 键无评分↔5 星来回切。
+- **概览仪表盘升级**：metric 卡加细线图标 + 悬停描边；前 5 张可点击/回车直达对应设置页（AI / 扫描 / arXiv / 发现）；「服务状态」改为绿色脉冲实时点。
+- **主题发现表单精修**：参数分主次——主区为「最大结果数 / 每轴召回 / 复合排序权重」，新近窗口·去重阈值·数据源·API Key 收进可折叠「高级」分区（`<details>`）。权重三联增「实时占比条」（三色堆叠）+ 偏离 1 的提示 + 一键「归一化为 1」按钮（按比例缩放三者之和为 1）。
 
 ### Fixed — 自定义总结提示词导致空总结+空标签（根因修复）
 - **根因**：`lib/ai.js` 的 `callChat` 把 `response_format:{type:'json_object'}` 写死，与用户自定义的 Markdown 总结提示词（要求输出 `## 章节` / LaTeX）直接冲突 → 模型被强制走 JSON 模式却要写 Markdown → 返回空 `{}` → 触发空总结守卫 → summary 存占位 + tags/topics 全空。

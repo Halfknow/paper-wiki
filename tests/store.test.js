@@ -164,3 +164,26 @@ test('conceptsToMarkdown 按首字母分组且空清单有提示', () => {
   assert.ok(md.includes('注意力机制'));
   assert.ok(md.includes('A 论文'));
 });
+
+test('migrateStore 补星级 rating（starred:true→5、缺省→0、clamp 0-5，starred 与 rating>0 互为镜像）', () => {
+  const data = {
+    version: 1,
+    papers: {
+      a: { id: 'a', starred: true },
+      b: { id: 'b' },
+      c: { id: 'c', rating: 9 },
+      d: { id: 'd', rating: 3 },
+      e: { id: 'e', rating: 0, starred: true },
+    },
+  };
+  migrateStore(data);
+  assert.strictEqual(data.papers.a.rating, 5, 'starred:true → 5 星');
+  assert.strictEqual(data.papers.a.starred, true);
+  assert.strictEqual(data.papers.b.rating, 0, '缺省 → 0');
+  assert.strictEqual(data.papers.b.starred, false);
+  assert.strictEqual(data.papers.c.rating, 5, '超界 clamp 到 5');
+  assert.strictEqual(data.papers.d.rating, 3);
+  assert.strictEqual(data.papers.d.starred, true, 'rating>0 → starred true');
+  assert.strictEqual(data.papers.e.rating, 0, 'rating 为准：rating:0 即 0 星');
+  assert.strictEqual(data.papers.e.starred, false);
+});
