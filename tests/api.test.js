@@ -552,6 +552,55 @@ test('DELETE /api/papers/:id 文件缺失也能删条目（不抛）；不存在
   server.close();
 });
 
+test('POST /api/papers/bulk-delete 批量删 + 清理空 tags/topics + 孤立概念', async () => {
+  const tmp = fs.mkdtempSync(pathm.join(os.tmpdir(), 'pwbulk-'));
+  const pdfA = pathm.join(tmp, 'a.pdf');
+  const pdfB = pathm.join(tmp, 'b.pdf');
+  fs.writeFileSync(pdfA, 'A');
+  fs.writeFileSync(pdfB, 'B');
+  // a/b/c 三篇：a 含标签 rlhf（仅 a 有）+ 主题 推理（仅 a 有）；c 不删
+  // 概念 c1 只被 a/b 引用，删 a/b 后变空应被移除；c2 被 c 引用应保留
+  const store = {
+    version: 2,
+    tags: ['rlhf', 'data'], topics: ['推理', '视觉'],
+    folders: [], concepts: [],
+    papers: {
+      a: { id: 'a', filename: 'a.pdf', filepath: pdfA, fulltextPath: null, tags: ['rlhf'], topics: ['推理'], status: 'ready' },
+      b: { id: 'b', filename: 'b.pdf', filepath: pdfB, fulltextPath: null, tags: ['data'], topics: ['视觉'], status: 'ready' },
+      c: { id: 'c', filename: 'c.pdf', filepath: pathm.join(tmp, 'c.pdf'), tags: ['data'], topics: ['视觉'], status: 'ready' },
+    },
+    concepts: [
+      { id: 'c1', term: '孤儿', paperIds: ['a', 'b'] }, // 删 a/b 后空 → 移除
+      { id: 'c2', term: '保留', paperIds: ['c'] },       // 被 c 引用 → 保留
+    ],
+  };
+  const ctx = baseCtx(store, async () => {});
+  ctx.config = { ai: {}, papersDir: tmp };
+  const server = await startServer(createApiRouter(ctx).handle);
+  const port = server.address().port;
+  const r = await call(port, 'POST', '/api/papers/bulk-delete', { ids: ['a', 'b'] });
+  assert.strictEqual(r.status, 200);
+  assert.strictEqual(r.json.data.deleted, 2);
+  assert.deepStrictEqual(r.json.data.ids.sort(), ['a', 'b']);
+  // 论文删除
+  assert.ok(!store.papers.a && !store.papers.b, 'a/b 删除');
+  assert.ok(store.papers.c, 'c 保留');
+  // PDF 文件删除
+  assert.ok(!fs.existsSync(pdfA) && !fs.existsSync(pdfB), 'PDF 删除');
+  // 标签/主题聚合：rlhf/推理（仅 a/b 有）归零清除；data/视觉（c 还有）保留
+  assert.deepStrictEqual(store.tags, ['data'], 'rlhf 清除');
+  assert.deepStrictEqual(store.topics, ['视觉'], '推理清除');
+  // 孤立概念移除；被引用的保留
+  assert.deepStrictEqual(store.concepts.map((x) => x.id), ['c2'], 'c1 移除 c2 保留');
+  // 空 ids / 全不存在的 id
+  const r2 = await call(port, 'POST', '/api/papers/bulk-delete', { ids: [] });
+  assert.strictEqual(r2.status, 400);
+  const r3 = await call(port, 'POST', '/api/papers/bulk-delete', { ids: ['nope'] });
+  assert.strictEqual(r3.status, 400, '全无效 id 返回 400');
+  server.close();
+  fs.rmSync(tmp, { recursive: true, force: true });
+});
+
 test('PUT /api/settings/summary-prompt 持久化并 trim', async () => {
   const store = { version: 2, tags: [], topics: [], folders: [], concepts: [], settings: {}, papers: {} };
   let saved = null;

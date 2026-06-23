@@ -2384,14 +2384,32 @@ function bind() {
     setBusy(btn, true, '抽取中…');
     $('btn-pick-cancel').disabled = true;
     $('btn-pick-all').disabled = true;
+    $('btn-pick-delete').disabled = true;
     const r = await POST('/api/papers/concepts', { ids });
     setBusy(btn, false);
     $('btn-pick-cancel').disabled = false;
     $('btn-pick-all').disabled = false;
+    $('btn-pick-delete').disabled = false;
     if (bp) { bp.hidden = true; bpFill.classList.remove('indeterminate'); }
     if (r.data) toast(`完成：处理 ${r.data.processed} 篇，新增 ${r.data.added} 个概念`);
     else toast(r.error || '抽取失败', 'error');
     if (r.ok) togglePickMode(false);
+    refresh();
+  };
+  // 批量删除：确认后调 bulk-delete（后端会删文件 + 清理空 tags/topics/概念）
+  $('btn-pick-delete').onclick = async () => {
+    const ids = [...state.selected];
+    if (!ids.length) { toast('请先选择论文', 'error'); return; }
+    if (!confirm(`删除已选的 ${ids.length} 篇论文？\n将同时删除本地 PDF 与全文文本，并清理仅被这些论文使用的标签/主题/概念。此操作不可恢复。`)) return;
+    const btn = $('btn-pick-delete');
+    setBusy(btn, true, '删除中…');
+    $('btn-pick-cancel').disabled = true;
+    $('btn-pick-all').disabled = true;
+    $('btn-pick-concepts').disabled = true;
+    const r = await POST('/api/papers/bulk-delete', { ids });
+    setBusy(btn, false);
+    if (r.ok) { toast(`已删除 ${r.data.deleted} 篇`); togglePickMode(false); }
+    else toast(r.error || '删除失败', 'error');
     refresh();
   };
 
