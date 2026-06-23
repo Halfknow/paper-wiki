@@ -20,6 +20,8 @@
 }
 
 * { box-sizing:border-box; }
+/* hidden 属性必须真正隐藏：显式 display:none 防止后续 .side-item 等带 display 的规则覆盖（CSS 规范下 display 值会盖过 UA 的 [hidden] 默认）。 */
+[hidden] { display:none !important; }
 html,body { height:100%; }
 body {
   margin:0;
