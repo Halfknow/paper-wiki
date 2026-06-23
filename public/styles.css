@@ -271,6 +271,24 @@ body.is-resizing { cursor:col-resize; user-select:none; }
   background:var(--panel); z-index:5;
 }
 .toolbar-spacer { flex:1 1 auto; min-width:0; }
+/* 分段控件（视图密度切换）：与设置中心 .tax-seg 同设计语言——圆角胶囊外壳 + 两格按钮，当前格 Indigo 强调 */
+.seg-group {
+  display:inline-flex; align-items:stretch; flex:0 0 auto;
+  border:1px solid var(--border2); border-radius:var(--radius-sm);
+  background:var(--panel2); overflow:hidden; min-height:32px;
+}
+.seg-btn {
+  display:inline-flex; align-items:center; gap:5px;
+  padding:0 11px; border:0; background:transparent; cursor:pointer;
+  color:var(--muted); font-size:12px; font-weight:600; white-space:nowrap;
+  border-left:1px solid var(--border);
+  transition:background .12s ease, color .12s ease;
+}
+.seg-btn:first-child { border-left:0; }
+.seg-btn svg { flex:0 0 auto; }
+.seg-btn:hover { background:var(--panel3); color:var(--text); }
+.seg-btn.active { background:var(--accent-soft); color:var(--accent-strong); }
+.seg-btn:focus-visible { outline:2px solid var(--accent); outline-offset:-2px; }
 /* 排序（group by）控件：与顶栏 select 统一的设计语言，外壳 + 自定义下拉箭头 */
 .sort-field {
   display:inline-flex; align-items:center; gap:6px; flex:0 0 auto;

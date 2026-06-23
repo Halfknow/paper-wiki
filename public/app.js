@@ -363,12 +363,14 @@ function renderList() {
   const ul = $('paper-list');
   ul.innerHTML = '';
   ul.classList.toggle('compact', state.compact);
-  // 紧凑/舒适视图切换：换线性 SVG（紧凑＝单行条；舒适＝三行）。紧凑态加 active 强调。
-  $('btn-compact').innerHTML = state.compact
-    ? '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="6" width="18" height="12" rx="2"/><line x1="3" y1="12" x2="21" y2="12"/></svg>'
-    : '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="3.5" rx="1"/><rect x="3" y="11" width="18" height="3.5" rx="1"/><rect x="3" y="17" width="18" height="2.5" rx="1"/></svg>';
-  $('btn-compact').title = state.compact ? '切回舒适视图' : '切到紧凑视图';
-  $('btn-compact').classList.toggle('active', state.compact);
+  // 视图密度分段控件：两个按钮固定图标，按 state.compact 切 active 高亮（不再动态换 innerHTML）
+  const vc = $('view-compact'), vf = $('view-comfort');
+  if (vc && vf) {
+    vc.classList.toggle('active', state.compact);
+    vc.setAttribute('aria-pressed', String(state.compact));
+    vf.classList.toggle('active', !state.compact);
+    vf.setAttribute('aria-pressed', String(!state.compact));
+  }
   if (!state.papers.length) {
     const f = state.filter;
     const hasFilter = f.q || f.status || f.readStatus || f.tag || f.topic || f.starred || f.folder || f.mode;
@@ -2183,11 +2185,15 @@ function bind() {
   $('btn-pick').onclick = () => togglePickMode(!state.pickMode);
 
   // 紧凑视图切换（记忆到 localStorage）
-  $('btn-compact').onclick = () => {
-    state.compact = !state.compact;
-    localStorage.setItem('pw-compact', state.compact ? '1' : '0');
+  // 视图密度分段：紧凑 / 舒适 两个独立按钮（localStorage 记忆）
+  const setDensity = (compact) => {
+    state.compact = compact;
+    localStorage.setItem('pw-compact', compact ? '1' : '0');
     renderList();
   };
+  const vc2 = $('view-compact'), vf2 = $('view-comfort');
+  if (vc2) vc2.onclick = () => setDensity(true);
+  if (vf2) vf2.onclick = () => setDensity(false);
 
   // 侧栏收起 / 展开（记忆到 localStorage）
   $('btn-collapse').onclick = () => setSidebarCollapsed(true);
