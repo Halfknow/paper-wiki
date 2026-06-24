@@ -578,6 +578,10 @@ body.is-resizing { cursor:col-resize; user-select:none; }
 .title-block { width:100%; min-width:0; }
 .dh-actions { width:100%; }
 .detail-state { display:flex; flex-wrap:wrap; align-items:center; gap:6px; margin-bottom:6px; }
+/* title-row：标题与状态徽标（就绪/未读）同一行，垂直居中。标题占剩余空间，徽标紧跟其后。 */
+.title-row { display:flex; align-items:center; flex-wrap:wrap; gap:8px; }
+.title-row h2 { flex:1 1 auto; min-width:0; margin:0; font-size:21px; line-height:1.32; font-weight:720; word-break:break-word; }
+.title-row .status-badge, .title-row .read-chip, .title-row .mini-metric { flex:0 0 auto; }
 /* h2 长标题在 title-block 内自然换行，不被按钮挤窄到中间断行 */
 .dh h2 { margin:0; font-size:21px; line-height:1.32; font-weight:720; word-break:break-word; }
 .dh-actions { width:100%; display:flex; gap:6px; align-items:center; flex-wrap:wrap; }

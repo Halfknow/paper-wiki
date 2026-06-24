@@ -672,13 +672,13 @@ function renderDetail() {
           <button class="btn ghost sm danger" id="b-delete" title="删除论文（连同本地 PDF 与全文，不可恢复）">删除</button>
         </div>
         <div class="title-block">
-          <div class="detail-state">
+          <div class="title-row">
+            <h2>${escapeHtml(p.title || p.filename)}</h2>
             <span class="status-badge ${statusDot(p)}">${statusLabel(p.status)}</span>
             <span class="read-chip">${readStatusLabel(p.readStatus)}</span>
             ${progress != null ? `<span class="mini-metric">读到 ${progress}%</span>` : ''}
             ${p.conceptCount ? `<span class="mini-metric">${p.conceptCount} 概念</span>` : ''}
           </div>
-          <h2>${escapeHtml(p.title || p.filename)}</h2>
         </div>
       </div>
       <div class="meta">${meta}</div>
