@@ -2399,12 +2399,14 @@ function bind() {
     $('btn-pick-all').disabled = true;
     $('btn-pick-delete').disabled = true;
     $('btn-pick-retag').disabled = true;
+    $('btn-pick-resume').disabled = true;
     const r = await POST('/api/papers/concepts', { ids });
     setBusy(btn, false);
     $('btn-pick-cancel').disabled = false;
     $('btn-pick-all').disabled = false;
     $('btn-pick-delete').disabled = false;
     $('btn-pick-retag').disabled = false;
+    $('btn-pick-resume').disabled = false;
     if (bp) { bp.hidden = true; bpFill.classList.remove('indeterminate'); }
     if (r.data) toast(`完成：处理 ${r.data.processed} 篇，新增 ${r.data.added} 个概念`);
     else toast(r.error || '抽取失败', 'error');
@@ -2422,6 +2424,7 @@ function bind() {
     $('btn-pick-all').disabled = true;
     $('btn-pick-concepts').disabled = true;
     $('btn-pick-retag').disabled = true;
+    $('btn-pick-resume').disabled = true;
     const r = await POST('/api/papers/bulk-delete', { ids });
     setBusy(btn, false);
     if (r.ok) { toast(`已删除 ${r.data.deleted} 篇`); togglePickMode(false); }
@@ -2441,15 +2444,44 @@ function bind() {
     $('btn-pick-all').disabled = true;
     $('btn-pick-concepts').disabled = true;
     $('btn-pick-delete').disabled = true;
+    $('btn-pick-resume').disabled = true;
     const r = await POST('/api/papers/retag', { ids });
     setBusy(btn, false);
     $('btn-pick-cancel').disabled = false;
     $('btn-pick-all').disabled = false;
     $('btn-pick-concepts').disabled = false;
     $('btn-pick-delete').disabled = false;
+    $('btn-pick-resume').disabled = false;
     if (bp) { bp.hidden = true; bpFill.classList.remove('indeterminate'); }
     if (r.ok) { toast(`已重新打标 ${r.data.processed} 篇`); togglePickMode(false); }
     else toast(r.error || '重新打标失败', 'error');
+    refresh();
+  };
+  // 批量重新总结：逐篇加入串行队列（processOne 会重做解析/元数据/总结/打标）
+  $('btn-pick-resume').onclick = async () => {
+    const ids = [...state.selected];
+    if (!ids.length) { toast('请先选择论文', 'error'); return; }
+    const btn = $('btn-pick-resume');
+    setBusy(btn, true, '排队中…');
+    $('btn-pick-cancel').disabled = true;
+    $('btn-pick-all').disabled = true;
+    $('btn-pick-concepts').disabled = true;
+    $('btn-pick-delete').disabled = true;
+    $('btn-pick-retag').disabled = true;
+    // 逐篇入队（POST summarize 每篇独立入队，串行 pipeline 处理）
+    let okN = 0;
+    for (const id of ids) {
+      const r = await POST('/api/papers/' + id + '/summarize');
+      if (r.ok) okN++;
+    }
+    setBusy(btn, false);
+    $('btn-pick-cancel').disabled = false;
+    $('btn-pick-all').disabled = false;
+    $('btn-pick-concepts').disabled = false;
+    $('btn-pick-delete').disabled = false;
+    $('btn-pick-retag').disabled = false;
+    if (okN) { toast(`已把 ${okN} 篇加入重新总结队列`); togglePickMode(false); }
+    else toast('重新总结失败', 'error');
     refresh();
   };
 
