@@ -629,6 +629,40 @@ test('POST /api/papers/:id/retag & /api/papers/retag —— 重新打标端点',
   server.close();
 });
 
+test('POST /api/papers/:id/chat —— 论文对话端点（追加消息到 chat + 落盘）', async () => {
+  let chatArgs = null;
+  const store = {
+    version: 2, tags: [], topics: [], folders: [], concepts: [],
+    papers: { p1: { id: 'p1', title: 'T', abstract: 'A', status: 'ready', chat: [] } },
+  };
+  const ctx = baseCtx(store, async () => {});
+  ctx.scanner.chatPaper = async (id, message) => {
+    chatArgs = { id, message };
+    // 模拟 scanner.chatPaper 的追加行为
+    store.papers[id].chat.push({ role: 'user', content: message, ts: 1 });
+    store.papers[id].chat.push({ role: 'assistant', content: '回复', ts: 1 });
+    return { reply: '回复', chat: store.papers[id].chat };
+  };
+  const server = await startServer(createApiRouter(ctx).handle);
+  const port = server.address().port;
+  // 正常对话
+  const r = await call(port, 'POST', '/api/papers/p1/chat', { message: '这篇论文的方法是什么？' });
+  assert.strictEqual(r.status, 200);
+  assert.deepStrictEqual(chatArgs, { id: 'p1', message: '这篇论文的方法是什么？' });
+  assert.strictEqual(r.json.data.reply, '回复');
+  assert.strictEqual(r.json.data.chat.length, 2, '返回完整 chat 历史');
+  // 空 message → 400
+  const r2 = await call(port, 'POST', '/api/papers/p1/chat', { message: '   ' });
+  assert.strictEqual(r2.status, 400);
+  // 不存在 → 404
+  const r3 = await call(port, 'POST', '/api/papers/nope/chat', { message: 'x' });
+  assert.strictEqual(r3.status, 404);
+  // detailView 回传 chat
+  const r4 = await call(port, 'GET', '/api/papers/p1');
+  assert.deepStrictEqual(r4.json.data.chat.length, 2, 'detailView 回传 chat 历史');
+  server.close();
+});
+
 test('PUT /api/settings/summary-prompt 持久化并 trim', async () => {
   const store = { version: 2, tags: [], topics: [], folders: [], concepts: [], settings: {}, papers: {} };
   let saved = null;

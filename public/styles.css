@@ -665,6 +665,56 @@ body.is-resizing { cursor:col-resize; user-select:none; }
 .md-preview { padding:6px 4px; background:var(--panel); border:1px solid var(--border); border-radius:var(--radius); padding:12px; min-height:460px; overflow:auto; }
 .save-hint { color:var(--muted2); font-size:12px; }
 
+/* ---- AI 聊天（详情 tab + 阅读器抽屉共用消息气泡样式） ---- */
+.chat-tab { display:flex; flex-direction:column; height:560px; max-height:60vh; }
+.chat-list, .rcd-list {
+  flex:1 1 auto; overflow:auto; display:flex; flex-direction:column; gap:10px;
+  padding:6px 2px; min-height:0;
+}
+/* 消息行：user 右对齐 Indigo、assistant 左对齐 panel */
+.chat-msg { display:flex; max-width:100%; }
+.chat-msg.user { justify-content:flex-end; }
+.chat-msg.assistant { justify-content:flex-start; }
+.chat-bubble {
+  max-width:82%; padding:10px 14px; border-radius:14px; font-size:13.5px; line-height:1.6;
+  word-break:break-word;
+}
+.chat-msg.user .chat-bubble { background:var(--accent); color:#fff; border-bottom-right-radius:4px; }
+.chat-msg.assistant .chat-bubble { background:var(--panel); color:var(--text); border:1px solid var(--border); border-bottom-left-radius:4px; }
+.chat-msg.assistant .chat-bubble p:first-child { margin-top:0; }
+.chat-msg.assistant .chat-bubble p:last-child { margin-bottom:0; }
+.chat-msg.assistant .chat-bubble.rcd-typing { color:var(--muted2); font-style:italic; }
+/* 输入区（详情 tab + 抽屉） */
+.chat-input-row, .rcd-input-row {
+  flex:0 0 auto; display:flex; align-items:flex-end; gap:8px; margin-top:10px;
+}
+.chat-input-row textarea, .rcd-input-row textarea {
+  flex:1 1 auto; min-height:44px; max-height:120px; resize:none;
+  padding:9px 11px; border:1px solid var(--border2); border-radius:var(--radius-sm);
+  font:13.5px/1.5 inherit; background:var(--panel); color:var(--text);
+}
+.chat-input-row textarea:focus, .rcd-input-row textarea:focus { outline:none; border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft); }
+.chat-empty { text-align:center; color:var(--muted2); font-size:13px; margin:auto; padding:30px 20px; line-height:1.8; }
+.chat-empty .muted2 { font-size:12px; }
+
+/* ---- PDF 阅读器 AI 对话抽屉（右侧浮层） ---- */
+.reader-chat-drawer {
+  position:absolute; top:0; right:0; bottom:0; width:380px; max-width:42%;
+  background:var(--panel); border-left:1px solid var(--border); box-shadow:-8px 0 24px rgba(15,23,42,.1);
+  display:flex; flex-direction:column; z-index:60; padding:0;
+}
+.rcd-head {
+  flex:0 0 auto; display:flex; align-items:center; justify-content:space-between;
+  padding:12px 14px; border-bottom:1px solid var(--border);
+}
+.rcd-title { font-weight:700; font-size:14px; }
+.rcd-close { border:0; background:none; cursor:pointer; color:var(--muted2); padding:4px; border-radius:6px; line-height:0; }
+.rcd-close:hover { background:var(--panel2); color:var(--text); }
+.rcd-list { padding:12px 14px; }
+.rcd-empty { text-align:center; color:var(--muted2); font-size:13px; margin:auto; padding:40px 20px; }
+.rcd-input-row { padding:10px 14px; border-top:1px solid var(--border); background:var(--panel); }
+#reader-chat.active { background:var(--accent-soft); color:var(--accent-strong); border-color:#c7d2fe; }
+
 /* Info tab 字段块 */
 .info-grid { display:grid; grid-template-columns:minmax(0, 1fr) minmax(0, 1fr); gap:16px 22px; max-width:1040px; }
 .field { margin-bottom:0; }

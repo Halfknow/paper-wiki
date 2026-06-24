@@ -3,6 +3,7 @@ const assert = require('node:assert');
 const {
   buildMessages,
   buildConceptMessages,
+  buildChatMessages,
   parseAiJson,
   parseConceptResult,
   parseTagsResult,
@@ -10,6 +11,7 @@ const {
   summarize,
   extractTagsTopics,
   extractConcepts,
+  chatPaper,
   applySettingsOverride,
 } = require('../lib/ai');
 
@@ -249,4 +251,42 @@ test('extractConcepts 调用注入的 fetch 并返回概念数组', async () => 
   });
   assert.strictEqual(items.length, 1);
   assert.strictEqual(items[0].term, 'MoE');
+});
+
+test('buildChatMessages 注入论文上下文 + 历史多轮 + 本轮问题 + 截断全文', () => {
+  const long = 'y'.repeat(500);
+  const history = [
+    { role: 'user', content: '第一问' },
+    { role: 'assistant', content: '第一答' },
+  ];
+  const msgs = buildChatMessages({ title: '我的论文', abstract: '摘要', fulltext: long, history, message: '第二问', maxInputChars: 100 });
+  // system（默认提示词）+ 论文上下文 user + 2 条历史 + 本轮问题 = 6 条
+  assert.strictEqual(msgs[0].role, 'system');
+  assert.ok(msgs[0].content.length > 0, '系统提示词非空');
+  assert.strictEqual(msgs[1].role, 'user');
+  assert.ok(msgs[1].content.includes('我的论文'), '论文上下文含标题');
+  assert.ok(msgs[1].content.includes('摘要'));
+  assert.ok(msgs[1].content.length < 500, '全文截断');
+  assert.strictEqual(msgs[2].content, '第一问');
+  assert.strictEqual(msgs[3].content, '第一答');
+  assert.strictEqual(msgs[4].content, '第二问');
+  assert.strictEqual(msgs.length, 5);
+});
+
+test('chatPaper 调注入 fetch 并返回 Markdown（jsonMode:false，多轮消息透传）', async () => {
+  let capturedBody;
+  const fakeFetch = async (url, opts) => {
+    assert.strictEqual(url, 'http://gw/v1/chat/completions');
+    capturedBody = JSON.parse(opts.body);
+    return { ok: true, json: async () => ({ choices: [{ message: { content: '论文采用了 MoE 架构' } }] }) };
+  };
+  const reply = await chatPaper({
+    title: 'T', abstract: 'A', fulltext: 'F', history: [{ role: 'user', content: '问' }], message: '新问',
+    config: CFG, systemPrompt: '你是助手', fetchImpl: fakeFetch,
+  });
+  assert.strictEqual(reply, '论文采用了 MoE 架构');
+  assert.strictEqual(capturedBody.response_format, undefined, 'jsonMode:false 不含 response_format');
+  assert.strictEqual(capturedBody.messages[0].role, 'system');
+  assert.strictEqual(capturedBody.messages[0].content, '你是助手', 'systemPrompt 覆盖默认');
+  assert.strictEqual(capturedBody.messages[capturedBody.messages.length - 1].content, '新问', '末条为本轮问题');
 });

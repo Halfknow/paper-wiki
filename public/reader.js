@@ -98,6 +98,8 @@ import '/vendor/pdfjs-viewer.js';
       this.eventBus = null;
       this.uiManager = null;                        // AnnotationEditorUIManager（经事件拿到）
       this.paper = null;
+      this._chatOpen = false;
+      this._chatBusy = false;
       this.spread = true;                           // 默认双页
       this.curTool = 'cursor';
       this._selectMode = true;                      // 用户侧“选择”工具：底层借用 pdf.js 可选中模式
@@ -173,6 +175,98 @@ import '/vendor/pdfjs-viewer.js';
           };
         });
       }
+      // AI 对话抽屉绑定（按钮/关闭/发送），仅当 DOM 存在时
+      this.bindChat();
+    }
+
+    // ---- AI 对话抽屉 ----
+    /** 绑定聊天按钮/关闭/发送（DOM 不存在则跳过）。reader.js 直接 fetch /api/papers/:id/chat。 */
+    bindChat() {
+      this.elChatBtn = document.getElementById('reader-chat');
+      this.elChatDrawer = document.getElementById('reader-chat-drawer');
+      this.elChatClose = document.getElementById('reader-chat-close');
+      this.elChatList = document.getElementById('reader-chat-list');
+      this.elChatInput = document.getElementById('reader-chat-input');
+      this.elChatSend = document.getElementById('reader-chat-send');
+      if (!this.elChatBtn || !this.elChatDrawer) return;
+      this.elChatBtn.onclick = () => this.toggleChat();
+      if (this.elChatClose) this.elChatClose.onclick = () => this.toggleChat(false);
+      if (this.elChatSend) this.elChatSend.onclick = () => this.sendChat();
+      if (this.elChatInput) {
+        this.elChatInput.onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); this.sendChat(); } };
+      }
+    }
+    /** 打开/关闭抽屉；首次打开时拉取已有聊天历史渲染。 */
+    async toggleChat(force) {
+      const open = force != null ? force : !this._chatOpen;
+      this._chatOpen = open;
+      this.elChatDrawer.hidden = !open;
+      this.elChatBtn.classList.toggle('active', open);
+      if (open && this.elChatList && this.elChatList.dataset.loaded !== '1') {
+        this.elChatList.dataset.loaded = '1';
+        await this.loadChatHistory();
+      }
+    }
+    async loadChatHistory() {
+      if (!this.paper) return;
+      try {
+        const r = await fetch('/api/papers/' + encodeURIComponent(this.paper.id)).then((x) => x.json());
+        this.renderChatList((r.data && r.data.chat) || []);
+      } catch { /* ignore */ }
+    }
+    renderChatList(msgs) {
+      if (!this.elChatList) return;
+      if (!msgs.length) {
+        this.elChatList.innerHTML = '<div class="rcd-empty">向 AI 提问关于这篇论文的问题</div>';
+        return;
+      }
+      this.elChatList.innerHTML = msgs.map((m) => this.chatMsgHtml(m)).join('');
+      this.elChatList.scrollTop = this.elChatList.scrollHeight;
+    }
+    chatMsgHtml(m) {
+      const content = (m.content || '').replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c])).replace(/\n/g, '<br/>');
+      return `<div class="chat-msg ${m.role}"><div class="chat-bubble">${content}</div></div>`;
+    }
+    async sendChat() {
+      if (!this.paper || this._chatBusy || !this.elChatInput) return;
+      const message = (this.elChatInput.value || '').trim();
+      if (!message) return;
+      this.elChatInput.value = '';
+      // 乐观追加 user 消息
+      this.appendChat({ role: 'user', content: message });
+      this._chatBusy = true;
+      if (this.elChatSend) { this.elChatSend.disabled = true; this.elChatSend.textContent = '回答中…'; }
+      this.elChatInput.disabled = true;
+      // 等待中显示占位 assistant 气泡
+      const placeholder = document.createElement('div');
+      placeholder.className = 'chat-msg assistant';
+      placeholder.innerHTML = '<div class="chat-bubble rcd-typing">AI 正在思考…</div>';
+      this.elChatList.appendChild(placeholder);
+      this.elChatList.scrollTop = this.elChatList.scrollHeight;
+      try {
+        const r = await fetch('/api/papers/' + encodeURIComponent(this.paper.id) + '/chat', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message }),
+        }).then((x) => x.json());
+        placeholder.remove();
+        if (r.ok) this.appendChat({ role: 'assistant', content: r.data.reply });
+        else this.appendChat({ role: 'assistant', content: '（回答失败：' + (r.error || '未知错误') + '）' });
+      } catch (e) {
+        placeholder.remove();
+        this.appendChat({ role: 'assistant', content: '（网络错误）' });
+      } finally {
+        this._chatBusy = false;
+        if (this.elChatSend) { this.elChatSend.disabled = false; this.elChatSend.textContent = '发送'; }
+        this.elChatInput.disabled = false;
+        this.elChatInput.focus();
+      }
+    }
+    appendChat(m) {
+      if (!this.elChatList) return;
+      // 清掉空态提示
+      const empty = this.elChatList.querySelector('.rcd-empty');
+      if (empty) empty.remove();
+      this.elChatList.insertAdjacentHTML('beforeend', this.chatMsgHtml(m));
+      this.elChatList.scrollTop = this.elChatList.scrollHeight;
     }
 
     async open(paper, readProgress, annotations) {

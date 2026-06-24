@@ -687,6 +687,7 @@ function renderDetail() {
     <div class="tabs">
       <div class="tab ${state.tab === 'summary' ? 'active' : ''}" data-tab="summary">总结</div>
       <div class="tab ${state.tab === 'notes' ? 'active' : ''}" data-tab="notes">笔记</div>
+      <div class="tab ${state.tab === 'chat' ? 'active' : ''}" data-tab="chat">AI 聊天</div>
       <div class="tab ${state.tab === 'info' ? 'active' : ''}" data-tab="info">信息</div>
     </div>
     <div id="tab-body" style="padding-top:14px;"></div>`;
@@ -799,9 +800,71 @@ function renderTabBody() {
       }, 800);
     };
     te.onkeydown = (e) => { if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); notesState.dirty = true; flushPendingNotes(); } };
+  } else if (state.tab === 'chat') {
+    renderChatTab(body, p);
   } else if (state.tab === 'info') {
     renderInfoTab(body, p);
   }
+}
+
+/** 详情「AI 聊天」tab：消息列表（user 右 / assistant 左）+ 输入框 + 发送 + 清空。
+ *  数据源 p.chat（detailView 回传）。发送走 POST /api/papers/:id/chat，回复追加到 state.detail.chat。 */
+function renderChatTab(body, p) {
+  const msgs = Array.isArray(p.chat) ? p.chat : [];
+  const listHtml = msgs.length
+    ? msgs.map((m) => `<div class="chat-msg ${m.role}"><div class="chat-bubble">${m.role === 'assistant' ? renderMd(m.content || '') : escapeHtml(m.content || '')}</div></div>`).join('')
+    : '<div class="chat-empty">向 AI 提问关于这篇论文的问题<br/><span class="muted2">例如：这篇论文的核心方法是什么？有什么创新点？</span></div>';
+  body.innerHTML = `<div class="chat-tab">
+    <div class="chat-list" id="chat-list">${listHtml}</div>
+    <div class="chat-input-row">
+      <textarea id="chat-input" rows="2" placeholder="输入问题，Enter 发送 / Shift+Enter 换行…"></textarea>
+      <button class="btn sm" id="chat-send">发送</button>
+      ${msgs.length ? '<button class="btn ghost sm" id="chat-clear" title="清空聊天记录">清空</button>' : ''}
+    </div>
+  </div>`;
+  const list = $('chat-list');
+  if (list) list.scrollTop = list.scrollHeight;
+  const input = $('chat-input'), sendBtn = $('chat-send');
+  const doSend = async () => {
+    const message = (input.value || '').trim();
+    if (!message) return;
+    input.value = '';
+    // 乐观追加 user 消息
+    const userMsg = { role: 'user', content: message };
+    p.chat = [...(p.chat || []), userMsg];
+    appendChatMsg(list, userMsg);
+    setBusy(sendBtn, true, '回答中…');
+    input.disabled = true;
+    const r = await POST('/api/papers/' + p.id + '/chat', { message });
+    setBusy(sendBtn, false);
+    input.disabled = false;
+    input.focus();
+    if (r.ok) {
+      const assistantMsg = { role: 'assistant', content: r.data.reply };
+      p.chat = [...(p.chat || []), assistantMsg];
+      appendChatMsg(list, assistantMsg);
+    } else {
+      toast(r.error || 'AI 回答失败', 'error');
+    }
+  };
+  sendBtn.onclick = doSend;
+  input.onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); doSend(); } };
+  const clearBtn = $('chat-clear');
+  if (clearBtn) clearBtn.onclick = async () => {
+    if (!confirm('清空这篇论文的聊天记录？')) return;
+    p.chat = [];
+    await PATCH('/api/papers/' + p.id, { chat: [] });
+    renderDetail();
+  };
+}
+/** 追加一条聊天消息到列表 DOM（发送后乐观更新，避免全量重渲丢失滚动位置）。 */
+function appendChatMsg(list, m) {
+  if (!list) return;
+  const wrap = document.createElement('div');
+  wrap.className = 'chat-msg ' + m.role;
+  wrap.innerHTML = `<div class="chat-bubble">${m.role === 'assistant' ? renderMd(m.content || '') : escapeHtml(m.content || '')}</div>`;
+  list.appendChild(wrap);
+  list.scrollTop = list.scrollHeight;
 }
 
 function renderInfoTab(body, p) {
