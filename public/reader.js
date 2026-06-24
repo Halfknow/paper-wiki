@@ -273,12 +273,12 @@ import '/vendor/pdfjs-viewer.js';
     async open(paper, readProgress, annotations) {
       this.paper = paper;
       // 文字清晰度：pdf.js 的 OutputScale 直接读 window.devicePixelRatio 决定 canvas 过采样倍率。
-      // dpr=1 屏幕上 canvas 渲染像素=CSS 像素（1:1），学术论文密集小字会发糊。
-      // 阅读器打开期间临时把 dpr 提到 2，强制 pdf.js 按 2x 过采样渲染（canvas 1350px 显示 675px），
-      // 文字锐利。关闭时恢复原值（仅影响阅读器全屏视图，工具栏组件用固定 px 不受影响）。
+      // dpr=1 屏幕上 canvas 渲染像素=CSS 像素（1:1），学术论文密集小字发糊；2x 仍偏糊（fit-width
+      // 下每页仅 675px CSS 宽，密集细笔画不够锐利）。提到 3x（canvas ≈2025px 显示 675px），文字清晰，
+      // 性能可接受（单页 ~16MB 显存）。关闭时恢复原值（仅影响阅读器全屏视图）。
       this._origDpr = window.devicePixelRatio;
-      if (window.devicePixelRatio < 2) {
-        try { Object.defineProperty(window, 'devicePixelRatio', { value: 2, configurable: true }); }
+      if (window.devicePixelRatio < 3) {
+        try { Object.defineProperty(window, 'devicePixelRatio', { value: 3, configurable: true }); }
         catch { /* 部分浏览器不可写，忽略 */ }
       }
       readProgress = readProgress || {};
