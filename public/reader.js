@@ -33,6 +33,7 @@ import '/vendor/pdfjs-viewer.js';
   const ICON = {
     copy: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>',
     note: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16v11l-4 4H4z"/><path d="M8 9h8M8 13h4"/></svg>',
+    ai: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>',
   };
 
   function isDenseArrayLike(value) {
@@ -799,6 +800,7 @@ import '/vendor/pdfjs-viewer.js';
         '<div class="rsp-inner">' +
           '<span class="rsp-swatches">' + swatches + '</span>' +
           '<span class="rsp-sep"></span>' +
+          '<button class="rsp-act" type="button" data-act="ai" title="划线问 AI（基于所选文字提问）">' + ICON.ai + '</button>' +
           '<button class="rsp-act" type="button" data-act="note" title="高亮并添加便签">' + ICON.note + '</button>' +
           '<button class="rsp-act" type="button" data-act="copy" title="复制所选文字">' + ICON.copy + '</button>' +
         '</div>' +
@@ -813,6 +815,7 @@ import '/vendor/pdfjs-viewer.js';
         if (!abtn) return;
         if (abtn.dataset.act === 'copy') this.copySelection();
         else if (abtn.dataset.act === 'note') this.quickHighlight(this.curColor, true);
+        else if (abtn.dataset.act === 'ai') this.askSelection();
       });
       this.view.appendChild(pop);
       this._pop = pop;
@@ -908,6 +911,21 @@ import '/vendor/pdfjs-viewer.js';
         this.setStatus('已选择文字（剪贴板不可用）');
       }
       this.hideSelectionPopup();
+    }
+
+    /** 划线问 AI：取所选文字，打开聊天抽屉，以「请解释/分析这段内容」为问题发送。
+     *  短选区直接问；长选区（>200 字）截断包裹，避免消息过长。 */
+    async askSelection() {
+      const txt = (document.getSelection().toString() || '').trim();
+      this.hideSelectionPopup();
+      if (!txt) { this.setStatus('未选中文本'); return; }
+      if (!this.paper) return;
+      await this.toggleChat(true); // 确保抽屉打开（首次会拉历史）
+      const snippet = txt.length > 200 ? txt.slice(0, 200) + '…' : txt;
+      const question = '论文里有这段内容，请解释/分析：\n\n' + snippet;
+      if (this.elChatInput) this.elChatInput.value = question;
+      // 直接发送（用户也可在发送前编辑输入框内容）
+      this.sendChat();
     }
 
     // ---- 批注持久化（用 annotationStorage.serializable）----
