@@ -298,7 +298,8 @@ function renderSidebar() {
       <span class="count">${fo.count || ''}</span>
       <span class="ico folder-edit" data-edit="${fo.id}" title="编辑收藏夹" aria-label="编辑收藏夹"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></span>`;
     el.onclick = (e) => {
-      if (e.target.dataset.edit) { openFolderModal(fo); return; }
+      // 点编辑入口（铅笔图标）：e.target 可能是 svg/path，需 closest 向上找 data-edit
+      if (e.target.closest('[data-edit]')) { openFolderModal(fo); return; }
       setView({ folder: fo.id, mode: '', starred: false, readStatus: '', status: '' });
     };
     setupFolderDropTarget(el, fo);
