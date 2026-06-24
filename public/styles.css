@@ -572,11 +572,11 @@ body.is-resizing { cursor:col-resize; user-select:none; }
   border-radius:var(--radius); padding:16px 18px;
   box-shadow:var(--shadow); margin-bottom:14px;
 }
-/* detail 头：标题与按钮同一行优先；标题至少占 300px（min-width 保护不被挤窄），
-   按钮不收缩；窄屏放不下时按钮整体折到标题下方（flex-wrap），绝不挤压标题中间断行。 */
-.dh { display:flex; align-items:flex-start; gap:12px; flex-wrap:wrap; margin-bottom:8px; }
-.title-block { flex:1 1 auto; min-width:300px; }
-.dh-actions { flex:0 0 auto; }
+/* detail 头：按钮组在最顶部一行（独占），标题在下方一行——按钮永远在顶部、
+   绝不挤压标题（两行各占满宽，互不抢空间）。dh-actions 内 flex-wrap 防按钮溢出。 */
+.dh { display:flex; flex-direction:column; align-items:stretch; gap:8px; margin-bottom:8px; }
+.title-block { width:100%; min-width:0; }
+.dh-actions { width:100%; }
 .detail-state { display:flex; flex-wrap:wrap; align-items:center; gap:6px; margin-bottom:6px; }
 /* h2 长标题在 title-block 内自然换行，不被按钮挤窄到中间断行 */
 .dh h2 { margin:0; font-size:21px; line-height:1.32; font-weight:720; word-break:break-word; }

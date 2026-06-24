@@ -658,15 +658,6 @@ function renderDetail() {
   d.innerHTML = `
     <div class="detail-head">
       <div class="dh">
-        <div class="title-block">
-          <div class="detail-state">
-            <span class="status-badge ${statusDot(p)}">${statusLabel(p.status)}</span>
-            <span class="read-chip">${readStatusLabel(p.readStatus)}</span>
-            ${progress != null ? `<span class="mini-metric">读到 ${progress}%</span>` : ''}
-            ${p.conceptCount ? `<span class="mini-metric">${p.conceptCount} 概念</span>` : ''}
-          </div>
-          <h2>${escapeHtml(p.title || p.filename)}</h2>
-        </div>
         <div class="dh-actions">
           <span class="rate" id="rate" role="radiogroup" aria-label="星级评分">
             <span class="rate-label">评分</span>
@@ -679,6 +670,15 @@ function renderDetail() {
           <button class="btn ghost sm" id="b-resume" title="重新总结（含主题/概念）">重新总结</button>
           <button class="btn ghost sm" id="b-retag" title="用当前标签提示词重新打标（标签库联动增删）">重新打标</button>
           <button class="btn ghost sm danger" id="b-delete" title="删除论文（连同本地 PDF 与全文，不可恢复）">删除</button>
+        </div>
+        <div class="title-block">
+          <div class="detail-state">
+            <span class="status-badge ${statusDot(p)}">${statusLabel(p.status)}</span>
+            <span class="read-chip">${readStatusLabel(p.readStatus)}</span>
+            ${progress != null ? `<span class="mini-metric">读到 ${progress}%</span>` : ''}
+            ${p.conceptCount ? `<span class="mini-metric">${p.conceptCount} 概念</span>` : ''}
+          </div>
+          <h2>${escapeHtml(p.title || p.filename)}</h2>
         </div>
       </div>
       <div class="meta">${meta}</div>
