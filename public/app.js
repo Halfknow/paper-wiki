@@ -817,7 +817,7 @@ function renderChatTab(body, p) {
   body.innerHTML = `<div class="chat-tab">
     <div class="chat-list" id="chat-list">${listHtml}</div>
     <div class="chat-input-row">
-      <textarea id="chat-input" rows="2" placeholder="输入问题，Enter 发送 / Shift+Enter 换行…"></textarea>
+      <textarea id="chat-input" rows="1" placeholder="输入问题，Enter 发送 / Shift+Enter 换行…"></textarea>
       <button class="btn sm" id="chat-send">发送</button>
       ${msgs.length ? '<button class="btn ghost sm" id="chat-clear" title="清空聊天记录">清空</button>' : ''}
     </div>
@@ -848,7 +848,8 @@ function renderChatTab(body, p) {
     }
   };
   sendBtn.onclick = doSend;
-  input.onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); doSend(); } };
+  // stopPropagation：防止 Enter 冒泡到全局键盘处理器（disabled 后 activeElement 变 body → 触发 openReader）
+  input.onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); e.stopPropagation(); doSend(); } };
   const clearBtn = $('chat-clear');
   if (clearBtn) clearBtn.onclick = async () => {
     if (!confirm('清空这篇论文的聊天记录？')) return;
