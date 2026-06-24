@@ -167,12 +167,15 @@ input,select,textarea { font:inherit; color:var(--text); }
 .topbar select.active { border-color:#c7d2fe; background-color:var(--accent-soft); color:var(--accent-strong); }
 /* 列表排序 select：包在 .sort-field 外壳里，自身透明无边框（外壳提供视觉），
    只保留字体/箭头/对齐；option 面板样式走下面的统一规则。 */
+/* 列表排序 select：包在 .sort-field 外壳里，自身透明无边框（外壳提供视觉）。
+   flex:1 填满外壳宽度，让原生下拉面板宽度接近外壳（不被外壳的图标挤压变窄）。
+   min-height 对齐 seg-group/多选按钮高度，padding 收紧避免叠加变高。 */
 .list-toolbar select {
   appearance:none; -webkit-appearance:none; -moz-appearance:none;
   border:0; background-color:transparent; color:var(--text);
-  font-size:12px; font-weight:600; cursor:pointer;
-  min-width:140px; max-width:180px; min-height:34px;
-  padding:6px 18px 6px 0;
+  font-size:13px; font-weight:600; cursor:pointer;
+  flex:1 1 auto; min-width:0; width:100%;
+  min-height:20px; padding:0 18px 0 0;
   background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
   background-repeat:no-repeat; background-position:right center; background-size:12px;
 }
