@@ -101,7 +101,7 @@ import '/vendor/pdfjs-viewer.js';
       this.paper = null;
       this._chatOpen = false;
       this._chatBusy = false;
-      this.spread = true;                           // 默认双页
+      this.spread = false;                          // 默认单页（双页每页仅半宽，论文小字偏小看不清；单页文字大更清晰）
       this.curTool = 'cursor';
       this._selectMode = true;                      // 用户侧“选择”工具：底层借用 pdf.js 可选中模式
       this.curColor = '#fde68a';
@@ -272,17 +272,6 @@ import '/vendor/pdfjs-viewer.js';
 
     async open(paper, readProgress, annotations) {
       this.paper = paper;
-      // 文字清晰度：pdf.js 的 OutputScale 直接读 window.devicePixelRatio 决定 canvas 过采样倍率。
-      // dpr=1 屏幕上 canvas 渲染像素=CSS 像素（1:1），论文密集小字发糊。理想倍率是屏幕真实 dpr
-      // （物理像素/CSS像素）——高清屏天生 dpr=2 自带清晰；但 dpr=1 普通屏需要保底 2x 才不糊。
-      // 故取 max(真实 dpr, 2)：dpr=1 屏→2x 清晰但不锯齿；dpr≥2 屏→用真实值不浪费不锐化过度。
-      // （之前固定 3x 在 dpr=1 屏会过度锐化出锯齿——3 倍像素缩小显示反而失真。）
-      this._origDpr = window.devicePixelRatio;
-      const targetDpr = Math.max(window.devicePixelRatio, 2);
-      if (window.devicePixelRatio !== targetDpr) {
-        try { Object.defineProperty(window, 'devicePixelRatio', { value: targetDpr, configurable: true }); }
-        catch { /* 部分浏览器不可写，忽略 */ }
-      }
       readProgress = readProgress || {};
       this._pendingAnnotations = annotations || null;
       this._annotationsDirty = false;
@@ -1144,11 +1133,6 @@ import '/vendor/pdfjs-viewer.js';
       await this._teardown(true);
       this.view.classList.remove('active');
       document.body.style.overflow = '';
-      // 恢复原 devicePixelRatio（open 时为清晰度临时提到 2）
-      if (this._origDpr != null && window.devicePixelRatio !== this._origDpr) {
-        try { Object.defineProperty(window, 'devicePixelRatio', { value: this._origDpr, configurable: true }); }
-        catch { /* ignore */ }
-      }
       this.onClose();
     }
   }
