@@ -313,6 +313,10 @@ import '/vendor/pdfjs-viewer.js';
         annotationEditorHighlightColors: 'yellow=#fde68a,green=#bbf7d0,blue=#bfdbfe,purple=#ddd6fe,pink=#fbcfe8,red=#fecdd3,cyan=#a5f3fc',
         // 关掉原生浮动高亮按钮：它点击时会丢失选区且样式简陋，改用自建选区浮窗（见 setupSelectionPopup）
         enableHighlightFloatingButton: false,
+        // 清晰度：放开 canvas 像素上限（默认 5242880，超过则 onlyCssZoom 低清 CSS 缩放→发糊）。
+        // 设为很大的值（≈1亿）使常见论文页不会触发限制，pdf.js 按当前缩放×devicePixelRatio
+        // 全分辨率渲染，文字锐利。（注意：设 0 反而强制 onlyCssZoom，故用大数而非 0。）
+        maxCanvasPixels: 100000000,
         removePageBorders: false,          // 保留 pdf.js 默认页边框计算（hPadding≠0），避免 spread 模式下 getVisibleElements 水平裁剪误判右页不可见导致空白
         imageResourcesPath: '/vendor/images/',
         l10n: undefined,
