@@ -670,7 +670,8 @@ body.is-resizing { cursor:col-resize; user-select:none; }
 .save-hint { color:var(--muted2); font-size:12px; }
 
 /* ---- AI 聊天（详情 tab + 阅读器抽屉共用消息气泡样式） ---- */
-.chat-tab { display:flex; flex-direction:column; height:560px; max-height:60vh; }
+/* chat-tab 填满详情内容区高度，消息列表滚动、输入栏固定在最底部 */
+.chat-tab { display:flex; flex-direction:column; height:calc(100vh - 320px); min-height:360px; max-height:70vh; }
 .chat-list, .rcd-list {
   flex:1 1 auto; overflow:auto; display:flex; flex-direction:column; gap:10px;
   padding:6px 2px; min-height:0;
@@ -688,9 +689,10 @@ body.is-resizing { cursor:col-resize; user-select:none; }
 .chat-msg.assistant .chat-bubble p:first-child { margin-top:0; }
 .chat-msg.assistant .chat-bubble p:last-child { margin-bottom:0; }
 .chat-msg.assistant .chat-bubble.rcd-typing { color:var(--muted2); font-style:italic; }
-/* 输入区（详情 tab + 抽屉） */
+/* 输入区（详情 tab + 抽屉）：固定在聊天区底部 */
 .chat-input-row, .rcd-input-row {
   flex:0 0 auto; display:flex; align-items:flex-end; gap:8px; margin-top:10px;
+  padding-top:10px; border-top:1px solid var(--border);
 }
 .chat-input-row textarea, .rcd-input-row textarea {
   flex:1 1 auto; min-height:36px; max-height:120px; resize:none; line-height:1.5;
