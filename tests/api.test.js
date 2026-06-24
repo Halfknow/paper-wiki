@@ -601,6 +601,34 @@ test('POST /api/papers/bulk-delete 批量删 + 清理空 tags/topics + 孤立概
   fs.rmSync(tmp, { recursive: true, force: true });
 });
 
+test('POST /api/papers/:id/retag & /api/papers/retag —— 重新打标端点', async () => {
+  let retagged = null;
+  const store = {
+    version: 2, tags: ['a'], topics: ['X'], folders: [], concepts: [],
+    papers: { p1: { id: 'p1', tags: ['a'], topics: ['X'], status: 'ready' } },
+  };
+  const ctx = baseCtx(store, async () => {});
+  ctx.scanner.retagPapers = async (ids) => { retagged = ids; return { processed: ids.length }; };
+  const server = await startServer(createApiRouter(ctx).handle);
+  const port = server.address().port;
+  // 单篇 retag
+  const r = await call(port, 'POST', '/api/papers/p1/retag');
+  assert.strictEqual(r.status, 200);
+  assert.deepStrictEqual(retagged, ['p1']);
+  assert.strictEqual(r.json.data.processed, 1);
+  // 批量 retag
+  const r2 = await call(port, 'POST', '/api/papers/retag', { ids: ['p1'] });
+  assert.strictEqual(r2.status, 200);
+  assert.deepStrictEqual(retagged, ['p1']);
+  // 空 ids → 400
+  const r3 = await call(port, 'POST', '/api/papers/retag', { ids: [] });
+  assert.strictEqual(r3.status, 400);
+  // 不存在 → 404
+  const r4 = await call(port, 'POST', '/api/papers/nope/retag');
+  assert.strictEqual(r4.status, 404);
+  server.close();
+});
+
 test('PUT /api/settings/summary-prompt 持久化并 trim', async () => {
   const store = { version: 2, tags: [], topics: [], folders: [], concepts: [], settings: {}, papers: {} };
   let saved = null;

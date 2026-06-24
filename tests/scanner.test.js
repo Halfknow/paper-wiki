@@ -442,3 +442,50 @@ test('processOne 空总结不被当作成功（存可重试占位、不写误导
   assert.deepStrictEqual(p.tags, [], '空总结不应产生标签');
   scanner.stop();
 });
+
+test('retagPapers 重新打标 + 标签/主题库联动（多的入库、少的清除）', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pwretag-'));
+  const textDir = path.join(dir, 'text');
+  fs.mkdirSync(textDir, { recursive: true });
+  // 两篇论文：a 原有标签 oldtag/主题 旧主题；b 原有标签 keep。
+  // 重新打标后：a→newtag/新主题，b→keep。oldtag/旧主题 被所有论文放弃 → 应从字典清除；newtag 新增入库。
+  fs.writeFileSync(path.join(textDir, 'a.txt'), '论文a全文');
+  fs.writeFileSync(path.join(textDir, 'b.txt'), '论文b全文');
+  const store = {
+    version: 2,
+    tags: ['oldtag', 'keep'], topics: ['旧主题'],
+    folders: [], concepts: [],
+    papers: {
+      a: { id: 'a', title: 'A', tags: ['oldtag'], topics: ['旧主题'], updatedAt: 0 },
+      b: { id: 'b', title: 'B', tags: ['keep'], topics: [], updatedAt: 0 },
+    },
+  };
+  let aiCalls = 0;
+  const deps = {
+    parser: {},
+    ai: {
+      extractTagsTopics: async ({ title }) => {
+        aiCalls++;
+        if (title === 'A') return { tags: ['newtag'], topics: ['新主题'] };
+        return { tags: ['keep'], topics: [] };
+      },
+      applySettingsOverride: (c) => c,
+      buildSummaryMarkdown: (md) => md,
+    },
+    arxiv: {}, rateLimitArxiv: async () => {}, config: { ai: {}, arxiv: { enabled: false } },
+    saveStore: async (s) => {}, mergeTags: () => {}, mergeTopics: () => {},
+  };
+  const scanner = createScanner({ store, storePath: path.join(dir, 'papers.json'), papersDir: dir, deps });
+  const r = await scanner.retagPapers(['a', 'b']);
+  assert.strictEqual(r.processed, 2);
+  assert.strictEqual(aiCalls, 2);
+  // a 的标签/主题被新结果覆盖
+  assert.deepStrictEqual(store.papers.a.tags, ['newtag'], 'a 标签覆盖');
+  assert.deepStrictEqual(store.papers.a.topics, ['新主题'], 'a 主题覆盖');
+  assert.deepStrictEqual(store.papers.b.tags, ['keep'], 'b 不变');
+  // 字典联动：oldtag 清除、newtag 入库；keep 保留；旧主题清除、新主题入库
+  assert.ok(store.tags.includes('newtag') && !store.tags.includes('oldtag'), '字典：newtag 入 oldtag 出');
+  assert.ok(store.tags.includes('keep'), '字典：keep 保留');
+  assert.ok(store.topics.includes('新主题') && !store.topics.includes('旧主题'), '字典主题联动');
+  fs.rmSync(dir, { recursive: true, force: true });
+});

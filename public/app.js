@@ -677,6 +677,7 @@ function renderDetail() {
           <button class="btn sm" id="b-open-pdf" title="在新视图打开 PDF 阅读器">打开 PDF</button>
           <button class="btn ghost sm" id="b-read" title="切换阅读状态">${p.readStatus === 'done' ? '✓ 已读' : '标记已读'}</button>
           <button class="btn ghost sm" id="b-resume" title="重新总结（含主题/概念）">重新总结</button>
+          <button class="btn ghost sm" id="b-retag" title="用当前标签提示词重新打标（标签库联动增删）">重新打标</button>
           <button class="btn ghost sm danger" id="b-delete" title="删除论文（连同本地 PDF 与全文，不可恢复）">删除</button>
         </div>
       </div>
@@ -737,6 +738,17 @@ function renderDetail() {
     if (r.ok) toast('已加入重新总结队列');
     else toast(r.error || '重新总结失败', 'error');
     setTimeout(refresh, 600);
+  };
+  // 重新打标：用当前标签提示词重新生成标签/主题（同步覆盖 + 标签库联动增删）
+  $('b-retag').onclick = async () => {
+    const btn = $('b-retag');
+    setBusy(btn, true, '打标中…');
+    $('b-resume').disabled = true;
+    const r = await POST('/api/papers/' + p.id + '/retag');
+    setBusy(btn, false);
+    $('b-resume').disabled = false;
+    if (r.ok) { toast('已重新打标'); refresh(); }
+    else toast(r.error || '重新打标失败', 'error');
   };
   $('b-delete').onclick = async () => {
     if (!confirm(`删除论文「${p.title || p.filename}」？\n将同时删除本地 PDF 与全文文本，且不可恢复。`)) return;
@@ -2386,11 +2398,13 @@ function bind() {
     $('btn-pick-cancel').disabled = true;
     $('btn-pick-all').disabled = true;
     $('btn-pick-delete').disabled = true;
+    $('btn-pick-retag').disabled = true;
     const r = await POST('/api/papers/concepts', { ids });
     setBusy(btn, false);
     $('btn-pick-cancel').disabled = false;
     $('btn-pick-all').disabled = false;
     $('btn-pick-delete').disabled = false;
+    $('btn-pick-retag').disabled = false;
     if (bp) { bp.hidden = true; bpFill.classList.remove('indeterminate'); }
     if (r.data) toast(`完成：处理 ${r.data.processed} 篇，新增 ${r.data.added} 个概念`);
     else toast(r.error || '抽取失败', 'error');
@@ -2407,10 +2421,35 @@ function bind() {
     $('btn-pick-cancel').disabled = true;
     $('btn-pick-all').disabled = true;
     $('btn-pick-concepts').disabled = true;
+    $('btn-pick-retag').disabled = true;
     const r = await POST('/api/papers/bulk-delete', { ids });
     setBusy(btn, false);
     if (r.ok) { toast(`已删除 ${r.data.deleted} 篇`); togglePickMode(false); }
     else toast(r.error || '删除失败', 'error');
+    refresh();
+  };
+  // 批量重新打标：用当前标签提示词重新生成标签/主题（标签库联动增删）
+  $('btn-pick-retag').onclick = async () => {
+    const ids = [...state.selected];
+    if (!ids.length) { toast('请先选择论文', 'error'); return; }
+    const btn = $('btn-pick-retag');
+    const bp = $('bulk-progress'), bpText = $('bp-text'), bpFill = $('bp-fill');
+    if (bp) { bp.hidden = false; bpFill.style.width = '100%'; bpFill.classList.add('indeterminate'); }
+    if (bpText) bpText.textContent = `打标中（${ids.length} 篇）…`;
+    setBusy(btn, true, '打标中…');
+    $('btn-pick-cancel').disabled = true;
+    $('btn-pick-all').disabled = true;
+    $('btn-pick-concepts').disabled = true;
+    $('btn-pick-delete').disabled = true;
+    const r = await POST('/api/papers/retag', { ids });
+    setBusy(btn, false);
+    $('btn-pick-cancel').disabled = false;
+    $('btn-pick-all').disabled = false;
+    $('btn-pick-concepts').disabled = false;
+    $('btn-pick-delete').disabled = false;
+    if (bp) { bp.hidden = true; bpFill.classList.remove('indeterminate'); }
+    if (r.ok) { toast(`已重新打标 ${r.data.processed} 篇`); togglePickMode(false); }
+    else toast(r.error || '重新打标失败', 'error');
     refresh();
   };
 
