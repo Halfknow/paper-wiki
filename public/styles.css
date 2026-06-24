@@ -419,7 +419,13 @@ body.is-resizing { cursor:col-resize; user-select:none; }
 }
 .paper-item:hover { background:var(--panel2); }
 .paper-item.active { background:var(--accent-soft); border-color:#c7d2fe; box-shadow:inset 3px 0 0 var(--accent); }
-.paper-item.empty-list { cursor:default; color:var(--muted); padding:18px 18px; background:var(--panel2); border-color:var(--border); text-align:center; }
+.paper-item.empty-list { cursor:default; color:var(--muted); padding:18px 20px; background:var(--panel2); border-color:var(--border); text-align:center; }
+/* 紧凑模式下的空态：恢复 padding/border（被 .compact .paper-item 的 padding:0 覆盖了），
+   并居中文字（紧凑模式 .paper-item 是 flex，需覆盖为 block + center）。 */
+.paper-list.compact .paper-item.empty-list {
+  display:block; padding:18px 20px; border:1px solid var(--border); border-bottom:1px solid var(--border);
+  border-radius:var(--radius); text-align:center; min-height:0;
+}
 .paper-item .pt { font-weight:600; margin-bottom:3px; line-height:1.4; }
 .paper-item .pm { color:var(--muted); font-size:12px; display:flex; flex-wrap:wrap; align-items:center; gap:5px 8px; }
 .paper-item .chips { margin-top:6px; display:flex; flex-wrap:wrap; gap:4px; align-items:center; }
