@@ -550,12 +550,10 @@ test('POST /api/import 不带 meta：回退 <arxivId>.pdf 且 importSource=url',
   }
 });
 
-test('DELETE /api/papers/:id 删除条目 + PDF + 全文，并清理概念引用', async () => {
+test('DELETE /api/papers/:id 删除条目 + PDF，并清理概念引用', async () => {
   const tmp = fs.mkdtempSync(pathm.join(os.tmpdir(), 'pwdel-'));
   const pdf = pathm.join(tmp, 'p.pdf');
-  const txt = pathm.join(tmp, 'p.txt');
   fs.writeFileSync(pdf, 'PDFDATA');
-  fs.writeFileSync(txt, 'fulltext');
   const store = {
     version: 2,
     tags: [],
@@ -563,7 +561,7 @@ test('DELETE /api/papers/:id 删除条目 + PDF + 全文，并清理概念引用
     folders: [],
     concepts: [{ id: 'c1', term: 'T', paperIds: ['a', 'b'] }],
     papers: {
-      a: { id: 'a', filename: 'p.pdf', filepath: pdf, fulltextPath: txt, conceptIds: ['c1'], status: 'ready' },
+      a: { id: 'a', filename: 'p.pdf', filepath: pdf, conceptIds: ['c1'], status: 'ready' },
       b: { id: 'b', filename: 'q.pdf', filepath: pathm.join(tmp, 'q.pdf'), conceptIds: ['c1'], status: 'ready' },
     },
   };
@@ -584,7 +582,7 @@ test('DELETE /api/papers/:id 删除条目 + PDF + 全文，并清理概念引用
   assert.ok(!store.papers.a, '论文条目应被删除');
   assert.ok(store.papers.b, '其它论文不受影响');
   assert.ok(!fs.existsSync(pdf), 'PDF 文件应被删除');
-  assert.ok(!fs.existsSync(txt), '全文文件应被删除');
+  // v3：全文在 PG paper_texts，由 repo.saveSpaceStore 检测论文删除时连带清理（见 tests/db.test.js）
   assert.deepStrictEqual(store.concepts[0].paperIds, ['b'], '概念里应移除该论文引用');
   assert.ok(saved, '应持久化');
   server.close();
@@ -1246,16 +1244,22 @@ test('POST /api/papers/:id/summarize 文件存在时正常入队（不误伤）'
 
 // ---- 空间管理（用真实 manager，非 mock）----
 
-/** 用真实 createSpaceManager 构建 ctx（验证完整的多空间路由链路） */
+/** 用真实 createSpaceManager 构建 ctx（验证完整的多空间路由链路；pg-mem 持久化） */
 function realCtx(globalConfig) {
   const root = fs.mkdtempSync(pathm.join(os.tmpdir(), 'pwrealsp-'));
-  const dataDir = pathm.join(root, 'data');
+  const { newDb } = require('pg-mem');
+  const { createDb, createRepository } = require('../lib/db');
   const { createSpaceManager } = require('../lib/spaces');
-  const manager = createSpaceManager(
-    dataDir,
-    root,
-    globalConfig || { ai: {}, scanIntervalMinutes: 5, papersDir: 'papers' },
-  );
+  const mem = newDb();
+  const { Pool } = mem.adapters.createPg();
+  const db = createDb({ createPool: () => new Pool() });
+  const repo = createRepository(db);
+  const manager = createSpaceManager({
+    repo,
+    papersRoot: root,
+    globalConfig: globalConfig || { ai: {}, scanIntervalMinutes: 5 },
+  });
+  manager._dbMigrate = () => db.migrate();
   const scanner = {
     scan: async () => ({ added: 0 }),
     scanSpace: async () => ({ added: 0 }),
@@ -1272,6 +1276,7 @@ function realCtx(globalConfig) {
 test('GET /api/spaces 列出空间 + activeId（真实 manager）', async () => {
   const ctx = realCtx();
   try {
+    await ctx.manager._dbMigrate();
     await ctx.manager.ensureRegistry();
     const server = await startServer(createApiRouter(ctx).handle);
     const port = server.address().port;
@@ -1288,6 +1293,7 @@ test('GET /api/spaces 列出空间 + activeId（真实 manager）', async () => 
 test('POST /api/spaces 创建空间', async () => {
   const ctx = realCtx();
   try {
+    await ctx.manager._dbMigrate();
     await ctx.manager.ensureRegistry();
     const server = await startServer(createApiRouter(ctx).handle);
     const port = server.address().port;
@@ -1307,6 +1313,7 @@ test('POST /api/spaces 创建空间', async () => {
 test('POST /api/spaces 名字为纯空白 → 400', async () => {
   const ctx = realCtx();
   try {
+    await ctx.manager._dbMigrate();
     await ctx.manager.ensureRegistry();
     const server = await startServer(createApiRouter(ctx).handle);
     const port = server.address().port;
@@ -1322,6 +1329,7 @@ test('POST /api/spaces 名字为纯空白 → 400', async () => {
 test('PATCH /api/spaces/:id 改名 + 改绑定文件夹', async () => {
   const ctx = realCtx();
   try {
+    await ctx.manager._dbMigrate();
     await ctx.manager.ensureRegistry();
     const server = await startServer(createApiRouter(ctx).handle);
     const port = server.address().port;
@@ -1340,6 +1348,7 @@ test('PATCH /api/spaces/:id 改名 + 改绑定文件夹', async () => {
 test('DELETE /api/spaces/:id 删空间（default 拒删）', async () => {
   const ctx = realCtx();
   try {
+    await ctx.manager._dbMigrate();
     await ctx.manager.ensureRegistry();
     const server = await startServer(createApiRouter(ctx).handle);
     const port = server.address().port;
@@ -1364,6 +1373,7 @@ test('DELETE /api/spaces/:id 删空间（default 拒删）', async () => {
 test('POST /api/spaces/:id/activate 切换 active', async () => {
   const ctx = realCtx();
   try {
+    await ctx.manager._dbMigrate();
     await ctx.manager.ensureRegistry();
     const server = await startServer(createApiRouter(ctx).handle);
     const port = server.address().port;
@@ -1381,6 +1391,7 @@ test('POST /api/spaces/:id/activate 切换 active', async () => {
 test('?space= 路由隔离：不同空间的论文互不可见', async () => {
   const ctx = realCtx();
   try {
+    await ctx.manager._dbMigrate();
     await ctx.manager.ensureRegistry();
     const sp = await ctx.manager.createSpace({ name: 'B' });
     const storeA = await ctx.manager.getSpaceStore('default');
@@ -1408,6 +1419,7 @@ test('?space= 路由隔离：不同空间的论文互不可见', async () => {
 test('?space= 隔离：标签/概念/收藏夹按空间独立', async () => {
   const ctx = realCtx();
   try {
+    await ctx.manager._dbMigrate();
     await ctx.manager.ensureRegistry();
     const sp = await ctx.manager.createSpace({ name: 'B' });
     const storeA = await ctx.manager.getSpaceStore('default');
@@ -1441,6 +1453,7 @@ test('?space= 隔离：标签/概念/收藏夹按空间独立', async () => {
 test('GET /api/settings system 段含当前空间 papersDir', async () => {
   const ctx = realCtx({ ai: {}, scanIntervalMinutes: 5, papersDir: 'papers' });
   try {
+    await ctx.manager._dbMigrate();
     await ctx.manager.ensureRegistry();
     await ctx.manager.changePapersDir('default', 'papers-custom');
     const server = await startServer(createApiRouter(ctx).handle);

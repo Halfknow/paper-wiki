@@ -6,6 +6,7 @@ const fs = require('fs');
 const { mergeTags, mergeTopics, mergeConcepts } = require('../lib/store');
 const { createMultiSpaceScanner } = require('../lib/scanner');
 const { createSpaceManager } = require('../lib/spaces');
+const { createDb, createRepository } = require('../lib/db');
 const parser = require('../lib/parser');
 const arxiv = require('../lib/arxiv');
 const ai = require('../lib/ai');
@@ -14,12 +15,15 @@ const { cleanFilenameToTitle, createRateLimiter, log } = require('../lib/util');
 (async () => {
   const root = path.join(__dirname, '..');
   const config = JSON.parse(fs.readFileSync(path.join(root, 'config.json'), 'utf8'));
-  const dataDir = path.join(root, 'data');
 
   // 解析 --space 参数
   const spaceArg = process.argv.includes('--space') ? process.argv[process.argv.indexOf('--space') + 1] : null;
 
-  const manager = createSpaceManager(dataDir, root, config);
+  const db = createDb({ connectionString: process.env.DATABASE_URL || config.databaseUrl });
+  await db.migrate();
+  const repo = createRepository(db);
+  const papersRoot = process.env.PAPERS_ROOT || path.join(root, 'papers');
+  const manager = createSpaceManager({ repo, papersRoot, globalConfig: config });
   await manager.ensureRegistry();
 
   const deps = {

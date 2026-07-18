@@ -6,6 +6,21 @@ const os = require('node:os');
 const { diffPapers, createScanner, createMultiSpaceScanner } = require('../lib/scanner');
 const { cleanFilenameToTitle } = require('../lib/util');
 
+/** 内存版全文存取（v3：替代 data/text/<id>.txt 的 textStore 注入） */
+function memTextStore(seed) {
+  const m = new Map(Object.entries(seed || {}));
+  return {
+    load: async (id) => (m.has(id) ? m.get(id) : null),
+    save: async (id, t) => {
+      m.set(id, t);
+    },
+    remove: async (id) => {
+      m.delete(id);
+    },
+    _map: m,
+  };
+}
+
 test('diffPapers 计算 added/changed/missing', () => {
   const existing = {
     a: { id: 'a', fileSize: 10, status: 'ready' },
@@ -97,7 +112,7 @@ test('scan 不用空记录覆盖已 enrich 的论文（防 id 冲突丢数据）
     mergeTags: () => {},
     mergeTopics: () => {},
   };
-  const scanner = createScanner({ store, storePath, papersDir: dir, deps });
+  const scanner = createScanner({ store, textStore: memTextStore(), papersDir: dir, deps });
   await scanner.scan();
   // 关键：已 enrich 的记录未被空初始化覆盖
   assert.strictEqual(store.papers[id].title, '重要标题', 'title 不应被覆盖');
@@ -145,7 +160,7 @@ test('createScanner.scan 发现新 PDF 入库并入队，流水线将其处理�
     config: { ai: { model: 'm' }, arxiv: {} },
     rateLimitArxiv: async () => {},
   };
-  const scanner = createScanner({ store, storePath, papersDir: dir, deps, scanIntervalMs: 0 });
+  const scanner = createScanner({ store, textStore: memTextStore(), papersDir: dir, deps, scanIntervalMs: 0 });
   const r = await scanner.scan();
   assert.ok(r.added >= 1);
   await new Promise((res) => setTimeout(res, 50));
@@ -218,7 +233,7 @@ test('processOne 已知 arxivId 时用 id: 精确查元数据（URL 导入路径
     config: { ai: { model: 'm' }, arxiv: { enabled: true } },
     rateLimitArxiv: async () => {},
   };
-  const scanner = createScanner({ store, storePath, papersDir: dir, deps, scanIntervalMs: 0 });
+  const scanner = createScanner({ store, textStore: memTextStore(), papersDir: dir, deps, scanIntervalMs: 0 });
   scanner.enqueue(['abc123']);
   await new Promise((res) => setTimeout(res, 80));
   const p = store.papers['abc123'];
@@ -291,7 +306,7 @@ test('processOne 裸ID文件名自动识别 → id: 精确查 + 补年份 + 重�
     config: { ai: { model: 'm' }, arxiv: { enabled: true } },
     rateLimitArxiv: async () => {},
   };
-  const scanner = createScanner({ store, storePath, papersDir: dir, deps, scanIntervalMs: 0 });
+  const scanner = createScanner({ store, textStore: memTextStore(), papersDir: dir, deps, scanIntervalMs: 0 });
   scanner.enqueue(['bd631']);
   await new Promise((res) => setTimeout(res, 100));
   const p = store.papers['bd631'];
@@ -326,7 +341,7 @@ test('reschedule 热改定时扫描间隔（新间隔触发多次扫描；resche
     config: { ai: {}, arxiv: {} },
     rateLimitArxiv: async () => {},
   };
-  const scanner = createScanner({ store, storePath, papersDir: dir, deps, scanIntervalMs: 0 });
+  const scanner = createScanner({ store, textStore: memTextStore(), papersDir: dir, deps, scanIntervalMs: 0 });
   scanner.reschedule(0.001); // 0.001 分钟 ≈ 60ms
   await new Promise((r) => setTimeout(r, 220));
   scanner.reschedule(0); // 关闭定时扫描
@@ -393,7 +408,7 @@ test('processOne arxiv 段读 effConfig（store.settings.arxiv.enabled:false 热
     config: { ai: { model: 'm' }, arxiv: { enabled: true } }, // config 默认开启
     rateLimitArxiv: async () => {},
   };
-  const scanner = createScanner({ store, storePath, papersDir: dir, deps, scanIntervalMs: 0 });
+  const scanner = createScanner({ store, textStore: memTextStore(), papersDir: dir, deps, scanIntervalMs: 0 });
   scanner.enqueue(['x']);
   await new Promise((r) => setTimeout(r, 80));
   assert.strictEqual(
@@ -452,7 +467,7 @@ test('processOne 空总结不被当作成功（存可重试占位、不写误导
     config: { ai: { model: 'm' }, arxiv: { enabled: false } },
     rateLimitArxiv: async () => {},
   };
-  const scanner = createScanner({ store, storePath, papersDir: dir, deps, scanIntervalMs: 0 });
+  const scanner = createScanner({ store, textStore: memTextStore(), papersDir: dir, deps, scanIntervalMs: 0 });
   scanner.enqueue(['x']);
   await new Promise((res) => setTimeout(res, 80));
   const p = store.papers['x'];
@@ -465,12 +480,9 @@ test('processOne 空总结不被当作成功（存可重试占位、不写误导
 
 test('retagPapers 重新打标 + 标签/主题库联动（多的入库、少的清除）', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pwretag-'));
-  const textDir = path.join(dir, 'text');
-  fs.mkdirSync(textDir, { recursive: true });
   // 两篇论文：a 原有标签 oldtag/主题 旧主题；b 原有标签 keep。
   // 重新打标后：a→newtag/新主题，b→keep。oldtag/旧主题 被所有论文放弃 → 应从字典清除；newtag 新增入库。
-  fs.writeFileSync(path.join(textDir, 'a.txt'), '论文a全文');
-  fs.writeFileSync(path.join(textDir, 'b.txt'), '论文b全文');
+  const textStore = memTextStore({ a: '论文a全文', b: '论文b全文' });
   const store = {
     version: 2,
     tags: ['oldtag', 'keep'],
@@ -501,7 +513,7 @@ test('retagPapers 重新打标 + 标签/主题库联动（多的入库、少的�
     mergeTags: () => {},
     mergeTopics: () => {},
   };
-  const scanner = createScanner({ store, storePath: path.join(dir, 'papers.json'), papersDir: dir, deps });
+  const scanner = createScanner({ store, textStore, papersDir: dir, deps });
   const r = await scanner.retagPapers(['a', 'b']);
   assert.strictEqual(r.processed, 2);
   assert.strictEqual(aiCalls, 2);
@@ -518,12 +530,8 @@ test('retagPapers 重新打标 + 标签/主题库联动（多的入库、少的�
 
 test('chatPaper 透传 extraIds：读额外论文全文 + 持久化 user.extraIds', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pwchat-'));
-  const storePath = path.join(dir, 'papers.json');
-  const textDir = path.join(dir, 'text');
-  fs.mkdirSync(textDir, { recursive: true });
   // 主论文 a + 额外论文 b（a @ 引用 b）
-  fs.writeFileSync(path.join(textDir, 'a.txt'), '主论文全文');
-  fs.writeFileSync(path.join(textDir, 'b.txt'), '额外论文全文');
+  const textStore = memTextStore({ a: '主论文全文', b: '额外论文全文' });
   const store = {
     version: 2,
     tags: [],
@@ -554,7 +562,7 @@ test('chatPaper 透传 extraIds：读额外论文全文 + 持久化 user.extraId
     mergeTags: () => {},
     mergeTopics: () => {},
   };
-  const scanner = createScanner({ store, storePath, papersDir: dir, deps });
+  const scanner = createScanner({ store, textStore, papersDir: dir, deps });
   const r = await scanner.chatPaper('a', '对比一下', { extraIds: ['b'] });
   assert.strictEqual(r.reply, '回复');
   // extraPapers 透传：含额外论文 b 的 title/abstract/fulltext
@@ -570,7 +578,6 @@ test('chatPaper 透传 extraIds：读额外论文全文 + 持久化 user.extraId
 
 test('chatPaper 无 extraIds 时不挂 extraIds 字段（向后兼容）', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pwchat2-'));
-  const storePath = path.join(dir, 'papers.json');
   const store = {
     version: 2,
     tags: [],
@@ -590,23 +597,28 @@ test('chatPaper 无 extraIds 时不挂 extraIds 字段（向后兼容）', async
     mergeTags: () => {},
     mergeTopics: () => {},
   };
-  const scanner = createScanner({ store, storePath, papersDir: dir, deps });
+  const scanner = createScanner({ store, textStore: memTextStore(), papersDir: dir, deps });
   await scanner.chatPaper('a', '普通问题');
   const userMsg = store.papers.a.chat.find((m) => m.role === 'user');
   assert.ok(userMsg.extraIds === undefined, '无引用时不挂 extraIds 字段');
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-/** 建一个最小可用的 manager（两空间，各带一个占位 PDF） */
+/** 建一个最小可用的 manager（两空间，各带一个占位 PDF；pg-mem 持久化） */
 async function makeMultiSpaceSetup() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pwms-'));
-  const dataDir = path.join(root, 'data');
+  const { newDb } = require('pg-mem');
+  const { createDb, createRepository } = require('../lib/db');
   const { createSpaceManager } = require('../lib/spaces');
-  const manager = createSpaceManager(dataDir, root, {
-    scanIntervalMinutes: 5,
-    papersDir: 'papers',
-    ai: { model: 'm' },
-    arxiv: { enabled: false },
+  const mem = newDb();
+  const { Pool } = mem.adapters.createPg();
+  const db = createDb({ createPool: () => new Pool() });
+  await db.migrate();
+  const repo = createRepository(db);
+  const manager = createSpaceManager({
+    repo,
+    papersRoot: root,
+    globalConfig: { scanIntervalMinutes: 5, ai: { model: 'm' }, arxiv: { enabled: false } },
   });
   await manager.ensureRegistry();
   // 在 default 空间放一个 PDF
