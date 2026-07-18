@@ -803,10 +803,29 @@ test('scan missing 少量缺失（≤5 或 ≤50%）正常标 missing，无熔�
   for (let i = 0; i < 6; i++) {
     const fp = path.join(dir, 'f' + i + '.pdf');
     const id = (await sha1OfFile(fp)).slice(0, 16);
-    store.papers[id] = { id, filename: 'f' + i + '.pdf', filepath: fp, fileSize: fs.statSync(fp).size, status: 'ready', tags: [] };
+    store.papers[id] = {
+      id,
+      filename: 'f' + i + '.pdf',
+      filepath: fp,
+      fileSize: fs.statSync(fp).size,
+      status: 'ready',
+      tags: [],
+    };
   }
-  store.papers.gone1 = { id: 'gone1', filename: 'g1.pdf', filepath: path.join(dir, 'g1.pdf'), status: 'ready', tags: [] };
-  store.papers.gone2 = { id: 'gone2', filename: 'g2.pdf', filepath: path.join(dir, 'g2.pdf'), status: 'ready', tags: [] };
+  store.papers.gone1 = {
+    id: 'gone1',
+    filename: 'g1.pdf',
+    filepath: path.join(dir, 'g1.pdf'),
+    status: 'ready',
+    tags: [],
+  };
+  store.papers.gone2 = {
+    id: 'gone2',
+    filename: 'g2.pdf',
+    filepath: path.join(dir, 'g2.pdf'),
+    status: 'ready',
+    tags: [],
+  };
   const deps = {
     parser: { extractText: async () => ({ text: '', charCount: 0, numPages: 0 }) },
     arxiv: { cleanFilenameToTitle: (f) => f },

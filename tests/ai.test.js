@@ -450,17 +450,30 @@ test('listModels 上游可达时返回模型列表（合并 extraModels 去重�
 });
 
 test('listModels 上游不可达时回退 config.ai.model + extraModels（永不抛错）', async () => {
-  const fakeFetch = async () => { throw new Error('network down'); };
+  const fakeFetch = async () => {
+    throw new Error('network down');
+  };
   const r = await listModels({
     config: { ai: { baseURL: 'http://gw/v1', apiKey: 'k', model: 'm', extraModels: ['a'] } },
     fetchImpl: fakeFetch,
   });
   assert.strictEqual(r.source, 'config');
-  assert.deepStrictEqual(r.models.map((m) => m.id), ['m', 'a']);
+  assert.deepStrictEqual(
+    r.models.map((m) => m.id),
+    ['m', 'a'],
+  );
 });
 
 test('listModels 无 baseURL 时回退静态候选', async () => {
-  const r = await listModels({ config: { ai: { model: 'm' } }, fetchImpl: async () => { throw new Error('x'); } });
+  const r = await listModels({
+    config: { ai: { model: 'm' } },
+    fetchImpl: async () => {
+      throw new Error('x');
+    },
+  });
   assert.strictEqual(r.source, 'config');
-  assert.deepStrictEqual(r.models.map((m) => m.id), ['m']);
+  assert.deepStrictEqual(
+    r.models.map((m) => m.id),
+    ['m'],
+  );
 });

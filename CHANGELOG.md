@@ -2,6 +2,33 @@
 
 本文件记录 PaperWiki 每个版本的显著变更。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/)，版本号语义化。
 
+## [3.0.0] — 2026-07-18
+
+> **生产化重构：PostgreSQL 持久化 + Docker Compose 部署 + 空间绑定语义重设计。** pm2 + per-space papers.json 退役；前端与业务逻辑不变（改动严格收口在持久化层之下）。设计文档见 `docs/superpowers/specs/2026-07-18-postgres-docker-migration-design.md`。
+
+### Added — PostgreSQL 持久化
+- **`lib/db.js`**：createDb（pg Pool + `migrations/*.sql` 编号 migration 幂等执行）+ createRepository——registry CRUD / `loadSpaceStore` 组装（migrateStore 规范化）/ `saveSpaceStore` **hash-diff 事务只写变化行**（scanner 单篇处理每次事务 1-2 行）/ `paper_texts` 全文存取（NUL 字节剥离，PG TEXT 拒收 0x00）。
+- **Schema**：`spaces`（meta + tags/topics/settings JSONB）、`papers`（PK=(space_id,id)，标量列 + JSONB 列 + **extra 兜底列**防未知字段丢失）、`paper_texts`（独立表，为未来 tsvector/pgvector 预留）、`concepts`、`folders`、`app_state`。
+- **`scripts/migrate-json-to-pg.js`**：旧 `data/`（多空间 spaces.json 或更老扁平 papers.json）+ `text/*.txt` 全量迁 PG，幂等可重跑；papersDir 映射为挂载根内 `<spaceId>` 子目录并打印文件搬移指引。
+- 单测栈新增 **pg-mem**：db/spaces/scanner/api 测试全部内存 PG，`npm test`（226 例）无需真实数据库。
+
+### Added — Docker Compose 部署
+- `Dockerfile`（node:20-slim / npm ci --omit=dev / USER node）+ `docker-compose.yml`（app + postgres:16-alpine、双 healthcheck、`restart: unless-stopped`、仅绑 127.0.0.1、PG 不对宿主暴露）+ `.env.example`（PAPERS_ROOT / POSTGRES_PASSWORD / APP_PORT）。
+- **备份双保险**：每日各空间 store 从 PG 导出 JSON 快照到 backups volume（`backupStoreObject`，格式兼容旧 papers.json，是 PG→JSON 逃生通道）；`scripts/backup-pg.sh` 供宿主 pg_dump 定时任务。
+- server.js：PG 不可用启动 **fail-fast**（Docker restart 负责重试）；`PAPERS_ROOT`/`BACKUP_DIR`/`DATABASE_URL` 环境变量化。
+- `config.example.json`：`discover.queryEngine` 默认 `gateway`（容器内无 claude CLI，跳过必败 spawn 直走 GLM 网关兜底）。
+- CI 从两 job 扩到三 job：lint-and-unit / **pg-smoke**（postgres service + 启动冒烟 CRUD）/ e2e（postgres service）。
+
+### Changed — 空间绑定语义重设计（修复「改路径后文件与数据不同步」）
+- **根因修复：filepath 改为运行时派生**——PG 只存 `filename`（相对空间目录），`getSpaceStore` load 时由 papersDir+filename 合成 `filepath`，不落库不参与 diff。改绑后 store 重载即全库路径一致。
+- **改绑从「改字符串」变为三步语义**：`POST /api/spaces/:id/dir/preview` 预检（按内容 sha1 对账：匹配数/将缺失清单/新文件数）→ 用户明确选择 `move`（物理搬移库内 PDF，撞名加 `(id)` 后缀，单篇失败记 errors 不中断）或 `rebind`（文件已在新位置，对账更新 filename、复活 missing/标缺失）→ 执行期间 scanner stop+drain 暂停、完成后失效子扫描器缓存 + 触发补扫。
+- **目录冲突校验**：papersDir 必须在挂载根内（越界拒绝）；不得与其他空间目录相同或互相嵌套（防双扫描器 rename 竞争）。default 空间改绑 `default` 子目录（不再绑根本身）。
+- **前端三步向导**：空间管理编辑态的文件夹字段改只读展示 + 「更改文件夹…」按钮 → 路径输入 → 预检报告卡（含缺失清单前 10 条 + 双模式单选卡）→ 结果页。
+- **扫描 missing 熔断**：单轮 scan 缺失 >5 篇且 >50% 判定挂载失效（Docker bind mount 掉了/目录清空），本轮不翻转状态，仅告警 + `/api/health` `missingFuse` 暴露；`changed` 分支同步 filename/filepath（rebind 自愈路径）。
+
+### Removed
+- pm2 部署路径（`ecosystem.config.cjs` 保留仅作历史参考）；`data/` 运行时目录（旧 JSON 只作迁移数据源保留）；`store.js` 的文件持久化降级为迁移脚本专用。
+
 ## [2.7.0] — 2026-07-17
 
 > **AI 聊天界面现代化重构（对标 ChatGPT / Claude / LobeChat）：气泡式消息布局 / 一体化 Composer（morphing 发送键）/ 模型切换器 / PDF 图表视觉问答。** 两个聊天入口（详情页「AI 聊天」tab + PDF 阅读器 AI 抽屉）再次统一升级，共用同一套现代设计语言。

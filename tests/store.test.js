@@ -74,7 +74,15 @@ test('saveStore 拒绝写入非法 store（字符串/无 papers 段），防污�
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pw-saveguard-'));
   const p = path.join(dir, 'papers.json');
   // 先写一份有效数据
-  const good = { version: 2, tags: ['t'], topics: [], folders: [], concepts: [], settings: {}, papers: { a: { id: 'a' } } };
+  const good = {
+    version: 2,
+    tags: ['t'],
+    topics: [],
+    folders: [],
+    concepts: [],
+    settings: {},
+    papers: { a: { id: 'a' } },
+  };
   await saveStore(p, good);
   // 尝试用各种非法值覆盖（历史 bug：storePath 字符串被当 store 传入）
   for (const bad of [p, 'somestring', null, 42, [], { tags: ['x'] }]) {
@@ -104,7 +112,15 @@ test('loadStore 损坏时优先从备份恢复，而非静默回空（防数据�
   const backupDir = path.join(dir, 'backups');
   fs.mkdirSync(backupDir, { recursive: true });
   // 先放一份有效的每日备份（含真实数据）
-  const goodData = { version: 2, tags: ['saved'], topics: [], folders: [], concepts: [], settings: {}, papers: { x: { id: 'x', title: 'Recovered', tags: ['saved'], topics: [], status: 'ready', summary: 'OK' } } };
+  const goodData = {
+    version: 2,
+    tags: ['saved'],
+    topics: [],
+    folders: [],
+    concepts: [],
+    settings: {},
+    papers: { x: { id: 'x', title: 'Recovered', tags: ['saved'], topics: [], status: 'ready', summary: 'OK' } },
+  };
   fs.writeFileSync(path.join(backupDir, 'papers-2026-01-01.json'), JSON.stringify(goodData), 'utf8');
   // 再把主文件搞坏
   fs.writeFileSync(p, 'CORRUPT', 'utf8');
@@ -227,9 +243,20 @@ test('backupStoreObject：写 JSON 快照、同日幂等、保留 7 份', async 
   try {
     // 预置 8 份旧备份（触发裁剪）
     for (let i = 1; i <= 8; i++) {
-      fs.writeFileSync(path.join(dir, `papers-2020-01-0${i > 7 ? 8 : i}.json`.replace('08', String(i).padStart(2, '0'))), '{}');
+      fs.writeFileSync(
+        path.join(dir, `papers-2020-01-0${i > 7 ? 8 : i}.json`.replace('08', String(i).padStart(2, '0'))),
+        '{}',
+      );
     }
-    const store = { version: 2, tags: [], topics: [], folders: [], concepts: [], settings: {}, papers: { p1: { id: 'p1' } } };
+    const store = {
+      version: 2,
+      tags: [],
+      topics: [],
+      folders: [],
+      concepts: [],
+      settings: {},
+      papers: { p1: { id: 'p1' } },
+    };
     await backupStoreObject(dir, store);
     const files = fs.readdirSync(dir).filter((f) => /^papers-\d{4}-\d{2}-\d{2}\.json$/.test(f));
     assert.strictEqual(files.length, 7, '超额备份应被裁剪到 7 份');

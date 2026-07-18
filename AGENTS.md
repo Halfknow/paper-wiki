@@ -5,28 +5,36 @@
 
 ## 这是什么
 
-一个**薄**的本地 Web 服务：扫描 `papers/*.pdf` → 提取全文 → 查 arXiv 补元数据 → 用 OpenAI 兼容接口生成总结/标签/主题/概念，并提供一个 Indigo 主题 SPA（列表 + 详情 tab + 独立 PDF 阅读器 + 批注 + 概念清单 + 提示词编辑）。另有**按主题发现**：输入主题 → LLM 生成 arXiv 检索式 → 多轴召回 + 引用量复合排序 → 勾选导入（SSE 流式进度）。
+一个**薄**的 Web 服务：扫描论文目录 `*.pdf` → 提取全文 → 查 arXiv 补元数据 → 用 OpenAI 兼容接口生成总结/标签/主题/概念，并提供一个 Indigo 主题 SPA（列表 + 详情 tab + 独立 PDF 阅读器 + 批注 + 概念清单 + 提示词编辑）。另有**按主题发现**：输入主题 → LLM 生成 arXiv 检索式 → 多轴召回 + 引用量复合排序 → 勾选导入（SSE 流式进度）。
 
 - **零构建前端**：原生 ESM，浏览器直接加载 `public/`。
-- **零数据库**：状态存 `data/papers.json`（单文件 JSON，进程内串行写锁，每日备份）。
+- **PostgreSQL 持久化（v3）**：全部结构化数据 + 论文全文入 PG（`lib/db.js` repository，hash-diff 事务保存）；内存 store 形状仍是 v2 结构，上层逻辑无感知。PDF 文件本身仍在文件系统（Docker bind mount）。
+- **Docker Compose 部署（v3）**：app + postgres:16 两容器；pm2 退役，守护交给 `restart: unless-stopped`。
 - **串行流水线**：避免压垮本地 AI / 触发 arXiv 限速。
 - **Node ≥ 20**：pdfjs-dist 4.10 的实际要求。
 
 ## 目录结构
 
 ```
-server.js              HTTP 入口：静态/PDF/vendor/API 路由 + 启动 scanner + 每日备份
+server.js              HTTP 入口：createDb→migrate（fail-fast）→ repo → manager → scanner + 每日 JSON 快照备份
 lib/
-  store.js   ★         数据模型 v2：papers/tags/topics/folders/concepts/settings
-                        原子写、串行锁、v1→v2 迁移、损坏自愈、backupStore 每日备份
-                        **签名不变，被各空间复用**（loadStore(path)/saveStore(path,store)）
-  spaces.js  ★（新）   空间管理器：per-space 独立 store 文件 + papersDir 绑定 + text/backups 隔离
-                        注册表 data/spaces.json（原子写串行锁）；CRUD（createSpace/renameSpace/
-                        changePapersDir/deleteSpace/setActive）；迁移（旧 papers.json→default 空间，幂等）；
-                        resolvePapersDir 收口（替代历史 5 处 path.resolve）；saveStoreBinder 单参闭包
+  db.js      ★（v3）  PG 持久化层：createDb（pg Pool + migrations/*.sql 幂等执行）+
+                        createRepository（registry CRUD / loadSpaceStore 组装 / saveSpaceStore
+                        hash-diff 事务只写变化行 / paper_texts 全文存取，NUL 剥离）。
+                        **filepath/fulltextPath 派生字段不落库不参与 diff**；papers.extra 兜底未知字段
+  store.js   ★         数据模型 v2 纯逻辑（emptyStore/migrateStore/normalizePaper/merge*）+
+                        文件版 loadStore/saveStore（仅迁移脚本用）+ backupStoreObject（PG→JSON 快照）
+  spaces.js  ★（v3）  空间管理器：注册表/store 全走 repo；papersDir 一律挂载根内相对路径
+                        （resolvePapersDir 越界拒绝、default 绑 'default' 子目录）；
+                        **filepath 运行时派生**（papersDir+filename，load 时合成）；
+                        textStoreBinder(id) 提供全文 {load,save,remove}；saveStoreBinder 单参闭包；
+                        改绑三步语义 previewPapersDirChange / applyPapersDirChange(move|rebind)
+                        + assertNoDirConflict（禁止空间目录相同/互相嵌套）
   scanner.js ★         增量扫描 + 串行流水线（parse→arxiv→ai）+ extractConcepts + drain
-                        **createScanner 不变**；新增 createMultiSpaceScanner：多空间共享单一串行队列
-                        （遵守陷阱：串行防限速），per-space store/storePath/papersDir，单一定时器取 min 间隔
+                        createScanner({store, papersDir, textStore, deps, ...})：全文经 textStore 读写 PG；
+                        createMultiSpaceScanner：多空间共享单一串行队列（遵守陷阱：串行防限速），
+                        单一定时器取 min 间隔；**missing 熔断**（>5 且 >50% 同时缺失不翻转状态，
+                        getFuseState 供 /api/health 暴露）；changed 分支同步 filename（rebind 自愈）
   ai.js      ★         OpenAI 兼容 chat 调用：summarize(自由Markdown) / extractTagsTopics(JSON) / extractConcepts / chatPaper(多轮+流式+多模态)
                         含 429/5xx 指数退避重试、JSON 容错解析、applySettingsOverride（store.settings 覆盖 config 的 ai/scan/arxiv/discover）
                         **v2.7**：callChat/callChatStream 支持 chatParams.model 覆盖 + 多模态 content 数组；新增 listModels（上游 /v1/models + extraModels 回退）
@@ -45,26 +53,31 @@ public/
                         sp(url) 注入器：所有 /api/ /papers/ 请求自动带 ?space=<active>
   reader.js  ★         pdf.js PDFViewer 阅读器：双页/批注/缩放/续读（PDF URL + chat 经 sp() 带空间）
   styles.css ★         Indigo 主题（grid + flex 列布局，列表独立滚动，reader 深灰底白页，space-switcher 下拉）
-scripts/scan-once.js   不启 HTTP，扫一次处理完队列后退出；多空间版（--space <id> 或扫全部）
-scripts/e2e-bootstrap.js  e2e 测试数据准备（预置 config/PDF/papers.json）
-tests/*.test.js        node --test，覆盖全部 lib 模块（207 例，含 spaces.test.js 22 例 + 多空间 scanner 5 例 + ai 模型/多模态 7 例）
-tests/e2e/             Playwright e2e（reader 渲染 + 高亮往返）
+migrations/*.sql       PG schema（编号 migration，启动时幂等执行；schema_migrations 记账）
+scripts/scan-once.js   不启 HTTP，扫一次处理完队列后退出；多空间版（--space <id> 或扫全部；需 DATABASE_URL）
+scripts/migrate-json-to-pg.js  一次性迁移：旧 data/ JSON（多空间或扁平）→ PG，幂等；打印文件搬移指引
+scripts/e2e-bootstrap.js  e2e 数据准备（migrate + 经 repo 向 PG upsert sample；需 PG）
+scripts/backup-pg.sh   pg_dump 备份（宿主定时任务用）
+tests/*.test.js        node --test，覆盖全部 lib 模块（225 例；db/spaces/scanner/api 用 pg-mem，无需真实 PG）
+tests/e2e/             Playwright e2e（reader 渲染 + 高亮往返；需 dev PG，见 playwright.config.js）
 tests/fixtures/        sample.pdf（2 页带文本层，e2e 用）
-config.json            实际配置（gitignore，含 key）；模板 config.example.json（全局 config，作为新空间默认模板 + applySettingsOverride 基底）
-ecosystem.config.cjs   pm2 配置（强制 instances:1 保写锁有效）
-data/                  spaces.json（注册表）+ spaces/<id>/{papers.json,text,backups}（per-space，运行时，gitignore）
-papers/                你的 PDF（只读扫描，gitignore；default 空间默认绑定）
-.github/workflows/ci.yml  CI：lint+unit / e2e 两 job
+config.json            实际配置（gitignore，含 key）；模板 config.example.json（作为各空间 applySettingsOverride 基底）
+Dockerfile / docker-compose.yml / .env(.example)  v3 部署（app+postgres；PAPERS_ROOT bind mount）
+papers/                本地开发时的挂载根（gitignore）；生产 = .env 的 PAPERS_ROOT，每空间一个子目录
+data/                  旧版 JSON 数据（仅供迁移脚本读取；运行时不再使用）
+.github/workflows/ci.yml  CI：lint+unit / pg-smoke / e2e 三 job（后两个带 postgres service）
 .prettierrc/.eslintrc.json  代码质量（仅格式化 lib/server/tests，public/ 排除）
 ```
 
 ★ = v2.2 / v2.3 / v2.4 / v2.5 / v2.7 重点改动文件（v2.7：聊天 UI 现代化重构——气泡布局/composer/模型切换器/视觉问答，改 public/{app,reader,index,styles} + lib/{ai,api,scanner}；v2.5：spaces/scanner(createMultiSpaceScanner)/api/server + 前端空间切换器；v2.4：ai/api/scanner + 前端设置中心；v2.3：discover/claude/util/arxiv/api/scanner）。
 
-## 数据模型（store v2，per-space `data/spaces/<id>/papers.json`）
+## 数据模型（内存 store 仍是 v2 形状；持久化在 PostgreSQL）
 
-> v2.5 起引入**多空间**：每个空间是一个完全隔离的库（独立 store 文件 + 独立 papersDir 绑定）。
-> store.js 的 store 形状不变（仍是下面的 v2 结构），只是从单一 `data/papers.json` 变成 per-space
-> `data/spaces/<id>/papers.json`。详见下方「Spaces 架构」。
+> v3 起持久化迁 PG（`lib/db.js`），但**内存 store 形状 100% 不变**（仍是下面的 v2 结构）——
+> repository 负责 组装（loadSpaceStore）与 hash-diff 保存（saveSpaceStore）。表结构：
+> `spaces`（meta + tags/topics/settings JSONB）、`papers`（PK=(space_id,id)，标量列 + JSONB 列 + extra 兜底）、
+> `paper_texts`（全文独立表）、`concepts`、`folders`、`app_state`（activeSpaceId）、`schema_migrations`。
+> **注意**：`filepath`/`fulltextPath` 是运行时派生字段，不落库（见陷阱 22）。
 
 ```jsonc
 {
@@ -108,30 +121,33 @@ papers/                你的 PDF（只读扫描，gitignore；default 空间默
 
 **向后兼容**：`loadStore` → `migrateStore` 自动把 v1 数据补齐为 v2（加 topics/folders/concepts/settings/annotations 字段、规范化每篇论文）。`migrateStore` 只确保 `settings` 是对象，不强行塞 key——新字段靠读取时 `?? default` 兜底。**损坏自愈**：`papers.json` 若是非 JSON 或非对象，自动备份为 `.corrupt-<ts>` 并回空 store。
 
-## Spaces 架构（v2.5）
+## Spaces 架构（v3：PG 持久化 + 挂载根收口）
 
 **物理布局**：
 ```
-data/
-  spaces.json                    空间注册表 { version, activeSpaceId, spaces:[{id,name,papersDir,createdAt,scanIntervalMinutes,lastScanAt}] }
-  spaces/<id>/papers.json        per-space 完整 store（复用 lib/store.js，签名不变）
-  spaces/<id>/text/<paperId>.txt per-space 全文
-  spaces/<id>/backups/           per-space 每日备份
-papers/                          default 空间绑定的文件夹（迁移后归属 default）
+PostgreSQL（compose 内 postgres 服务，pgdata volume）
+  spaces / papers / paper_texts / concepts / folders / app_state   ← 全部结构化数据 + 全文
+<PAPERS_ROOT>/（宿主目录 bind mount → 容器 /papers）
+  default/       default 空间的 PDF（v3 起 default 也绑子目录，不绑根本身）
+  <spaceId>/     其他空间（新建空间默认以 id 作子目录名）
+backups volume   每日 JSON 快照（PG→JSON 逃生通道，格式兼容旧 papers.json）
 ```
 
-**核心抽象**（`lib/spaces.js` `createSpaceManager(dataDir, projectRoot, globalConfig)`）：
-- 注册表原子写（串行锁，与 store.js 同模式）；损坏自愈（备份后回 emptyRegistry）
-- `getSpaceStore(id)` / `saveSpaceStore(id, store)`：per-space load/save，**内存缓存**（manager 持有 store 引用，与 scanner 共享）
-- `saveStoreBinder(id)`：返回单参闭包 `(store)=>saveStore(path,store)`，注入 scanner deps.saveStore（**遵守陷阱 1**：scanner 必须调单参 saveStore）
-- `resolveSpacePapersDir(id)`：**统一收口**（替代历史上 5 处各自 `path.resolve(__dirname, config.papersDir)`）；相对路径相对 projectRoot，自动 mkdir
-- `createSpace` / `renameSpace` / `changePapersDir` / `deleteSpace` / `setActiveSpace` / `setScanInterval`
-- `migrateLegacyIfNeeded`：检测旧 `data/papers.json` 存在且无 `spaces.json` 时，一次性迁入 default 空间（move papers.json/text/backups → `data/spaces/default/`），迁前 backup `.pre-spaces-<ts>`，**幂等**
+**核心抽象**（`lib/spaces.js` `createSpaceManager({repo, papersRoot, globalConfig})`）：
+- 注册表内存态源于 `repo.loadRegistry()`；空库自动建 default（papersDir='default'）
+- `getSpaceStore(id)` / `saveSpaceStore(id, store)`：repo 组装/hash-diff 保存，**内存缓存**（manager 持有 store 引用，与 scanner/api 共享）；load 时**派生 filepath**（papersDir+filename）
+- `saveStoreBinder(id)`：单参闭包注入 scanner deps.saveStore（**遵守陷阱 1**）
+- `textStoreBinder(id)`：全文 `{load,save,remove}` → PG paper_texts（注入 scanner/api）
+- `resolveSpacePapersDir(id)`：相对 papersRoot 解析 + **越界拒绝** + 自动 mkdir
+- `previewPapersDirChange(id, newDir)`：sha1 对账预检（只读）；
+  `applyPapersDirChange(id, newDir, 'move'|'rebind')`：原子改绑（见陷阱 23）；
+  `assertNoDirConflict`：禁止与其他空间目录相同/互相嵌套（防双扫描器 rename 竞争）
+- 旧 JSON→PG 迁移不再在 manager 内做，见 `scripts/migrate-json-to-pg.js`（幂等）
 
 **隔离语义**：paper id = `sha1(内容)`，**同 PDF 跨空间是各自 store 里的独立条目**（符合隔离，非 bug）。tags/topics/folders/concepts/settings 全部 per-space（各空间 store 独立）。
 
 **多空间扫描器**（`lib/scanner.js` `createMultiSpaceScanner({manager, deps})`）：
-- 每空间建一个子扫描器（复用 `createScanner` 的完整流水线闭包），子扫描器的 store/storePath/papersDir 各自指向该空间
+- 每空间建一个子扫描器（复用 `createScanner` 的完整流水线闭包），子扫描器的 store/papersDir/textStore 各自指向该空间
 - **共享单一串行队列**（queue 项 = `{spaceId, id}`，pump 串行 await 子扫描器 processOne）——遵守陷阱：串行防压垮本地 AI / 触发 arXiv 限速
 - 子扫描器的内部 enqueue 被 `onEnqueue` 钩子转交到共享队列（子扫描器自身不被 start，内部 queue 无人 pump）
 - 单一定时器：间隔 = `min(所有 scheduled 空间 scanInterval)`，每次 tick `scan({dueOnly:true})` 内部按 per-space lastScanAt 判定哪些到点
@@ -141,21 +157,24 @@ papers/                          default 空间绑定的文件夹（迁移后归
 - ctx 从 `{store, save, scanner, config}` 变为 `{manager, scanner, globalConfig}`
 - 每路由顶部 `const {spaceId, space, store, save} = await resolveSpace(q)`：`?space=<id>` 指定空间，无参回 active
 - **SSE 路由（chat/discover）**：EventSource 无法设 header，spaceId 走 URL query `?space=`（后端回退 active 保证无参仍工作）
-- 新增 `/api/spaces` 路由组：GET 列表 / POST 创建 / PATCH 改名+改 papersDir / DELETE 删空间（default 拒删，保留物理 PDF）/ POST :id/activate
+- `/api/spaces` 路由组：GET 列表 / POST 创建 / PATCH 改名 / DELETE 删空间（default 拒删，保留物理 PDF）/ POST :id/activate /
+  **POST :id/dir/preview（改绑预检）/ POST :id/dir {newDir, mode}（执行 move|rebind，期间 stop+drain 暂停扫描）**
 
 **前端**（`public/app.js`）：
 - `state.space`（localStorage 持久化 `pw-space`）+ `state.spaces[]`
 - `sp(url)` 注入器：所有 `/api/` `/papers/` 请求自动带 `?space=<active>`（已有 ?space= 不覆盖）；reader.js 经 `window.sp` 复用
 - `switchSpace(id)`：activate → **teardown**（关 chat EventSource、flush notes、关 reader）→ 清空 selected/filter/detail → refresh + renderDetail
-- 顶栏空间切换器下拉（选空间 / 新建 / 管理模态）；管理模态改名+改 papersDir+删除
+- 顶栏空间切换器下拉（选空间 / 新建 / 管理模态）；管理模态改名+删除；**改文件夹走三步向导**
+  （openDirWizard：输入路径 → 预检报告+模式单选 → 执行结果，见陷阱 23）
 
 ## 核心数据流
 
 ```
 启动 server.js
-  ├─ loadStore(data/papers.json)   ← v1 自动迁移 / 损坏自愈
-  ├─ backupStore(storePath)        ← 启动即备一次 + 每 6h 检查（按天去重，保留 7 份）
-  ├─ createScanner(...).start()    ← 立即全量 scan，之后每 scanIntervalMinutes 增量
+  ├─ createDb → db.migrate()       ← PG 不可用 fail-fast（Docker restart 重试）
+  ├─ createRepository → createSpaceManager({repo, papersRoot, globalConfig})
+  ├─ backupAllSpaces()             ← 启动即备一次 + 每 6h 检查（JSON 快照，按天去重保留 7 份）
+  ├─ createMultiSpaceScanner.start() ← 立即全量 scan，之后单一定时器（min 间隔）增量
   └─ http.createServer             ← /papers /vendor /api /静态
 
 scan() 一篇新论文:
@@ -164,7 +183,7 @@ scan() 一篇新论文:
 
 processOne(id):                     ← 串行，避免限速
   effConfig = applySettingsOverride(config, store.settings)   ← 顶部算一次；ai/arxiv/discover 段统一走它（设置热生效）
-  1. parsing    parser.extractText → 写 data/text/<id>.txt
+  1. parsing    parser.extractText → textStore.save(id, text)（PG paper_texts，NUL 剥离）
   2. enriching  按 **effConfig.arxiv**（enabled/minIntervalMs/titleSimilarityThreshold 可热改，见陷阱 20）查元数据：
                 p.arxivId 或 parseArxivUrl(文件名) 命中 → id: 精确查；
                 否则 cleanFilenameToTitle + ti: + pickBest（阈值默认 0.75，限速 3s）。补 year(published)
@@ -191,17 +210,18 @@ arXiv 导入 (POST /api/import { url, meta? }):
   onProgress(stage) → SSE event: progress / done / fail（前端 5 步进度面板）
 
 删除 (DELETE /api/papers/:id):
-  删 store 条目 + p.filepath(限 papersDir 内) + p.fulltextPath + 清理 concepts[].paperIds
+  删 store 条目 + PDF 文件(限 papersDir 内) + 清理 concepts[].paperIds
+  （全文行由 repo.saveSpaceStore 检测论文删除时连带 DELETE paper_texts）
 ```
 
-**概念增量抽取**（`scanner.extractConcepts(ids)`）：复用 `data/text/<id>.txt`，把已有 term 喂给模型只返回新概念，`mergeConcepts` 按归一化 term 去重并合并 paperIds。
+**概念增量抽取**（`scanner.extractConcepts(ids)`）：复用 textStore 里的全文，把已有 term 喂给模型只返回新概念，`mergeConcepts` 按归一化 term 去重并合并 paperIds。
 
 **批注持久化**（reader.js ↔ api.js ↔ annotations.js）：前端 `annotationStorage.onSetModified` → 防抖 serialize（`doc.annotationStorage.serializable.map`）→ PATCH `{annotations:{items}}` → api.js 经 `annotations.normalizeAnnotations` 归一化后存 store。回显：open 时拿 detailView.annotations → loadAnnotations 按 pageIndex 分组 → pagerendered 后 `getPageView(i).annotationEditorLayer.annotationEditorLayer.deserialize(item)`。
 
 ## 关键约定 / 陷阱（改代码前必读）
 
-1. **`deps.saveStore` 是单参闭包**：`saveStore: (s) => saveStore(storePath, s)`。
-   scanner 必须调 `deps.saveStore(store)`（**一个参数**）。历史上曾误写成两参，导致把 storePath 字符串当 store 存进 `papers.json`，把库整个写坏。已加单测防回归。
+1. **`deps.saveStore` 是单参闭包**：`saveStore: (store) => manager.saveSpaceStore(id, store)`。
+   scanner 必须调 `deps.saveStore(store)`（**一个参数**）。历史上曾误写成两参把 storePath 字符串当 store 写坏全库。已加单测防回归。
 
 2. **提示词优先级（各自独立三级）**：
    - 总结：`store.settings.summaryPrompt` > `config.summaryPrompt` > `DEFAULT_SUMMARY_PROMPT`（lib/ai.js）。
@@ -229,7 +249,9 @@ arXiv 导入 (POST /api/import { url, meta? }):
 
 11. **光标模式无法选中批注**：NONE 模式下 `.annotationEditorLayer.disabled { pointer-events:none }` 封死整层，点击到不了 editor。删除批注必须先切到对应工具（高亮/便签/手写）使层 enable。
 
-12. **重启才加载后端改动**：`lib/` 模块在启动时 `require()` 进内存并缓存；改了 `lib/`、`server.js`、`config.json` 必须 `pm2 restart` 才生效。前端 `public/`（html/js/css）每次请求即时读盘且发 `no-cache`，改完**刷新浏览器即可**。`data/papers.json` 是内存态运行数据，运行中手改会被覆盖。
+12. **改代码要重建容器**：v3 生产跑在 Docker 里，`lib/`、`server.js`、`public/` 都打进镜像——任何代码改动须
+    `docker compose up -d --build app` 重建生效（前端也一样，镜像内 public/ 不是宿主目录）。`config.json`
+    是挂载文件，改后 `docker compose restart app` 即可。本地 `node server.js` 开发时前端仍是即时读盘。
 
 13. **空总结不可当成功**：模型偶发返回空对象 `{}`（批量/超时/限流）。`processOne` 判定「有内容」= 有 `tldr`/`contributions`/`method` 之一；否则存 `buildSummaryMarkdown(null)` 占位并清 `summaryAt`，不写误导性的空「## TL;DR」。`buildSummaryMarkdown({})` 只会得到空标题——务必在写入前过滤。
 
@@ -255,30 +277,66 @@ arXiv 导入 (POST /api/import { url, meta? }):
    - **前端两处聊天共用渲染**：app.js 经 `window.*` 暴露 `chatMsgHtml/chatEmptyHtml/renderChatMd/toggleModelSwitcher/getSelectedModel/loadAiModels/pwState` 给 reader.js（ESM 隔离）。改聊天渲染逻辑要同步两处。
    - **@ 引用浮层 confirmMention 顺序陷阱**：`confirmMention` 必须**先捕获 `onPick` 回调到本地变量**，再 `dispatchEvent('input')`（会触发 `handleMentionTrigger → closeChatMentionPicker()` 把 `_mentionCtx` 置 null），最后调 `onPick`。顺序反了 → 选了论文但 chip 不出现。浮层是 body 级 `position:fixed` 单例，两处聊天共用 `openChatMentionPicker/closeChatMentionPicker/handleMentionKeydown`。
 
+22. **filepath 是运行时派生字段，绝不落库**（v3 绑定 desync 根因修复）：PG 只存 `filename`（相对空间目录），
+    `manager.getSpaceStore` 在 load 时合成 `p.filepath = papersDir + filename`；repo 保存时剥除
+    filepath/fulltextPath 且不参与 hash-diff。**改 papersDir 后 store 重载即全库路径一致**。
+    新代码要新增持久字段时记得加进 lib/db.js 的 PAPER_COLS（否则会进 extra JSONB 兜底列——数据不丢但不可 SQL 查询）。
+
+23. **papersDir 改绑必须走 preview/apply 三步语义**：`changePapersDir` 旧语义（只改字符串）已废除（现等价 rebind）。
+    正确入口：`POST /api/spaces/:id/dir/preview` 预检（sha1 对账报告）→ `POST /api/spaces/:id/dir {newDir, mode}`
+    执行（move=物理搬移+撞名加 (id) 后缀；rebind=对账更新 filename/复活或标 missing），期间 scanner stop+drain
+    暂停、完成后 invalidate 子扫描器（papersDir 缓存已变）+ start 补扫。目录校验：必须在挂载根内、
+    不得与其他空间目录相同或互相嵌套（双扫描器会 rename 竞争）。前端只能走向导，不再提供自由文本改绑。
+
+24. **jsonb 参数必须 JSON.stringify；PG TEXT 不收 NUL**：node-pg 会把 JS 数组序列化成 PG 数组字面量
+    （`{a,b}`）而非 JSON——jsonb 列直接传数组必写坏，lib/db.js 内一律 `jstr()`。全文可能含 ` `
+    （pdfjs 偶发），`savePaperText` 已剥离；绕过 repo 直写 paper_texts 会踩 `invalid byte sequence`。
+
+25. **missing 熔断**：单轮 scan 中 `missing > 5 且 > 库内 50%` 视为目录挂载失效（Docker bind mount 掉了/目录清空），
+    本轮不翻转任何状态，只告警 + `/api/health` 的 `missingFuse` 暴露。正常少量缺失照旧标记。
+    写扫描相关代码勿绕过此保护；测试挂载问题先看 health。
+
+26. **pg-mem 怪癖（单测）**：对**已存在表**的 `CREATE TABLE IF NOT EXISTS` 会报错——migrate 先探测
+    `schema_migrations` 再建；migration SQL 逐条执行且先剥 `--` 注释行。单测全用 pg-mem（无需真实 PG）；
+    e2e/pg-smoke 才用真实 postgres。
+
 ## 工程化
 
-- **测试**：`npm test`（node --test，207 例，覆盖全 lib）；`npm run test:e2e`（Playwright，reader 渲染 + 高亮往返）。
+- **测试**：`npm test`（node --test，225 例，覆盖全 lib；db/spaces/scanner/api 用 pg-mem 无需真实 PG）；
+  `npm run test:e2e`（Playwright，reader 渲染 + 高亮往返；需 dev PG，见下）。
 - **代码质量**：`npm run lint`（ESLint，`eqeqeq` 配 `null:ignore` 容纳 `== null`）；`npm run format`/`format:check`（Prettier，**仅 lib/server/tests**，public/ 排除因无分号风格冲突）。
-- **CI**：`.github/workflows/ci.yml` 两个 job——lint-and-unit、e2e。push/PR 触发。
-- **运维**：`GET /api/health` 探活；`NODE_ENV=production` 错误响应脱敏；`backupStore` 每日备份 `data/backups/papers-YYYYMMDD.json`（保留 7 份）。
-- **安全**：默认监听 127.0.0.1（不做鉴权时避免局域网暴露）。无鉴权——多人/公网部署需自行加。
+- **CI**：`.github/workflows/ci.yml` 三个 job——lint-and-unit、pg-smoke（postgres service + 启动冒烟 CRUD）、e2e（postgres service）。push/PR 触发。
+- **运维**：`GET /api/health` 探活（含 `missingFuse` 挂载失效告警）；`NODE_ENV=production` 错误响应脱敏；
+  每日 JSON 快照到 backups volume（保留 7 份，PG→JSON 逃生通道）；`scripts/backup-pg.sh` 供 pg_dump 定时备份。
+- **安全**：compose 仅绑 `127.0.0.1`；PG 不对宿主暴露端口。无鉴权——多人/公网部署需自行加。
 
 ## 运行 / 测试
 
 ```bash
-npm start                 # 前台，http://127.0.0.1:8888
-npm run scan              # 只扫一次，不启 HTTP（初始化/排错）
-npm test                  # node --test（207 例）
-npm run test:e2e          # Playwright（reader + 高亮往返）
+# 生产（Docker Compose）
+cp .env.example .env               # 填 PAPERS_ROOT / POSTGRES_PASSWORD / APP_PORT
+docker compose up -d --build       # http://127.0.0.1:8888
+docker compose restart app         # 只改 config.json 时
+docker compose up -d --build app   # 改任何代码后（lib/public 都打进镜像）
+docker compose run --rm -v ./data:/legacy-data app node scripts/migrate-json-to-pg.js /legacy-data
+                                   # 旧 JSON 数据一次性迁移（Git Bash 下加 MSYS_NO_PATHCONV=1）
+
+# 本地开发（不进容器；需一个可连的 PG）
+docker run -d --name pw-dev-pg -p 127.0.0.1:5433:5432 -e POSTGRES_USER=paperwiki \
+  -e POSTGRES_PASSWORD=dev -e POSTGRES_DB=paperwiki postgres:16-alpine
+DATABASE_URL=postgres://paperwiki:dev@127.0.0.1:5433/paperwiki npm start
+DATABASE_URL=... npm run scan      # 只扫一次，不启 HTTP
+
+npm test                  # node --test（225 例，pg-mem，无需真实 PG）
+npm run test:e2e          # Playwright（默认连 5433 的 dev PG，可用 E2E_DATABASE_URL 覆盖）
 npm run lint              # ESLint
 npm run format:check      # Prettier 检查
-pm2 restart paper-wiki    # 生产环境重启（改 lib 后必需）
 ```
 
 ## 待办 / 已知限制
 
-- 见 README「后续可扩展（v3）」：MinerU 解析、论文关系链、SQLite（>500 篇时）、向量检索、概念共现图、批注 XFDF 导出。
-- `data/papers.json` 单文件，论文量很大时（>500）建议迁 SQLite。
 - 概念清单去重为纯文本归一化，无语义合并提示。
-- 写锁是进程内的（`let writeChain`），靠 pm2 `instances:1` 守护；多实例会写坏 papers.json。
-- 批注已实现保存+回显；写回 PDF（XFDF）是 v3 待办。
+- 写锁是进程内的（repository writeChain），靠单容器单进程守护；多副本部署需改造（advisory lock 等）。
+- 批注已实现保存+回显；写回 PDF（XFDF）待办。
+- Postgres 已就位但未启用 tsvector 全文检索 / pgvector 向量检索（schema 可平滑演进）。
+- 旧 `data/` 目录保留只读（迁移脚本的数据源 + 回滚保险），确认稳定后可自行归档删除。

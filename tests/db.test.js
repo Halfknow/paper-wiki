@@ -83,10 +83,24 @@ test('registry: 空库返回 null，upsert 后可读', async () => {
 
 test('upsertSpaceMeta 不覆盖 store 字段（tags/topics/settings）', async () => {
   const { db, repo } = await repoMem();
-  await repo.upsertSpaceMeta({ id: 's1', name: 'x', papersDir: '.', createdAt: 1, scanIntervalMinutes: 5, lastScanAt: 0 });
+  await repo.upsertSpaceMeta({
+    id: 's1',
+    name: 'x',
+    papersDir: '.',
+    createdAt: 1,
+    scanIntervalMinutes: 5,
+    lastScanAt: 0,
+  });
   const store = sampleStore();
   await repo.saveSpaceStore('s1', store);
-  await repo.upsertSpaceMeta({ id: 's1', name: '改名', papersDir: 'sub', createdAt: 1, scanIntervalMinutes: 10, lastScanAt: 9 });
+  await repo.upsertSpaceMeta({
+    id: 's1',
+    name: '改名',
+    papersDir: 'sub',
+    createdAt: 1,
+    scanIntervalMinutes: 10,
+    lastScanAt: 9,
+  });
   const loaded = await repo.loadSpaceStore('s1');
   assert.deepEqual(loaded.tags, ['llm']); // meta upsert 不清 store 字典
   const reg = await repo.loadRegistry();
@@ -97,7 +111,14 @@ test('upsertSpaceMeta 不覆盖 store 字段（tags/topics/settings）', async (
 
 test('store 保存/组装 roundtrip + filepath/fulltextPath 不落库 + extra 兜底', async () => {
   const { db, repo } = await repoMem();
-  await repo.upsertSpaceMeta({ id: 's1', name: 'x', papersDir: '.', createdAt: 1, scanIntervalMinutes: 5, lastScanAt: 0 });
+  await repo.upsertSpaceMeta({
+    id: 's1',
+    name: 'x',
+    papersDir: '.',
+    createdAt: 1,
+    scanIntervalMinutes: 5,
+    lastScanAt: 0,
+  });
   await repo.saveSpaceStore('s1', sampleStore());
   const loaded = await repo.loadSpaceStore('s1');
   const p = loaded.papers.p1;
@@ -120,7 +141,14 @@ test('store 保存/组装 roundtrip + filepath/fulltextPath 不落库 + extra �
 
 test('loadSpaceStore: 不存在的空间返回空 store 形状', async () => {
   const { db, repo } = await repoMem();
-  await repo.upsertSpaceMeta({ id: 's1', name: 'x', papersDir: '.', createdAt: 1, scanIntervalMinutes: 5, lastScanAt: 0 });
+  await repo.upsertSpaceMeta({
+    id: 's1',
+    name: 'x',
+    papersDir: '.',
+    createdAt: 1,
+    scanIntervalMinutes: 5,
+    lastScanAt: 0,
+  });
   const loaded = await repo.loadSpaceStore('s1');
   assert.deepEqual(loaded.papers, {});
   assert.deepEqual(loaded.tags, []);
@@ -130,7 +158,14 @@ test('loadSpaceStore: 不存在的空间返回空 store 形状', async () => {
 
 test('hash-diff: 未变更保存不产生写；单篇变更只写一行', async () => {
   const { db, repo } = await repoMem();
-  await repo.upsertSpaceMeta({ id: 's1', name: 'x', papersDir: '.', createdAt: 1, scanIntervalMinutes: 5, lastScanAt: 0 });
+  await repo.upsertSpaceMeta({
+    id: 's1',
+    name: 'x',
+    papersDir: '.',
+    createdAt: 1,
+    scanIntervalMinutes: 5,
+    lastScanAt: 0,
+  });
   const store = sampleStore();
   await repo.saveSpaceStore('s1', store);
   const w1 = repo._stats().rowsWritten;
@@ -147,7 +182,14 @@ test('hash-diff: 未变更保存不产生写；单篇变更只写一行', async 
 
 test('filepath 变化不触发写（派生字段不参与 diff）', async () => {
   const { db, repo } = await repoMem();
-  await repo.upsertSpaceMeta({ id: 's1', name: 'x', papersDir: '.', createdAt: 1, scanIntervalMinutes: 5, lastScanAt: 0 });
+  await repo.upsertSpaceMeta({
+    id: 's1',
+    name: 'x',
+    papersDir: '.',
+    createdAt: 1,
+    scanIntervalMinutes: 5,
+    lastScanAt: 0,
+  });
   const store = sampleStore();
   await repo.saveSpaceStore('s1', store);
   const w1 = repo._stats().rowsWritten;
@@ -159,7 +201,14 @@ test('filepath 变化不触发写（派生字段不参与 diff）', async () => 
 
 test('删除的论文行与全文一起消失', async () => {
   const { db, repo } = await repoMem();
-  await repo.upsertSpaceMeta({ id: 's1', name: 'x', papersDir: '.', createdAt: 1, scanIntervalMinutes: 5, lastScanAt: 0 });
+  await repo.upsertSpaceMeta({
+    id: 's1',
+    name: 'x',
+    papersDir: '.',
+    createdAt: 1,
+    scanIntervalMinutes: 5,
+    lastScanAt: 0,
+  });
   const store = sampleStore();
   await repo.saveSpaceStore('s1', store);
   await repo.savePaperText('s1', 'p1', 'fulltext here');
@@ -173,7 +222,14 @@ test('删除的论文行与全文一起消失', async () => {
 
 test('texts: save/get/remove roundtrip', async () => {
   const { db, repo } = await repoMem();
-  await repo.upsertSpaceMeta({ id: 's1', name: 'x', papersDir: '.', createdAt: 1, scanIntervalMinutes: 5, lastScanAt: 0 });
+  await repo.upsertSpaceMeta({
+    id: 's1',
+    name: 'x',
+    papersDir: '.',
+    createdAt: 1,
+    scanIntervalMinutes: 5,
+    lastScanAt: 0,
+  });
   assert.equal(await repo.getPaperText('s1', 'p9'), null);
   await repo.savePaperText('s1', 'p9', '你好全文');
   assert.equal(await repo.getPaperText('s1', 'p9'), '你好全文');
@@ -186,7 +242,14 @@ test('texts: save/get/remove roundtrip', async () => {
 
 test('deleteSpaceRow 级联清空五表', async () => {
   const { db, repo } = await repoMem();
-  await repo.upsertSpaceMeta({ id: 's1', name: 'x', papersDir: '.', createdAt: 1, scanIntervalMinutes: 5, lastScanAt: 0 });
+  await repo.upsertSpaceMeta({
+    id: 's1',
+    name: 'x',
+    papersDir: '.',
+    createdAt: 1,
+    scanIntervalMinutes: 5,
+    lastScanAt: 0,
+  });
   await repo.saveSpaceStore('s1', sampleStore());
   await repo.savePaperText('s1', 'p1', 't');
   await repo.deleteSpaceRow('s1');
@@ -199,8 +262,22 @@ test('deleteSpaceRow 级联清空五表', async () => {
 
 test('多空间隔离：同 paper id 各自独立', async () => {
   const { db, repo } = await repoMem();
-  await repo.upsertSpaceMeta({ id: 'a', name: 'a', papersDir: 'a', createdAt: 1, scanIntervalMinutes: 5, lastScanAt: 0 });
-  await repo.upsertSpaceMeta({ id: 'b', name: 'b', papersDir: 'b', createdAt: 1, scanIntervalMinutes: 5, lastScanAt: 0 });
+  await repo.upsertSpaceMeta({
+    id: 'a',
+    name: 'a',
+    papersDir: 'a',
+    createdAt: 1,
+    scanIntervalMinutes: 5,
+    lastScanAt: 0,
+  });
+  await repo.upsertSpaceMeta({
+    id: 'b',
+    name: 'b',
+    papersDir: 'b',
+    createdAt: 1,
+    scanIntervalMinutes: 5,
+    lastScanAt: 0,
+  });
   const sa = sampleStore();
   const sb = sampleStore();
   sb.papers.p1 = { ...sb.papers.p1, title: 'B 空间的' };
@@ -230,7 +307,7 @@ test('migrateJsonToPg：多空间旧结构迁移（store/全文/注册表）+ �
         spaces: [
           { id: 'default', name: '默认', papersDir: 'papers', scanIntervalMinutes: 5, lastScanAt: 9, createdAt: 1 },
         ],
-      })
+      }),
     );
     const spDir = path.join(legacy, 'spaces', 'default');
     fs.mkdirSync(path.join(spDir, 'text'), { recursive: true });
@@ -252,7 +329,7 @@ test('migrateJsonToPg：多空间旧结构迁移（store/全文/注册表）+ �
             status: 'ready',
           },
         },
-      })
+      }),
     );
     fs.writeFileSync(path.join(spDir, 'text', 'p1.txt'), '旧全文内容');
 
@@ -293,7 +370,11 @@ test('migrateJsonToPg：更老的扁平结构（data/papers.json + data/text）�
     fs.mkdirSync(path.join(legacy, 'text'), { recursive: true });
     fs.writeFileSync(
       path.join(legacy, 'papers.json'),
-      JSON.stringify({ version: 2, tags: [], papers: { q1: { id: 'q1', title: '扁平时代', filename: 'q.pdf', status: 'ready' } } })
+      JSON.stringify({
+        version: 2,
+        tags: [],
+        papers: { q1: { id: 'q1', title: '扁平时代', filename: 'q.pdf', status: 'ready' } },
+      }),
     );
     fs.writeFileSync(path.join(legacy, 'text', 'q1.txt'), 'flat 全文');
     const r = await migrateJsonToPg(legacy, repo, {});

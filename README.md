@@ -1,6 +1,8 @@
 # PaperWiki — 本地 arXiv 论文管理站
 
-一个**薄**的本地 Web 服务：扫描 `papers/*.pdf`，自动提取文本、查 arXiv 补全元数据、用 OpenAI 兼容接口（如你的 New API gateway / 智谱 / DeepSeek）生成总结、细粒度标签、粗粒度主题与**概念清单**，并提供一个 Indigo 主题的可筛选/搜索/编辑笔记/独立 PDF 阅读器（**双页、批注高亮/便签/手写**）页面。
+一个**薄**的 Web 服务：扫描论文目录里的 PDF，自动提取文本、查 arXiv 补全元数据、用 OpenAI 兼容接口（如你的 New API gateway / 智谱 / DeepSeek）生成总结、细粒度标签、粗粒度主题与**概念清单**，并提供一个 Indigo 主题的可筛选/搜索/编辑笔记/独立 PDF 阅读器（**双页、批注高亮/便签/手写**）页面。
+
+> **v3.0 起**：数据全量存 **PostgreSQL**（论文元数据 + 全文 + 批注 + 设置），服务以 **Docker Compose** 部署（app + postgres 两容器）；论文 PDF 仍是你磁盘上的普通文件（bind mount 进容器）。
 
 ## 功能
 
@@ -49,15 +51,30 @@ npm start            # node server.js
 # 浏览器打开 http://127.0.0.1:8888
 ```
 
-### 生产（pm2 托管）
+### 生产（Docker Compose，v3 推荐）
 
 ```bash
-npm i -g pm2
-pm2 start ecosystem.config.cjs
-pm2 save && pm2 startup     # 开机自启
-pm2 logs paper-wiki         # 查看日志
-pm2 restart paper-wiki      # 改完 config 或升级代码后重启
+cp .env.example .env        # 填 PAPERS_ROOT（论文根目录）/ POSTGRES_PASSWORD / APP_PORT
+cp config.example.json config.json   # 填 AI 网关
+docker compose up -d --build
+# 浏览器打开 http://127.0.0.1:8888
+docker compose logs -f app  # 查看日志
+docker compose up -d --build app   # 升级代码后重建
 ```
+
+论文目录约定：`PAPERS_ROOT` 是挂载根，**每个空间是其下的一个子目录**（默认空间 = `<PAPERS_ROOT>/default`）。
+
+**从 v2（pm2 + JSON）升级**：
+
+```bash
+pm2 stop paper-wiki
+docker compose up -d postgres
+docker compose run --rm -v ./data:/legacy-data app node scripts/migrate-json-to-pg.js /legacy-data
+# 按脚本打印的指引，把各空间的 PDF 移入 <PAPERS_ROOT>/<spaceId>/ 子目录
+docker compose up -d --build
+```
+
+每日自动导出 JSON 快照到 backups volume（PG→JSON 逃生通道）；`scripts/backup-pg.sh` 可配宿主定时任务做 pg_dump。
 
 > **默认监听 127.0.0.1**（仅本机访问，避免不做鉴权时局域网暴露 AI key 消耗通道）。若需局域网访问，在 config.json 设 `"host": "0.0.0.0"` 或用环境变量 `HOST=0.0.0.0`。生产模式（`NODE_ENV=production`）错误响应会脱敏，不回传内部细节。
 

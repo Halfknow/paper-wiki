@@ -100,7 +100,7 @@ async function migrateJsonToPg(legacyDataDir, repo, opts = {}) {
 
     const rootHint = opts.papersRoot || '<PAPERS_ROOT>';
     instructions.push(
-      `空间「${sp.name}」(${sp.id})：把旧目录 ${sp.legacyPapersDir} 的 PDF 移入 ${path.join(String(rootHint), newDir)}/`
+      `空间「${sp.name}」(${sp.id})：把旧目录 ${sp.legacyPapersDir} 的 PDF 移入 ${path.join(String(rootHint), newDir)}/`,
     );
     results.push({ id: sp.id, papers: paperCount, texts: textCount });
   }
