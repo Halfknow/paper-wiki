@@ -4073,7 +4073,12 @@ function renderSpaceAdmin() {
       </div>`;
     const switchBtn = card.querySelector('[data-act="switch"]');
     if (switchBtn) switchBtn.onclick = async () => { closeSpaceModal(); await switchSpace(s.id); };
-    card.querySelector('[data-act="edit"]').onclick = () => renderSpaceAdminEdit(card, s, isDefault);
+    card.querySelector('[data-act="edit"]').onclick = () => {
+      // 编辑态互斥：先整体重渲染取消其他卡片的编辑态（未保存的改动丢弃），再展开本卡片
+      renderSpaceAdmin();
+      const fresh = root.querySelector(`.sa-card[data-id="${CSS.escape(s.id)}"]`);
+      if (fresh) renderSpaceAdminEdit(fresh, s, isDefault);
+    };
     root.appendChild(card);
   }
 }
