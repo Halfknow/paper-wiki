@@ -219,3 +219,31 @@ test('migrateStore 补星级 rating（starred:true→5、缺省→0、clamp 0-5�
   assert.strictEqual(data.papers.e.rating, 0, 'rating 为准：rating:0 即 0 星');
   assert.strictEqual(data.papers.e.starred, false);
 });
+
+test('backupStoreObject：写 JSON 快照、同日幂等、保留 7 份', async () => {
+  const os = require('node:os');
+  const { backupStoreObject } = require('../lib/store');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pwbak-'));
+  try {
+    // 预置 8 份旧备份（触发裁剪）
+    for (let i = 1; i <= 8; i++) {
+      fs.writeFileSync(path.join(dir, `papers-2020-01-0${i > 7 ? 8 : i}.json`.replace('08', String(i).padStart(2, '0'))), '{}');
+    }
+    const store = { version: 2, tags: [], topics: [], folders: [], concepts: [], settings: {}, papers: { p1: { id: 'p1' } } };
+    await backupStoreObject(dir, store);
+    const files = fs.readdirSync(dir).filter((f) => /^papers-\d{4}-\d{2}-\d{2}\.json$/.test(f));
+    assert.strictEqual(files.length, 7, '超额备份应被裁剪到 7 份');
+    const today = new Date().toISOString().slice(0, 10);
+    const dest = path.join(dir, `papers-${today}.json`);
+    assert.ok(fs.existsSync(dest), '今日快照应存在');
+    const loaded = JSON.parse(fs.readFileSync(dest, 'utf8'));
+    assert.ok(loaded.papers.p1, '快照内容为 store 序列化');
+    // 同日幂等：改 store 再备份，不覆盖当日已有快照
+    store.papers.p2 = { id: 'p2' };
+    await backupStoreObject(dir, store);
+    const again = JSON.parse(fs.readFileSync(dest, 'utf8'));
+    assert.ok(!again.papers.p2, '同日不重复写');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

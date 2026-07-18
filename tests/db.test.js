@@ -210,3 +210,114 @@ test('多空间隔离：同 paper id 各自独立', async () => {
   assert.equal((await repo.loadSpaceStore('b')).papers.p1.title, 'B 空间的');
   await db.close();
 });
+
+// ---- JSON→PG 一次性迁移（scripts/migrate-json-to-pg.js）----
+
+test('migrateJsonToPg：多空间旧结构迁移（store/全文/注册表）+ 幂等', async () => {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  const { migrateJsonToPg } = require('../scripts/migrate-json-to-pg');
+  const { db, repo } = await repoMem();
+  const legacy = fs.mkdtempSync(path.join(os.tmpdir(), 'pwlegacy-'));
+  try {
+    // 旧多空间结构：spaces.json + spaces/default/{papers.json, text/p1.txt}
+    fs.writeFileSync(
+      path.join(legacy, 'spaces.json'),
+      JSON.stringify({
+        version: 1,
+        activeSpaceId: 'default',
+        spaces: [
+          { id: 'default', name: '默认', papersDir: 'papers', scanIntervalMinutes: 5, lastScanAt: 9, createdAt: 1 },
+        ],
+      })
+    );
+    const spDir = path.join(legacy, 'spaces', 'default');
+    fs.mkdirSync(path.join(spDir, 'text'), { recursive: true });
+    fs.writeFileSync(
+      path.join(spDir, 'papers.json'),
+      JSON.stringify({
+        version: 2,
+        tags: ['legacy'],
+        topics: [],
+        folders: [],
+        concepts: [],
+        settings: { ai: { model: 'x' } },
+        papers: {
+          p1: {
+            id: 'p1',
+            title: '老论文',
+            filepath: 'D:\\old\\papers\\paper-one.pdf', // 绝对 Windows 路径 → 只留 basename
+            tags: ['legacy'],
+            status: 'ready',
+          },
+        },
+      })
+    );
+    fs.writeFileSync(path.join(spDir, 'text', 'p1.txt'), '旧全文内容');
+
+    const r = await migrateJsonToPg(legacy, repo, { papersRoot: '/papers' });
+    assert.strictEqual(r.spaces.length, 1);
+    assert.strictEqual(r.spaces[0].papers, 1);
+    assert.strictEqual(r.spaces[0].texts, 1);
+
+    const reg = await repo.loadRegistry();
+    assert.strictEqual(reg.activeSpaceId, 'default');
+    assert.strictEqual(reg.spaces[0].papersDir, 'default', 'papersDir 映射为根内子目录 <spaceId>');
+    const store = await repo.loadSpaceStore('default');
+    assert.strictEqual(store.papers.p1.title, '老论文');
+    assert.strictEqual(store.papers.p1.filename, 'paper-one.pdf', '绝对路径收敛为 basename');
+    assert.strictEqual(store.papers.p1.filepath, undefined, '不落库 filepath');
+    assert.deepStrictEqual(store.tags, ['legacy']);
+    assert.strictEqual(store.settings.ai.model, 'x');
+    assert.strictEqual(await repo.getPaperText('default', 'p1'), '旧全文内容');
+
+    // 幂等：重跑无副作用
+    const r2 = await migrateJsonToPg(legacy, repo, { papersRoot: '/papers' });
+    assert.strictEqual(r2.spaces[0].papers, 1);
+    assert.strictEqual((await repo.loadRegistry()).spaces.length, 1);
+  } finally {
+    fs.rmSync(legacy, { recursive: true, force: true });
+    await db.close();
+  }
+});
+
+test('migrateJsonToPg：更老的扁平结构（data/papers.json + data/text）→ default 空间', async () => {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  const { migrateJsonToPg } = require('../scripts/migrate-json-to-pg');
+  const { db, repo } = await repoMem();
+  const legacy = fs.mkdtempSync(path.join(os.tmpdir(), 'pwlegacy2-'));
+  try {
+    fs.mkdirSync(path.join(legacy, 'text'), { recursive: true });
+    fs.writeFileSync(
+      path.join(legacy, 'papers.json'),
+      JSON.stringify({ version: 2, tags: [], papers: { q1: { id: 'q1', title: '扁平时代', filename: 'q.pdf', status: 'ready' } } })
+    );
+    fs.writeFileSync(path.join(legacy, 'text', 'q1.txt'), 'flat 全文');
+    const r = await migrateJsonToPg(legacy, repo, {});
+    assert.strictEqual(r.spaces[0].id, 'default');
+    const store = await repo.loadSpaceStore('default');
+    assert.strictEqual(store.papers.q1.title, '扁平时代');
+    assert.strictEqual(await repo.getPaperText('default', 'q1'), 'flat 全文');
+  } finally {
+    fs.rmSync(legacy, { recursive: true, force: true });
+    await db.close();
+  }
+});
+
+test('migrateJsonToPg：旧数据不存在时抛错', async () => {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  const { migrateJsonToPg } = require('../scripts/migrate-json-to-pg');
+  const { db, repo } = await repoMem();
+  const empty = fs.mkdtempSync(path.join(os.tmpdir(), 'pwlegacy3-'));
+  try {
+    await assert.rejects(() => migrateJsonToPg(empty, repo, {}), /旧数据不存在/);
+  } finally {
+    fs.rmSync(empty, { recursive: true, force: true });
+    await db.close();
+  }
+});

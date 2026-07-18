@@ -2,9 +2,10 @@ const http = require('http');
 const fs = require('fs');
 const fsp = require('fs/promises');
 const path = require('path');
-const { mergeTags, mergeTopics, mergeConcepts } = require('./lib/store');
+const { mergeTags, mergeTopics, mergeConcepts, backupStoreObject } = require('./lib/store');
 const { createMultiSpaceScanner } = require('./lib/scanner');
 const { createSpaceManager } = require('./lib/spaces');
+const { createDb, createRepository } = require('./lib/db');
 const parser = require('./lib/parser');
 const arxiv = require('./lib/arxiv');
 const ai = require('./lib/ai');
@@ -86,11 +87,35 @@ async function readBody(req) {
 async function main() {
   const config = loadConfig();
   const projectRoot = __dirname;
-  const dataDir = path.join(projectRoot, 'data');
 
-  // 空间管理器：首次启动自动把旧 data/papers.json 迁入 default 空间（幂等）
-  const manager = createSpaceManager(dataDir, projectRoot, config);
+  // v3：PostgreSQL 持久化。PG 不可用时 fail-fast（Docker restart 策略负责重试）。
+  const db = createDb({ connectionString: process.env.DATABASE_URL || config.databaseUrl });
+  try {
+    await db.migrate();
+  } catch (e) {
+    console.error('[fatal] PostgreSQL 不可用（DATABASE_URL/config.databaseUrl）：', e && e.message);
+    process.exit(1);
+  }
+  const repo = createRepository(db);
+
+  // papersRoot：所有空间 papersDir 的挂载根（容器内 /papers；本地开发默认 <项目>/papers）
+  const papersRoot = process.env.PAPERS_ROOT || path.join(projectRoot, 'papers');
+  const backupsDir = process.env.BACKUP_DIR || path.join(projectRoot, 'backups');
+
+  const manager = createSpaceManager({ repo, papersRoot, globalConfig: config });
   await manager.ensureRegistry();
+
+  // 每日 JSON 快照备份（PG→JSON 逃生通道）：遍历空间，把 store 序列化到 backups/<spaceId>/
+  async function backupAllSpaces() {
+    for (const sp of manager.listSpaces()) {
+      try {
+        const store = await manager.getSpaceStore(sp.id);
+        if (store) await backupStoreObject(path.join(backupsDir, sp.id), store);
+      } catch (e) {
+        log('[backup] failed for space', sp.id, e && e.message);
+      }
+    }
+  }
 
   const rateLimitArxiv = createRateLimiter((config.arxiv && config.arxiv.minIntervalMs) || 3000);
   const deps = {
@@ -174,10 +199,10 @@ async function main() {
   });
 
   scanner.start();
-  // 每日定时备份（每 6 小时检查一次，遍历所有空间各自 backup，backupStore 内部按天去重）
-  const backupTimer = setInterval(() => manager.backupAllSpaces().catch(() => {}), 6 * 60 * 60 * 1000);
+  // 每日定时备份（每 6 小时检查一次；backupStoreObject 内部按天去重）
+  const backupTimer = setInterval(() => backupAllSpaces().catch(() => {}), 6 * 60 * 60 * 1000);
   backupTimer.unref();
-  manager.backupAllSpaces().catch(() => {}); // 启动即备一次
+  backupAllSpaces().catch(() => {}); // 启动即备一次
   const port = process.env.PORT || config.port || 8888;
   const host = process.env.HOST || config.host || '127.0.0.1';
   server.listen(port, host, () => {
@@ -197,6 +222,7 @@ async function main() {
     } catch (e) {
       log('shutdown drain error', e && e.message);
     }
+    await db.close().catch(() => {});
     server.close(() => process.exit(0));
     // 兜底：即便 server.close 因 keep-alive 连接卡住，也确保最终退出
     setTimeout(() => process.exit(0), 8000).unref();
