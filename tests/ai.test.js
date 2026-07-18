@@ -13,6 +13,8 @@ const {
   extractConcepts,
   chatPaper,
   applySettingsOverride,
+  callChat,
+  listModels,
 } = require('../lib/ai');
 
 const CFG = { ai: { baseURL: 'http://gw/v1', apiKey: 'k', model: 'm', maxInputChars: 100, timeoutMs: 1000 } };
@@ -259,7 +261,14 @@ test('buildChatMessages 注入论文上下文 + 历史多轮 + 本轮问题 + �
     { role: 'user', content: '第一问' },
     { role: 'assistant', content: '第一答' },
   ];
-  const msgs = buildChatMessages({ title: '我的论文', abstract: '摘要', fulltext: long, history, message: '第二问', maxInputChars: 100 });
+  const msgs = buildChatMessages({
+    title: '我的论文',
+    abstract: '摘要',
+    fulltext: long,
+    history,
+    message: '第二问',
+    maxInputChars: 100,
+  });
   // system（默认提示词）+ 论文上下文 user + 2 条历史 + 本轮问题 = 6 条
   assert.strictEqual(msgs[0].role, 'system');
   assert.ok(msgs[0].content.length > 0, '系统提示词非空');
@@ -273,6 +282,48 @@ test('buildChatMessages 注入论文上下文 + 历史多轮 + 本轮问题 + �
   assert.strictEqual(msgs.length, 5);
 });
 
+test('buildChatMessages 支持 extraPapers（@ 引用多论文）注入独立 context 块', () => {
+  const history = [{ role: 'user', content: '问' }];
+  const extraPapers = [
+    { title: '引用论文A', abstract: 'A摘要', fulltext: 'A'.repeat(10000) },
+    { title: '引用论文B', abstract: 'B摘要', fulltext: 'B'.repeat(100) },
+  ];
+  const msgs = buildChatMessages({
+    title: '主论文',
+    abstract: '主摘要',
+    fulltext: '主全文',
+    history,
+    message: '对比一下',
+    maxInputChars: 24000,
+    extraPapers,
+  });
+  assert.strictEqual(msgs[0].role, 'system');
+  assert.strictEqual(msgs[1].role, 'user');
+  // 主论文 + 引用块都在第一条 user context 里
+  assert.ok(msgs[1].content.includes('主论文'), '上下文含主论文标题');
+  assert.ok(msgs[1].content.includes('引用论文A'), '上下文含引用论文A');
+  assert.ok(msgs[1].content.includes('引用论文B'), '上下文含引用论文B');
+  assert.ok(msgs[1].content.includes('引用了以上 2 篇相关论文'), '提示跨论文对比');
+  // 额外论文全文受 budget 约束（单篇≤6000，合计≤maxInputChars*0.6=14400）
+  // A 的 10000 字会被 cap 到剩余 budget；B 在 A 之后，至少含摘要
+  assert.ok(msgs[1].content.includes('B摘要'), '引用论文B 摘要保留');
+  assert.strictEqual(msgs[2].content, '问');
+  assert.strictEqual(msgs[3].content, '对比一下');
+});
+
+test('buildChatMessages 无 extraPapers 时不注入引用块（向后兼容）', () => {
+  const msgs = buildChatMessages({
+    title: 'T',
+    abstract: 'A',
+    fulltext: 'F',
+    history: [],
+    message: '问',
+    maxInputChars: 100,
+  });
+  assert.ok(!msgs[1].content.includes('引用论文'), '无引用时不出现引用块');
+  assert.ok(!msgs[1].content.includes('相关论文'), '无引用时不出现跨论文提示');
+});
+
 test('chatPaper 调注入 fetch 并返回 Markdown（jsonMode:false，多轮消息透传）', async () => {
   let capturedBody;
   const fakeFetch = async (url, opts) => {
@@ -281,12 +332,135 @@ test('chatPaper 调注入 fetch 并返回 Markdown（jsonMode:false，多轮消�
     return { ok: true, json: async () => ({ choices: [{ message: { content: '论文采用了 MoE 架构' } }] }) };
   };
   const reply = await chatPaper({
-    title: 'T', abstract: 'A', fulltext: 'F', history: [{ role: 'user', content: '问' }], message: '新问',
-    config: CFG, systemPrompt: '你是助手', fetchImpl: fakeFetch,
+    title: 'T',
+    abstract: 'A',
+    fulltext: 'F',
+    history: [{ role: 'user', content: '问' }],
+    message: '新问',
+    config: CFG,
+    systemPrompt: '你是助手',
+    fetchImpl: fakeFetch,
   });
   assert.strictEqual(reply, '论文采用了 MoE 架构');
   assert.strictEqual(capturedBody.response_format, undefined, 'jsonMode:false 不含 response_format');
   assert.strictEqual(capturedBody.messages[0].role, 'system');
   assert.strictEqual(capturedBody.messages[0].content, '你是助手', 'systemPrompt 覆盖默认');
   assert.strictEqual(capturedBody.messages[capturedBody.messages.length - 1].content, '新问', '末条为本轮问题');
+});
+
+// ===== Phase 2/3 新增：模型覆盖 / 多模态消息 / extraModels / listModels =====
+
+test('applySettingsOverride 覆盖 ai.extraModels（数组，!== undefined 即覆盖）', () => {
+  const config = { ai: { baseURL: 'b', apiKey: 'k', model: 'm', extraModels: ['a', 'b'] } };
+  const eff = applySettingsOverride(config, { ai: { extraModels: ['x', 'y'] } });
+  assert.deepStrictEqual(eff.ai.extraModels, ['x', 'y'], 'store.settings.ai.extraModels 覆盖 config');
+  assert.deepStrictEqual(config.ai.extraModels, ['a', 'b'], '原 config 不被修改');
+  // 未设 extraModels 透传 config 原值
+  const eff2 = applySettingsOverride(config, { ai: { model: 'm2' } });
+  assert.deepStrictEqual(eff2.ai.extraModels, ['a', 'b']);
+});
+
+test('callChat 用 chatParams.model 覆盖 config.ai.model', async () => {
+  let capturedBody;
+  const fakeFetch = async (url, opts) => {
+    capturedBody = JSON.parse(opts.body);
+    return { ok: true, json: async () => ({ choices: [{ message: { content: 'ok' } }] }) };
+  };
+  await callChat({
+    messages: [{ role: 'user', content: 'hi' }],
+    config: CFG,
+    fetchImpl: fakeFetch,
+    jsonMode: false,
+    chatParams: { model: 'gpt-4o' },
+  });
+  assert.strictEqual(capturedBody.model, 'gpt-4o', 'chatParams.model 覆盖 config.ai.model');
+  // 无 chatParams.model 时用 config.ai.model
+  await callChat({
+    messages: [{ role: 'user', content: 'hi' }],
+    config: CFG,
+    fetchImpl: fakeFetch,
+    jsonMode: false,
+  });
+  assert.strictEqual(capturedBody.model, 'm', '无覆盖时回退 config.ai.model');
+});
+
+test('callChat 多模态：messages[i].content 为数组时原样透传（视觉问答）', async () => {
+  let capturedBody;
+  const fakeFetch = async (url, opts) => {
+    capturedBody = JSON.parse(opts.body);
+    return { ok: true, json: async () => ({ choices: [{ message: { content: 'ok' } }] }) };
+  };
+  const multimodalContent = [
+    { type: 'text', text: '解释这张图' },
+    { type: 'image_url', image_url: { url: 'data:image/png;base64,iVBORw0K' } },
+  ];
+  await callChat({
+    messages: [{ role: 'user', content: multimodalContent }],
+    config: CFG,
+    fetchImpl: fakeFetch,
+    jsonMode: false,
+  });
+  assert.ok(Array.isArray(capturedBody.messages[0].content), '数组 content 原样透传');
+  assert.strictEqual(capturedBody.messages[0].content[1].type, 'image_url');
+});
+
+test('chatPaper 视觉问答：images 把末尾 user 消息升级为多模态数组', async () => {
+  let capturedBody;
+  const fakeFetch = async (url, opts) => {
+    capturedBody = JSON.parse(opts.body);
+    return { ok: true, json: async () => ({ choices: [{ message: { content: '图中是 MoE 结构' } }] }) };
+  };
+  const reply = await chatPaper({
+    title: 'T',
+    abstract: 'A',
+    fulltext: 'F',
+    history: [],
+    message: '解释这张图',
+    config: CFG,
+    fetchImpl: fakeFetch,
+    images: ['data:image/png;base64,iVBORw0K'],
+  });
+  assert.strictEqual(reply, '图中是 MoE 结构');
+  const last = capturedBody.messages[capturedBody.messages.length - 1];
+  assert.ok(Array.isArray(last.content), '末尾 user content 被升级为数组');
+  assert.strictEqual(last.content[0].type, 'text');
+  assert.strictEqual(last.content[1].type, 'image_url');
+  assert.strictEqual(last.content[1].image_url.url, 'data:image/png;base64,iVBORw0K');
+});
+
+test('listModels 上游可达时返回模型列表（合并 extraModels 去重）', async () => {
+  const fakeFetch = async (url) => {
+    assert.ok(/\/models$/.test(url), '请求 /v1/models');
+    return {
+      ok: true,
+      json: async () => ({ data: [{ id: 'gpt-4o' }, { id: 'glm-4.5v' }, { id: 'm' }] }),
+    };
+  };
+  const r = await listModels({
+    config: { ai: { baseURL: 'http://gw/v1', apiKey: 'k', model: 'm', extraModels: ['gpt-4o', 'claude'] } },
+    fetchImpl: fakeFetch,
+  });
+  assert.strictEqual(r.source, 'upstream');
+  const ids = r.models.map((m) => m.id);
+  assert.ok(ids.includes('gpt-4o'));
+  assert.ok(ids.includes('claude'), 'extraModels 合并进来');
+  assert.strictEqual(r.default, 'm');
+  // 去重：gpt-4o 在上游和 extraModels 都有，只出现一次
+  assert.strictEqual(ids.filter((x) => x === 'gpt-4o').length, 1);
+});
+
+test('listModels 上游不可达时回退 config.ai.model + extraModels（永不抛错）', async () => {
+  const fakeFetch = async () => { throw new Error('network down'); };
+  const r = await listModels({
+    config: { ai: { baseURL: 'http://gw/v1', apiKey: 'k', model: 'm', extraModels: ['a'] } },
+    fetchImpl: fakeFetch,
+  });
+  assert.strictEqual(r.source, 'config');
+  assert.deepStrictEqual(r.models.map((m) => m.id), ['m', 'a']);
+});
+
+test('listModels 无 baseURL 时回退静态候选', async () => {
+  const r = await listModels({ config: { ai: { model: 'm' } }, fetchImpl: async () => { throw new Error('x'); } });
+  assert.strictEqual(r.source, 'config');
+  assert.deepStrictEqual(r.models.map((m) => m.id), ['m']);
 });

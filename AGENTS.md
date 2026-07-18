@@ -19,11 +19,20 @@ server.js              HTTP 入口：静态/PDF/vendor/API 路由 + 启动 scann
 lib/
   store.js   ★         数据模型 v2：papers/tags/topics/folders/concepts/settings
                         原子写、串行锁、v1→v2 迁移、损坏自愈、backupStore 每日备份
+                        **签名不变，被各空间复用**（loadStore(path)/saveStore(path,store)）
+  spaces.js  ★（新）   空间管理器：per-space 独立 store 文件 + papersDir 绑定 + text/backups 隔离
+                        注册表 data/spaces.json（原子写串行锁）；CRUD（createSpace/renameSpace/
+                        changePapersDir/deleteSpace/setActive）；迁移（旧 papers.json→default 空间，幂等）；
+                        resolvePapersDir 收口（替代历史 5 处 path.resolve）；saveStoreBinder 单参闭包
   scanner.js ★         增量扫描 + 串行流水线（parse→arxiv→ai）+ extractConcepts + drain
-  ai.js      ★         OpenAI 兼容 chat 调用：summarize(自由Markdown) / extractTagsTopics(JSON) / extractConcepts
+                        **createScanner 不变**；新增 createMultiSpaceScanner：多空间共享单一串行队列
+                        （遵守陷阱：串行防限速），per-space store/storePath/papersDir，单一定时器取 min 间隔
+  ai.js      ★         OpenAI 兼容 chat 调用：summarize(自由Markdown) / extractTagsTopics(JSON) / extractConcepts / chatPaper(多轮+流式+多模态)
                         含 429/5xx 指数退避重试、JSON 容错解析、applySettingsOverride（store.settings 覆盖 config 的 ai/scan/arxiv/discover）
-  api.js     ★         REST 路由：health/papers/tags/topics/folders/concepts/settings/stats/import/discover；paper DELETE
-                        settings 含 GET（全段生效值+config原值+overrides+system）/ PUT summary-prompt|tags-prompt|ai|scan|arxiv|discover / POST test|reset；PATCH /topics
+                        **v2.7**：callChat/callChatStream 支持 chatParams.model 覆盖 + 多模态 content 数组；新增 listModels（上游 /v1/models + extraModels 回退）
+  api.js     ★         REST 路由：spaces（新）/health/papers/tags/topics/folders/concepts/settings/stats/import/discover；paper DELETE
+                        **ctx = {manager, scanner, globalConfig}**；每路由 resolveSpace(q) 取 {spaceId,store,save}；
+                        ?space= 路由隔离（无参回 active）；settings 读写 space.store.settings
   discover.js ★        按主题发现：检索计划(claude→网关→原始)/多轴召回/S2+OpenAlex 引用量/复合排序/去重
   claude.js  ★         spawn `claude -p --output-format json` 子进程（永不抛错，失败回退网关）
   annotations.js       批注归一化层：pdf.js TypedArray(quadPoints) 经 JSON 退化的双向修复
@@ -31,26 +40,31 @@ lib/
   arxiv.js   ★         Atom 解析、标题相似度匹配、PDF 链接抽取、下载；searchArxiv 支持 sort/分页 + searchArxivMulti
   util.js    ★         sha1、限速器、sleep、标题归一化/相似度、文件名清洗、parseArxivUrl、safeFilename/buildPaperFilename
 public/
-  index.html           三栏布局 + 阅读器(reader-bar批注工具组) + 概念/提示词视图 + 收藏夹/导入模态
-  app.js     ★         主逻辑：路由/列表/详情/收藏夹/主题/概念/多选/导入/键盘导航(1065行)
-  reader.js  ★         pdf.js PDFViewer 阅读器：双页/批注/缩放/续读(1025行)
-  styles.css ★         Indigo 主题（grid + flex 列布局，列表独立滚动，reader 深灰底白页）
-scripts/scan-once.js   不启 HTTP，扫一次处理完队列后退出（初始化/排错）
+  index.html           三栏布局 + 顶栏空间切换器 + 阅读器 + 概念/提示词视图 + 收藏夹/导入/空间管理模态
+  app.js     ★         主逻辑：路由/列表/详情/收藏夹/主题/概念/多选/导入/键盘导航/**空间切换(sp helper/teardown)**
+                        sp(url) 注入器：所有 /api/ /papers/ 请求自动带 ?space=<active>
+  reader.js  ★         pdf.js PDFViewer 阅读器：双页/批注/缩放/续读（PDF URL + chat 经 sp() 带空间）
+  styles.css ★         Indigo 主题（grid + flex 列布局，列表独立滚动，reader 深灰底白页，space-switcher 下拉）
+scripts/scan-once.js   不启 HTTP，扫一次处理完队列后退出；多空间版（--space <id> 或扫全部）
 scripts/e2e-bootstrap.js  e2e 测试数据准备（预置 config/PDF/papers.json）
-tests/*.test.js        node --test，覆盖全部 lib 模块（142 例）
+tests/*.test.js        node --test，覆盖全部 lib 模块（207 例，含 spaces.test.js 22 例 + 多空间 scanner 5 例 + ai 模型/多模态 7 例）
 tests/e2e/             Playwright e2e（reader 渲染 + 高亮往返）
 tests/fixtures/        sample.pdf（2 页带文本层，e2e 用）
-config.json            实际配置（gitignore，含 key）；模板 config.example.json
+config.json            实际配置（gitignore，含 key）；模板 config.example.json（全局 config，作为新空间默认模板 + applySettingsOverride 基底）
 ecosystem.config.cjs   pm2 配置（强制 instances:1 保写锁有效）
-data/                  papers.json + text/ + backups/（运行时，gitignore）
-papers/                你的 PDF（只读扫描，gitignore）
+data/                  spaces.json（注册表）+ spaces/<id>/{papers.json,text,backups}（per-space，运行时，gitignore）
+papers/                你的 PDF（只读扫描，gitignore；default 空间默认绑定）
 .github/workflows/ci.yml  CI：lint+unit / e2e 两 job
 .prettierrc/.eslintrc.json  代码质量（仅格式化 lib/server/tests，public/ 排除）
 ```
 
-★ = v2.2 / v2.3 / v2.4 重点改动文件（v2.4：ai/api/scanner + 前端设置中心 index/app/styles；v2.3：discover/claude/util/arxiv/api/scanner）。
+★ = v2.2 / v2.3 / v2.4 / v2.5 / v2.7 重点改动文件（v2.7：聊天 UI 现代化重构——气泡布局/composer/模型切换器/视觉问答，改 public/{app,reader,index,styles} + lib/{ai,api,scanner}；v2.5：spaces/scanner(createMultiSpaceScanner)/api/server + 前端空间切换器；v2.4：ai/api/scanner + 前端设置中心；v2.3：discover/claude/util/arxiv/api/scanner）。
 
-## 数据模型（store v2，`data/papers.json`）
+## 数据模型（store v2，per-space `data/spaces/<id>/papers.json`）
+
+> v2.5 起引入**多空间**：每个空间是一个完全隔离的库（独立 store 文件 + 独立 papersDir 绑定）。
+> store.js 的 store 形状不变（仍是下面的 v2 结构），只是从单一 `data/papers.json` 变成 per-space
+> `data/spaces/<id>/papers.json`。详见下方「Spaces 架构」。
 
 ```jsonc
 {
@@ -93,6 +107,47 @@ papers/                你的 PDF（只读扫描，gitignore）
 ```
 
 **向后兼容**：`loadStore` → `migrateStore` 自动把 v1 数据补齐为 v2（加 topics/folders/concepts/settings/annotations 字段、规范化每篇论文）。`migrateStore` 只确保 `settings` 是对象，不强行塞 key——新字段靠读取时 `?? default` 兜底。**损坏自愈**：`papers.json` 若是非 JSON 或非对象，自动备份为 `.corrupt-<ts>` 并回空 store。
+
+## Spaces 架构（v2.5）
+
+**物理布局**：
+```
+data/
+  spaces.json                    空间注册表 { version, activeSpaceId, spaces:[{id,name,papersDir,createdAt,scanIntervalMinutes,lastScanAt}] }
+  spaces/<id>/papers.json        per-space 完整 store（复用 lib/store.js，签名不变）
+  spaces/<id>/text/<paperId>.txt per-space 全文
+  spaces/<id>/backups/           per-space 每日备份
+papers/                          default 空间绑定的文件夹（迁移后归属 default）
+```
+
+**核心抽象**（`lib/spaces.js` `createSpaceManager(dataDir, projectRoot, globalConfig)`）：
+- 注册表原子写（串行锁，与 store.js 同模式）；损坏自愈（备份后回 emptyRegistry）
+- `getSpaceStore(id)` / `saveSpaceStore(id, store)`：per-space load/save，**内存缓存**（manager 持有 store 引用，与 scanner 共享）
+- `saveStoreBinder(id)`：返回单参闭包 `(store)=>saveStore(path,store)`，注入 scanner deps.saveStore（**遵守陷阱 1**：scanner 必须调单参 saveStore）
+- `resolveSpacePapersDir(id)`：**统一收口**（替代历史上 5 处各自 `path.resolve(__dirname, config.papersDir)`）；相对路径相对 projectRoot，自动 mkdir
+- `createSpace` / `renameSpace` / `changePapersDir` / `deleteSpace` / `setActiveSpace` / `setScanInterval`
+- `migrateLegacyIfNeeded`：检测旧 `data/papers.json` 存在且无 `spaces.json` 时，一次性迁入 default 空间（move papers.json/text/backups → `data/spaces/default/`），迁前 backup `.pre-spaces-<ts>`，**幂等**
+
+**隔离语义**：paper id = `sha1(内容)`，**同 PDF 跨空间是各自 store 里的独立条目**（符合隔离，非 bug）。tags/topics/folders/concepts/settings 全部 per-space（各空间 store 独立）。
+
+**多空间扫描器**（`lib/scanner.js` `createMultiSpaceScanner({manager, deps})`）：
+- 每空间建一个子扫描器（复用 `createScanner` 的完整流水线闭包），子扫描器的 store/storePath/papersDir 各自指向该空间
+- **共享单一串行队列**（queue 项 = `{spaceId, id}`，pump 串行 await 子扫描器 processOne）——遵守陷阱：串行防压垮本地 AI / 触发 arXiv 限速
+- 子扫描器的内部 enqueue 被 `onEnqueue` 钩子转交到共享队列（子扫描器自身不被 start，内部 queue 无人 pump）
+- 单一定时器：间隔 = `min(所有 scheduled 空间 scanInterval)`，每次 tick `scan({dueOnly:true})` 内部按 per-space lastScanAt 判定哪些到点
+- `reschedule(spaceId, minutes)`：改某空间间隔 + 重算定时器（遵守陷阱 20）
+
+**后端路由**（`lib/api.js` `createApiRouter({manager, scanner, globalConfig})`）：
+- ctx 从 `{store, save, scanner, config}` 变为 `{manager, scanner, globalConfig}`
+- 每路由顶部 `const {spaceId, space, store, save} = await resolveSpace(q)`：`?space=<id>` 指定空间，无参回 active
+- **SSE 路由（chat/discover）**：EventSource 无法设 header，spaceId 走 URL query `?space=`（后端回退 active 保证无参仍工作）
+- 新增 `/api/spaces` 路由组：GET 列表 / POST 创建 / PATCH 改名+改 papersDir / DELETE 删空间（default 拒删，保留物理 PDF）/ POST :id/activate
+
+**前端**（`public/app.js`）：
+- `state.space`（localStorage 持久化 `pw-space`）+ `state.spaces[]`
+- `sp(url)` 注入器：所有 `/api/` `/papers/` 请求自动带 `?space=<active>`（已有 ?space= 不覆盖）；reader.js 经 `window.sp` 复用
+- `switchSpace(id)`：activate → **teardown**（关 chat EventSource、flush notes、关 reader）→ 清空 selected/filter/detail → refresh + renderDetail
+- 顶栏空间切换器下拉（选空间 / 新建 / 管理模态）；管理模态改名+改 papersDir+删除
 
 ## 核心数据流
 
@@ -192,9 +247,17 @@ arXiv 导入 (POST /api/import { url, meta? }):
 
 20. **扫描间隔热改 + arxiv 必须读 effConfig**：scanner 定时器在 `createScanner` 按 `scanIntervalMs` 建一次，改 `store.settings.scanIntervalMinutes` 后必须调 `scanner.reschedule(minutes)`（`PUT /api/settings/scan` 已接线）重置定时器（0=停表），否则间隔改动不生效。另：`processOne` 的 arxiv 补全段读 **`effConfig.arxiv` 而非 `deps.config.arxiv`**（历史上读死 config → 设置面板关 arxiv / 改阈值不生效）；effConfig 在 processOne 顶部算一次，ai/arxiv/discover 共用。
 
+21. **聊天模型切换 + 视觉问答两套流式通道（v2.7）**：
+   - **模型切换**：`GET /api/ai/models` 调上游 `/v1/models`（带 apiKey）+ 合并 `config.ai.extraModels`；前端 `localStorage('pw-chat-model')` 持久化选择，经 `?model=` 透传。**白名单校验**（lib/api.js chat 路由）：必须 ∈ {config.ai.model} ∪ extraModels ∪ 上游 models，否则静默回退默认——**勿跳过白名单直接透传用户输入**（注入风险）。`callChat/callChatStream` 用 `chatParams.model || config.ai.model`；scanner 在有显式覆盖时持久化 `assistant.model`。
+   - **视觉问答走 POST `/api/papers/:id/chat/vision`**（不是 EventSource）：EventSource 无法携带 body（图片 base64），故视觉问答用 fetch + ReadableStream 手动解析 SSE（reader.js `streamVisionFetch`）；纯文本仍走 EventSource（GET /chat）保持兼容。**改流式协议勿合并回单通道**。
+   - **多模态 content**：`chatPaper` 的 `images` 选项把末尾 user 消息 `content` 从字符串升级为数组 `[{type:'text'},{type:'image_url'}]`（OpenAI 格式原样透传）。图片白名单：`data:image/*;base64,` 前缀，限 4 张（防 papers.json 膨胀）。
+   - **框选截图坐标换算**（reader.js `cropRegionToImage`）：pdf.js canvas 按 devicePixelRatio 过采样，canvas.width ≫ CSS 宽度。框选用屏幕坐标（相对 canvas-wrap），裁剪须按 `canvas.width / pageRect.width` 比例换算到 canvas 内部像素，否则截错区域。长边限 1568px（OpenAI 视觉建议）。
+   - **前端两处聊天共用渲染**：app.js 经 `window.*` 暴露 `chatMsgHtml/chatEmptyHtml/renderChatMd/toggleModelSwitcher/getSelectedModel/loadAiModels/pwState` 给 reader.js（ESM 隔离）。改聊天渲染逻辑要同步两处。
+   - **@ 引用浮层 confirmMention 顺序陷阱**：`confirmMention` 必须**先捕获 `onPick` 回调到本地变量**，再 `dispatchEvent('input')`（会触发 `handleMentionTrigger → closeChatMentionPicker()` 把 `_mentionCtx` 置 null），最后调 `onPick`。顺序反了 → 选了论文但 chip 不出现。浮层是 body 级 `position:fixed` 单例，两处聊天共用 `openChatMentionPicker/closeChatMentionPicker/handleMentionKeydown`。
+
 ## 工程化
 
-- **测试**：`npm test`（node --test，142 例，覆盖全 lib）；`npm run test:e2e`（Playwright，reader 渲染 + 高亮往返）。
+- **测试**：`npm test`（node --test，207 例，覆盖全 lib）；`npm run test:e2e`（Playwright，reader 渲染 + 高亮往返）。
 - **代码质量**：`npm run lint`（ESLint，`eqeqeq` 配 `null:ignore` 容纳 `== null`）；`npm run format`/`format:check`（Prettier，**仅 lib/server/tests**，public/ 排除因无分号风格冲突）。
 - **CI**：`.github/workflows/ci.yml` 两个 job——lint-and-unit、e2e。push/PR 触发。
 - **运维**：`GET /api/health` 探活；`NODE_ENV=production` 错误响应脱敏；`backupStore` 每日备份 `data/backups/papers-YYYYMMDD.json`（保留 7 份）。
@@ -205,7 +268,7 @@ arXiv 导入 (POST /api/import { url, meta? }):
 ```bash
 npm start                 # 前台，http://127.0.0.1:8888
 npm run scan              # 只扫一次，不启 HTTP（初始化/排错）
-npm test                  # node --test（142 例）
+npm test                  # node --test（207 例）
 npm run test:e2e          # Playwright（reader + 高亮往返）
 npm run lint              # ESLint
 npm run format:check      # Prettier 检查

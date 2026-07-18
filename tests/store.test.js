@@ -70,16 +70,48 @@ test('saveStore 串行化并发写不交错', async () => {
   assert.strictEqual(final.tags.length, 1);
 });
 
-test('loadStore 遇到损坏的 JSON 时备份并返回空 store，不抛错', async () => {
+test('saveStore 拒绝写入非法 store（字符串/无 papers 段），防污染 papers.json', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pw-saveguard-'));
+  const p = path.join(dir, 'papers.json');
+  // 先写一份有效数据
+  const good = { version: 2, tags: ['t'], topics: [], folders: [], concepts: [], settings: {}, papers: { a: { id: 'a' } } };
+  await saveStore(p, good);
+  // 尝试用各种非法值覆盖（历史 bug：storePath 字符串被当 store 传入）
+  for (const bad of [p, 'somestring', null, 42, [], { tags: ['x'] }]) {
+    await assert.rejects(() => saveStore(p, bad), /拒绝写入|papers 段/);
+  }
+  // 验证：原有效数据未被破坏
+  const final = await loadStore(p);
+  assert.ok(final.papers && final.papers.a, '有效数据应未被非法写入破坏');
+});
+
+test('loadStore 遇到损坏的 JSON 时备份（copyFile 保留原件）并返回空 store，不抛错', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pw-corrupt-'));
   const p = path.join(dir, 'papers.json');
   fs.writeFileSync(p, 'this is not json {{', 'utf8');
   const store = await loadStore(p); // 不应抛错
   assert.deepStrictEqual(store.papers, {});
   assert.deepStrictEqual(store.tags, []);
-  assert.ok(!fs.existsSync(p), '原损坏文件应已被重命名备份');
+  // 新行为：copyFile 备份（保留原文件以便排查），原文件仍在
+  assert.ok(fs.existsSync(p), '原损坏文件应保留（copyFile 备份）');
   const bak = fs.readdirSync(dir).find((f) => f.startsWith('papers.json.corrupt-'));
   assert.ok(bak, '应有 .corrupt- 备份');
+});
+
+test('loadStore 损坏时优先从备份恢复，而非静默回空（防数据丢失）', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pw-recover-'));
+  const p = path.join(dir, 'papers.json');
+  const backupDir = path.join(dir, 'backups');
+  fs.mkdirSync(backupDir, { recursive: true });
+  // 先放一份有效的每日备份（含真实数据）
+  const goodData = { version: 2, tags: ['saved'], topics: [], folders: [], concepts: [], settings: {}, papers: { x: { id: 'x', title: 'Recovered', tags: ['saved'], topics: [], status: 'ready', summary: 'OK' } } };
+  fs.writeFileSync(path.join(backupDir, 'papers-2026-01-01.json'), JSON.stringify(goodData), 'utf8');
+  // 再把主文件搞坏
+  fs.writeFileSync(p, 'CORRUPT', 'utf8');
+  const store = await loadStore(p);
+  // 应回空——但优先从备份恢复（不静默丢数据）
+  assert.ok(store.papers && store.papers.x, '应从备份恢复论文 x，而非回空');
+  assert.strictEqual(store.papers.x.title, 'Recovered');
 });
 
 test('loadStore 遇到「合法 JSON 但非对象」（如被写成路径字符串）时同样恢复', async () => {
@@ -88,7 +120,7 @@ test('loadStore 遇到「合法 JSON 但非对象」（如被写成路径字符�
   // 复现真实事故：文件内容是一个 JSON 字符串字面量（合法 JSON，但不是对象）
   fs.writeFileSync(p, JSON.stringify(p), 'utf8');
   const store = await loadStore(p);
-  assert.deepStrictEqual(store.papers, {});
+  assert.deepStrictEqual(store.papers, {}); // 无备份 → 回空
   assert.strictEqual(store.version, 2);
 });
 

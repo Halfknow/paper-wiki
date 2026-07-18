@@ -2,8 +2,9 @@ const http = require('http');
 const fs = require('fs');
 const fsp = require('fs/promises');
 const path = require('path');
-const { loadStore, saveStore, backupStore, mergeTags, mergeTopics, mergeConcepts } = require('./lib/store');
-const { createScanner } = require('./lib/scanner');
+const { mergeTags, mergeTopics, mergeConcepts } = require('./lib/store');
+const { createMultiSpaceScanner } = require('./lib/scanner');
+const { createSpaceManager } = require('./lib/spaces');
 const parser = require('./lib/parser');
 const arxiv = require('./lib/arxiv');
 const ai = require('./lib/ai');
@@ -84,30 +85,26 @@ async function readBody(req) {
 
 async function main() {
   const config = loadConfig();
-  const storePath = path.join(__dirname, 'data', 'papers.json');
-  const store = await loadStore(storePath);
-  const papersDir = path.resolve(__dirname, config.papersDir || 'papers');
+  const projectRoot = __dirname;
+  const dataDir = path.join(projectRoot, 'data');
+
+  // 空间管理器：首次启动自动把旧 data/papers.json 迁入 default 空间（幂等）
+  const manager = createSpaceManager(dataDir, projectRoot, config);
+  await manager.ensureRegistry();
 
   const rateLimitArxiv = createRateLimiter((config.arxiv && config.arxiv.minIntervalMs) || 3000);
   const deps = {
     parser,
     arxiv: { ...arxiv, cleanFilenameToTitle },
     ai,
-    config,
+    config, // 全局 config（作为各空间 applySettingsOverride 的基底 + 新空间默认模板）
     rateLimitArxiv,
-    saveStore: (s) => saveStore(storePath, s),
     mergeTags,
     mergeTopics,
     mergeConcepts,
   };
-  const scanner = createScanner({
-    store,
-    storePath,
-    papersDir,
-    deps,
-    scanIntervalMs: (config.scanIntervalMinutes ?? 5) * 60 * 1000,
-  });
-  const router = createApiRouter({ store, save: (s) => saveStore(storePath, s), scanner, config });
+  const scanner = createMultiSpaceScanner({ manager, deps });
+  const router = createApiRouter({ manager, scanner, globalConfig: config });
 
   const PUBLIC_DIR = path.join(__dirname, 'public');
   const NM = path.join(__dirname, 'node_modules');
@@ -116,12 +113,16 @@ async function main() {
     try {
       const parsed = new URL(req.url, 'http://localhost');
       const pathname = decodeURIComponent(parsed.pathname);
+      const q = parsed.searchParams;
 
-      // PDF 原文（range 支持）
+      // PDF 原文（range 支持）。多空间：?space=<id> 指定空间，无参回 active 空间。
       if (pathname.startsWith('/papers/')) {
         const rel = pathname.slice('/papers/'.length);
+        const spaceId = q.get('space') || manager.getActiveSpaceId();
+        const papersDir = manager.resolveSpacePapersDir(spaceId);
         const abs = path.resolve(papersDir, rel);
-        if (!abs.startsWith(papersDir)) {
+        // 路径穿越守卫：必须在解析后的 papersDir 内
+        if (!abs.startsWith(papersDir + path.sep) && abs !== papersDir) {
           res.writeHead(400);
           return res.end('Bad path');
         }
@@ -173,10 +174,10 @@ async function main() {
   });
 
   scanner.start();
-  // 每日定时备份 papers.json（每 6 小时检查一次，backupStore 内部按天去重）
-  const backupTimer = setInterval(() => backupStore(storePath).catch(() => {}), 6 * 60 * 60 * 1000);
+  // 每日定时备份（每 6 小时检查一次，遍历所有空间各自 backup，backupStore 内部按天去重）
+  const backupTimer = setInterval(() => manager.backupAllSpaces().catch(() => {}), 6 * 60 * 60 * 1000);
   backupTimer.unref();
-  backupStore(storePath).catch(() => {}); // 启动即备一次
+  manager.backupAllSpaces().catch(() => {}); // 启动即备一次
   const port = process.env.PORT || config.port || 8888;
   const host = process.env.HOST || config.host || '127.0.0.1';
   server.listen(port, host, () => {

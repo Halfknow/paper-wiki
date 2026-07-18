@@ -13,6 +13,20 @@
   <!-- 顶栏 -->
   <header class="topbar">
     <div class="brand"><span class="logo">PW</span><span>PaperWiki</span></div>
+    <!-- 空间切换器：下拉选空间 + 新建 + 管理。每个空间绑定独立文件夹 + 完全隔离的论文/标签/主题/概念/设置 -->
+    <div class="space-switcher" id="space-switcher">
+      <button class="space-current" id="space-current" type="button" title="切换空间（不同空间隔离论文/标签/主题/概念/设置）">
+        <svg class="space-ico" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+        <span class="space-name" id="space-name">默认</span>
+        <svg class="space-chev" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
+      </button>
+      <div class="space-menu" id="space-menu" hidden>
+        <div class="space-list" id="space-list"></div>
+        <div class="space-menu-divider"></div>
+        <button class="space-menu-item" id="space-new" type="button">+ 新建空间</button>
+        <button class="space-menu-item" id="space-manage" type="button">⚙ 管理空间</button>
+      </div>
+    </div>
     <div class="search-wrap">
       <input id="search" type="search" placeholder="搜索标题、摘要、总结、笔记、标签、主题…" autocomplete="off" />
       <span class="search-kbd">Ctrl K</span>
@@ -169,6 +183,7 @@
         <div class="settings-nav-item" data-tab="scan" data-kw="扫描 间隔 定时 scan"><span class="sni"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><polyline points="21 3 21 8 16 8"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/><polyline points="3 21 3 16 8 16"/></svg></span><span>文件扫描</span></div>
         <div class="settings-nav-item" data-tab="arxiv" data-kw="arxiv 元数据 补全 阈值"><span class="sni"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span><span>arXiv 元数据</span></div>
         <div class="settings-nav-item" data-tab="discover" data-kw="发现 discover 召回 权重 semantic scholar openalex"><span class="sni"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><polygon points="16 8 13.5 13.5 8 16 10.5 10.5 16 8"/></svg></span><span>主题发现</span></div>
+        <div class="settings-nav-item" data-tab="translate" data-kw="翻译 划线 bing google translate"><span class="sni"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h7"/><path d="M9 3v2c0 4-2 7-5 8"/><path d="M5 9c0 3 3 5 6 6"/><path d="M13 19l4-9 4 9"/><path d="M14 16h6"/></svg></span><span>划线翻译</span></div>
         <div class="settings-nav-group">数据与系统</div>
         <div class="settings-nav-item" data-tab="taxonomy" data-kw="主题 标签 管理 合并 重命名"><span class="sni"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg></span><span>主题与标签</span></div>
         <div class="settings-nav-item" data-tab="system" data-kw="系统 信息 端口 目录 版本 健康 config"><span class="sni"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="3" width="19" height="7" rx="2"/><rect x="2.5" y="14" width="19" height="7" rx="2"/><line x1="6" y1="6.5" x2="6.01" y2="6.5"/><line x1="6" y1="17.5" x2="6.01" y2="17.5"/></svg></span><span>系统信息</span></div>
@@ -412,6 +427,45 @@
           </div>
         </div>
 
+        <!-- 划线翻译 -->
+        <div class="settings-panel" data-panel="translate" hidden>
+          <div class="settings-head">
+            <div><h2>划线翻译</h2><p>在 PDF 阅读器中划选文字后，翻译结果以浮窗形式就地显示，不跳转外链。「AI 就地翻译」用已配置的 AI 模型流式翻译（保留术语/公式）；「Google 翻译」调用免费端点秒回（无需 Key）；「必应翻译」暂走外链（无稳定免费端点）。选「关闭」则不显示翻译按钮。</p></div>
+          </div>
+          <div class="settings-form">
+            <div class="field-row">
+              <div class="field">
+                <label>翻译引擎 <span class="ovr-badge" id="ovr-translate-engine" hidden>已覆盖</span></label>
+                <select id="translate-engine">
+                  <option value="google">Google 翻译（免费端点，秒回，推荐）</option>
+                  <option value="ai">AI 翻译（流式，保留术语/公式）</option>
+                  <option value="bing">必应 Bing 翻译（外链）</option>
+                  <option value="none">关闭（不显示翻译按钮）</option>
+                </select>
+                <span class="hint" id="translate-engine-hint">AI 用设置中的 AI 接口流式翻译；Google 调免费端点秒回；Bing 暂走外链。</span>
+              </div>
+              <div class="field">
+                <label>目标语言 <span class="ovr-badge" id="ovr-translate-lang" hidden>已覆盖</span></label>
+                <select id="translate-lang">
+                  <option value="zh-CN">简体中文 zh-CN</option>
+                  <option value="zh-TW">繁体中文 zh-TW</option>
+                  <option value="en">英文 en</option>
+                  <option value="ja">日文 ja</option>
+                  <option value="ko">韩文 ko</option>
+                  <option value="fr">法文 fr</option>
+                  <option value="de">德文 de</option>
+                </select>
+                <span class="hint" id="translate-lang-hint">翻译的目标语言代码。</span>
+              </div>
+            </div>
+          </div>
+          <div class="editor-actions">
+            <button class="btn ghost sm danger" id="btn-translate-reset">恢复默认</button>
+            <button class="btn" id="btn-translate-save">保存</button>
+            <span class="save-hint" id="translate-hint"></span>
+          </div>
+        </div>
+
         <!-- 主题与标签管理 -->
         <div class="settings-panel" data-panel="taxonomy" hidden>
           <div class="settings-head">
@@ -534,7 +588,6 @@
 
       <!-- 右：状态 -->
       <div class="rb-group rb-right">
-        <button class="rb-toggle" id="reader-chat" title="AI 对话（边读边问）"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg></button>
         <span class="rb-status" id="reader-saved"></span>
       </div>
     </div>
@@ -546,16 +599,50 @@
       <!-- pdf.js PDFViewer 挂载点：内部自动生成 .page > canvas/textLayer/annotationEditorLayer -->
       <div id="viewer" class="pdfViewer"></div>
     </div>
+    <!-- AI 对话入口 FAB：作为 #reader-view 直接子节点（与滚动容器平级），
+         使 position:absolute 锚定到 position:fixed 的 #reader-view → 不随页面滚动消失。
+         贴右侧、可纵向拖动到任意位置（见 reader.js wireFabDrag）。 -->
+    <button class="reader-chat-fab" id="reader-chat" title="AI 对话（边读边问）" aria-label="AI 对话"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg></button>
     <!-- AI 对话抽屉：右侧浮层，点 #reader-chat 切换，边读边问 -->
     <aside class="reader-chat-drawer" id="reader-chat-drawer" hidden>
+      <!-- 左侧拖拽拉宽 splitter：拖动改变抽屉宽度（持久化到 localStorage） -->
+      <div class="reader-drawer-splitter" id="reader-drawer-splitter" role="separator" aria-orientation="vertical" aria-label="调整 AI 对话面板宽度" tabindex="0"><span></span></div>
       <div class="rcd-head">
-        <span class="rcd-title">AI 对话</span>
-        <button class="rcd-close" id="reader-chat-close" title="收起" aria-label="收起"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+        <span class="rcd-title"><span class="rcd-title-text">AI 对话</span><span class="rcd-model-pill" id="rcd-model-pill" title="当前模型">默认模型</span></span>
+        <div class="rcd-actions">
+          <!-- 大纲/清空按钮由 reader.js 注入到此容器（关闭键之前），保持 [大纲 清空 关闭] 顺序 -->
+          <button class="rcd-close" id="reader-chat-close" title="收起" aria-label="收起"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+        </div>
       </div>
       <div class="rcd-list" id="reader-chat-list"></div>
+      <!-- 引用 badge 区：划线 + Ctrl+L 添加的选中文本以卡片形式展示（非纯文本塞进 textarea） -->
+      <div class="rcd-quotes" id="reader-chat-quotes" hidden></div>
       <div class="rcd-input-row">
-        <textarea id="reader-chat-input" rows="2" placeholder="输入问题，Enter 发送…"></textarea>
-        <button class="btn sm" id="reader-chat-send">发送</button>
+        <div class="chat-composer" id="reader-chat-composer">
+          <div class="chat-composer-context" id="rcd-mentions-row"></div>
+          <textarea id="reader-chat-input" rows="1" placeholder="边读边问…  @ 引用其它论文"></textarea>
+          <div class="chat-composer-footer">
+            <div class="chat-composer-left">
+              <button class="chat-tool-btn" id="rcd-presets-btn" type="button" title="快捷提问">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L3 14h9l-1 8 10-12h-9z"/></svg>
+                <span>快捷</span>
+              </button>
+              <button class="chat-tool-btn" id="rcd-attach-btn" type="button" title="框选图表提问（视觉）">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
+                <span>图表</span>
+              </button>
+            </div>
+            <div class="chat-composer-right">
+              <button class="chat-model-btn" id="rcd-model-btn" type="button" title="切换模型" aria-expanded="false">
+                <span class="cm-name">默认模型</span>
+                <svg class="cm-chev" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+              </button>
+              <button class="chat-send-btn" id="reader-chat-send" type="button" title="发送（Enter）" aria-label="发送">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg>
+              </button>
+            </div>
+          </div>
+        </div>
       </div>
     </aside>
   </div>
@@ -613,6 +700,28 @@
         <span class="spacer"></span>
         <button class="btn ghost sm" id="discover-modal-cancel">关闭</button>
         <button class="btn sm" id="discover-import-btn">导入所选</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 空间管理 模态：列出所有空间，改名 / 改绑定文件夹 / 新建 / 删除 -->
+  <div class="modal-mask" id="space-modal">
+    <div class="modal modal-wide">
+      <h3>管理空间</h3>
+      <p class="modal-hint">每个空间绑定独立的论文文件夹，论文 / 标签 / 主题 / 概念 / 设置 完全隔离。删除空间只清数据，保留物理 PDF 文件。</p>
+      <div class="sa-list" id="space-admin-list"></div>
+      <!-- 新建空间：内联表单（默认折叠为一个按钮，点击展开） -->
+      <div class="sa-create" id="space-create">
+        <button class="btn ghost sm sa-create-btn" id="space-create-toggle" type="button">+ 新建空间</button>
+        <div class="sa-create-form" id="space-create-form" hidden>
+          <input type="text" id="space-create-name" placeholder="空间名称（如：AI 论文）" autocomplete="off" />
+          <input type="text" id="space-create-dir" placeholder="文件夹路径（可选，留空自动生成）" autocomplete="off" />
+          <button class="btn sm" id="space-create-submit" type="button">创建</button>
+        </div>
+      </div>
+      <div class="actions">
+        <span class="spacer"></span>
+        <button class="btn sm" id="space-modal-done">完成</button>
       </div>
     </div>
   </div>

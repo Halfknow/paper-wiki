@@ -10,6 +10,11 @@ import '/vendor/pdfjs-viewer.js';
   const pdfjsLib = globalThis.pdfjsLib;
   const pdfjsViewer = globalThis.pdfjsViewer;
 
+  /** 空间注入器：把 ?space=<active> 加到 /api/ 和 /papers/ URL。
+   *  app.js 在加载后会设 window.sp；这里取引用（调用时读取，避免加载顺序问题）。
+   *  reader 直接 fetch /api/papers/:id 与打开 /papers/<file>，必须带 space 避免串空间。 */
+  const sp = (url) => (typeof window !== 'undefined' && typeof window.sp === 'function' ? window.sp(url) : url);
+
   // 配置 worker（只配一次）
   try { pdfjsLib.GlobalWorkerOptions.workerSrc = '/vendor/pdfjs.worker.js'; } catch {}
 
@@ -34,6 +39,9 @@ import '/vendor/pdfjs-viewer.js';
     copy: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>',
     note: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16v11l-4 4H4z"/><path d="M8 9h8M8 13h4"/></svg>',
     ai: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>',
+    translate: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h7"/><path d="M9 3v2c0 4-2 7-5 8"/><path d="M5 9c0 3 3 5 6 6"/><path d="M13 19l4-9 4 9"/><path d="M14 16h6"/></svg>',
+    // pin 图标：未钉住时斜放（可被清除），钉住时竖直 + 高亮（fill 实心）
+    pin: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17v5"/><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"/></svg>',
   };
 
   function isDenseArrayLike(value) {
@@ -101,7 +109,7 @@ import '/vendor/pdfjs-viewer.js';
       this.paper = null;
       this._chatOpen = false;
       this._chatBusy = false;
-      this.spread = false;                          // 默认单页（双页每页仅半宽，论文小字偏小看不清；单页文字大更清晰）
+      this.spread = true;                           // 默认双页（配合 2x 过采样 + CSS 锐化降采样保证清晰，见 open()/styles.css）
       this.curTool = 'cursor';
       this._selectMode = true;                      // 用户侧“选择”工具：底层借用 pdf.js 可选中模式
       this.curColor = '#fde68a';
@@ -136,6 +144,23 @@ import '/vendor/pdfjs-viewer.js';
       // 键盘：只在“选择”工具下删除选中的批注，避免在高亮/便签/手写模式里误删。
       this._onKey = (e) => {
         if (!this.view.classList.contains('active')) return;
+        // Ctrl+L / Cmd+L：划线时把选中文本作为引用 badge 加入对话框；无划线则切换 AI 边栏
+        if ((e.ctrlKey || e.metaKey) && (e.key === 'l' || e.key === 'L')) {
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          const sel = document.getSelection();
+          const txt = sel ? sel.toString().trim() : '';
+          if (txt && sel && !sel.isCollapsed && this.viewerEl.contains(sel.anchorNode)) {
+            // 有划线：添加引用 badge（不塞进 textarea 纯文本）
+            this.addChatQuote(txt);
+            this.toggleChat(true);
+            this.hideSelectionPopup();
+          } else {
+            // 无划线：切换边栏开合
+            this.toggleChat();
+          }
+          return;
+        }
         if (this.isTypingTarget(e.target || document.activeElement)) return;
         if (e.key === 'Escape') {
           const hadAnnotationSelection = !!(this.uiManager && this.uiManager.hasSelection);
@@ -190,12 +215,515 @@ import '/vendor/pdfjs-viewer.js';
       this.elChatInput = document.getElementById('reader-chat-input');
       this.elChatSend = document.getElementById('reader-chat-send');
       if (!this.elChatBtn || !this.elChatDrawer) return;
-      this.elChatBtn.onclick = () => this.toggleChat();
+      // 点击与拖动共用一按钮：拖动过则吞掉随后的 click（见 wireFabDrag），否则切抽屉。
+      this.elChatBtn.onclick = () => {
+        if (this._fabJustDragged) { this._fabJustDragged = false; return; }
+        this.toggleChat();
+      };
       if (this.elChatClose) this.elChatClose.onclick = () => this.toggleChat(false);
       if (this.elChatSend) this.elChatSend.onclick = () => this.sendChat();
-      if (this.elChatInput) {
-        this.elChatInput.onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); this.sendChat(); } };
+      // 大纲按钮：注入到 rcd-actions 容器（关闭键之前），与详情 tab 一致。
+      if (!this.elOutlineBtn) {
+        const actions = this.elChatDrawer.querySelector('.rcd-actions');
+        const closeBtn = this.elChatDrawer.querySelector('#reader-chat-close');
+        if (actions && closeBtn) {
+          const btn = document.createElement('button');
+          btn.className = 'chat-outline-btn';
+          btn.id = 'reader-chat-outline';
+          btn.title = '问答大纲';
+          btn.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><circle cx="4" cy="6" r="1"/><circle cx="4" cy="12" r="1"/><circle cx="4" cy="18" r="1"/></svg>大纲';
+          // 插到关闭键之前（顺序：大纲 清空 关闭）
+          actions.insertBefore(btn, closeBtn);
+          this.elOutlineBtn = btn;
+        }
       }
+      if (this.elOutlineBtn) this.elOutlineBtn.onclick = () => this.toggleChatOutline();
+      // 清空按钮：注入到 rcd-actions 容器（关闭键之前，大纲按钮之后）。
+      if (!this.elClearBtn) {
+        const actions = this.elChatDrawer.querySelector('.rcd-actions');
+        const closeBtn = this.elChatDrawer.querySelector('#reader-chat-close');
+        if (actions && closeBtn) {
+          const btn = document.createElement('button');
+          btn.className = 'chat-outline-btn';
+          btn.id = 'reader-chat-clear';
+          btn.title = '清空聊天记录';
+          btn.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>清空';
+          actions.insertBefore(btn, closeBtn);
+          this.elClearBtn = btn;
+        }
+      }
+      if (this.elClearBtn) this.elClearBtn.onclick = async () => {
+        if (!confirm('清空这篇论文的聊天记录？')) return;
+        try {
+          await fetch(sp('/api/papers/' + encodeURIComponent(this.paper.id)), {
+            method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat: [] }),
+          }).then((r) => r.json());
+          if (this.paper) this.paper.chat = [];
+          this.renderChatList([]);
+        } catch { /* ignore */ }
+      };
+      // 建议卡片（事件委托）：点即填入并发送
+      if (this.elChatList && !this.elChatList.dataset.suggestWired) {
+        this.elChatList.dataset.suggestWired = '1';
+        this.elChatList.addEventListener('click', (e) => {
+          const chip = e.target.closest('.chat-suggest');
+          if (!chip) return;
+          if (this.elChatInput) { this.elChatInput.value = chip.dataset.q || ''; }
+          this.sendChat();
+        });
+      }
+      if (this.elChatInput) {
+        this.elChatInput.onkeydown = (e) => {
+          const W = window;
+          // @ 引用浮层打开时：↑↓ 导航 / Enter 选中 / Esc 关闭（共享 handleMentionKeydown）
+          if (W.handleMentionKeydown && W.handleMentionKeydown(e, this.elChatInput)) { e.preventDefault(); return; }
+          if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); this.closeMentionPop(); this.sendChat(); }
+        };
+        // 输入框自动增高（1~8 行）+ 发送键空输入禁用 + @ 触发器（实时筛选）
+        this.elChatInput.addEventListener('input', () => { this.autoResizeInput(); this.handleMentionTrigger(); });
+        this.updateSendEnabled();
+      }
+      // 注入预置按钮行 + @ 引用 chip 行（输入框上方）
+      this.injectPresetAndMentionRows();
+      // 注入参数浮层按钮（rcd-actions 里，与大纲/清空并列）+ 浮层
+      this.injectParamsButton();
+      // 模型切换按钮 + 头部徽章同步（Phase 2）
+      this.wireModelSwitcher();
+      // 图表框选提问按钮（Phase 3）
+      this.wireAttachButton();
+      // 抽屉拖拽拉宽 splitter
+      this.wireDrawerSplitter();
+      // FAB 纵向拖动 + 位置持久化
+      this.wireFabDrag();
+    }
+    /** 接线模型切换：composer 按钮 + 头部徽章，复用 app.js 暴露的 toggleModelSwitcher。 */
+    wireModelSwitcher() {
+      this.elModelBtn = document.getElementById('rcd-model-btn');
+      this.elModelPill = document.getElementById('rcd-model-pill');
+      const W = window;
+      const refresh = () => {
+        const sel = W.getSelectedModel ? W.getSelectedModel() : '';
+        const def = (W.pwState && W.pwState.aiModels && W.pwState.aiModels.default) || '默认模型';
+        const m = sel || def;
+        if (this.elModelBtn) { const n = this.elModelBtn.querySelector('.cm-name'); if (n) n.textContent = m; }
+        if (this.elModelPill) { this.elModelPill.textContent = m; this.elModelPill.title = m; }
+      };
+      refresh();
+      if (this.elModelBtn) {
+        this.elModelBtn.onclick = (e) => {
+          e.stopPropagation();
+          if (W.toggleModelSwitcher) W.toggleModelSwitcher(this.elModelBtn);
+          // 切换后稍延迟刷新（toggleModelSwitcher 内部 localStorage 写入是同步的，但为保险起见）
+          setTimeout(refresh, 0);
+          setTimeout(refresh, 300); // 用户选择后
+        };
+      }
+      // 暴露刷新方法供 app.js loadAiModels 完成后调用（state 已注入 window）
+      this._refreshModelUI = refresh;
+    }
+    /** Phase 3：接线「图表」框选提问按钮。
+     *  点击进入框选模式：在 #reader-canvas-wrap 上叠加半透明遮罩 + 拖拽矩形选区，
+     *  松开后从对应 page.canvas 截取该区域为 PNG dataURL，作为附图 chip 塞进 composer。 */
+    wireAttachButton() {
+      this.elAttachBtn = document.getElementById('rcd-attach-btn');
+      this._chatImages = []; // 附图 dataURL 数组（随请求发送）
+      if (!this.elAttachBtn) return;
+      this.elAttachBtn.onclick = () => this.startVisionSelect();
+    }
+    /** 进入框选模式：叠加遮罩 + 监听拖拽。Esc/点遮罩取消。 */
+    startVisionSelect() {
+      if (this._visionOverlay) return; // 已在框选
+      const wrap = this.wrap; // #reader-canvas-wrap
+      if (!wrap) return;
+      const overlay = document.createElement('div');
+      overlay.className = 'vision-select-overlay';
+      overlay.innerHTML = '<div class="vs-hint">在图表上拖拽框选区域 · Esc 取消</div><div class="vs-rect" hidden></div>';
+      wrap.appendChild(overlay);
+      this._visionOverlay = overlay;
+      const rect = overlay.querySelector('.vs-rect');
+      const hint = overlay.querySelector('.vs-hint');
+      let startX = 0, startY = 0, dragging = false;
+      overlay.setPointerCapture && overlay.addEventListener('pointerdown', (e) => {
+        e.preventDefault();
+        dragging = true;
+        try { overlay.setPointerCapture(e.pointerId); } catch {}
+        const wrapRect = wrap.getBoundingClientRect();
+        startX = e.clientX - wrapRect.left;
+        startY = e.clientY - wrapRect.top;
+        rect.style.left = startX + 'px';
+        rect.style.top = startY + 'px';
+        rect.style.width = '0px';
+        rect.style.height = '0px';
+        rect.hidden = false;
+        if (hint) hint.style.display = 'none';
+      });
+      overlay.addEventListener('pointermove', (e) => {
+        if (!dragging) return;
+        const wrapRect = wrap.getBoundingClientRect();
+        const curX = Math.max(0, Math.min(wrapRect.width, e.clientX - wrapRect.left));
+        const curY = Math.max(0, Math.min(wrapRect.height, e.clientY - wrapRect.top));
+        const left = Math.min(startX, curX);
+        const top = Math.min(startY, curY);
+        rect.style.left = left + 'px';
+        rect.style.top = top + 'px';
+        rect.style.width = Math.abs(curX - startX) + 'px';
+        rect.style.height = Math.abs(curY - startY) + 'px';
+      });
+      overlay.addEventListener('pointerup', (e) => {
+        if (!dragging) return;
+        dragging = false;
+        try { overlay.releasePointerCapture(e.pointerId); } catch {}
+        const wrapRect = wrap.getBoundingClientRect();
+        const curX = Math.max(0, Math.min(wrapRect.width, e.clientX - wrapRect.left));
+        const curY = Math.max(0, Math.min(wrapRect.height, e.clientY - wrapRect.top));
+        const left = Math.min(startX, curX);
+        const top = Math.min(startY, curY);
+        const w = Math.abs(curX - startX);
+        const h = Math.abs(curY - startY);
+        // 太小的选区视为误触，取消
+        if (w < 20 || h < 20) { this.endVisionSelect(); return; }
+        try { this.cropRegionToImage(left, top, w, h); } catch (err) { this.setStatus('截图失败：' + (err && err.message), true); }
+        this.endVisionSelect();
+      });
+      // 点遮罩空白处（非拖拽）取消
+      overlay.addEventListener('click', (e) => { if (e.target === overlay) this.endVisionSelect(); });
+      // Esc 取消
+      this._visionKey = (e) => { if (e.key === 'Escape') { this.endVisionSelect(); } };
+      document.addEventListener('keydown', this._visionKey, true);
+    }
+    endVisionSelect() {
+      if (this._visionOverlay) { this._visionOverlay.remove(); this._visionOverlay = null; }
+      if (this._visionKey) { document.removeEventListener('keydown', this._visionKey, true); this._visionKey = null; }
+    }
+    /** 从 PDF page.canvas 截取屏幕坐标 [left,top,w,h]（相对 canvas-wrap）的区域为 PNG dataURL。
+     *  定位选区下覆盖的 page：遍历 viewerEl 的 .page，取与选区中心相交的那个。
+     *  canvas 内部分辨率 != CSS 像素（pdf.js 按 devicePixelRatio 过采样），需按比例换算裁剪坐标。 */
+    cropRegionToImage(left, top, w, h) {
+      const pages = this.viewerEl.querySelectorAll('.page');
+      if (!pages.length) throw new Error('PDF 未渲染');
+      const wrapRect = this.wrap.getBoundingClientRect();
+      const cx = left + w / 2;
+      const cy = top + h / 2;
+      // 选区中心所在的 page
+      let targetPage = null;
+      for (const pg of pages) {
+        const r = pg.getBoundingClientRect();
+        const localX = r.left - wrapRect.left;
+        const localY = r.top - wrapRect.top;
+        if (cx >= localX && cx <= localX + r.width && cy >= localY && cy <= localY + r.height) { targetPage = pg; break; }
+      }
+      if (!targetPage) throw new Error('请框选在页面范围内');
+      const canvas = targetPage.querySelector('canvas');
+      if (!canvas) throw new Error('页面未渲染（请等待加载完成）');
+      const pageRect = targetPage.getBoundingClientRect();
+      // 选区相对 page 的 CSS 坐标
+      const selLeftInPage = left - (pageRect.left - wrapRect.left);
+      const selTopInPage = top - (pageRect.top - wrapRect.top);
+      // CSS → canvas 内部像素（pdf.js canvas.width 可能远大于 CSS 宽度）
+      const scaleX = canvas.width / pageRect.width;
+      const scaleY = canvas.height / pageRect.height;
+      const sx = Math.max(0, Math.floor(selLeftInPage * scaleX));
+      const sy = Math.max(0, Math.floor(selTopInPage * scaleY));
+      const sw = Math.min(canvas.width - sx, Math.max(1, Math.floor(w * scaleX)));
+      const sh = Math.min(canvas.height - sy, Math.max(1, Math.floor(h * scaleY)));
+      // 限制输出尺寸（避免巨图撑爆 base64 / 请求体）；长边 ≤ 1568（OpenAI 视觉建议）
+      const MAX_EDGE = 1568;
+      let outW = sw, outH = sh;
+      if (Math.max(sw, sh) > MAX_EDGE) {
+        const k = MAX_EDGE / Math.max(sw, sh);
+        outW = Math.round(sw * k); outH = Math.round(sh * k);
+      }
+      const out = document.createElement('canvas');
+      out.width = outW; out.height = outH;
+      const ctx = out.getContext('2d');
+      ctx.drawImage(canvas, sx, sy, sw, sh, 0, 0, outW, outH);
+      const dataURL = out.toDataURL('image/png');
+      this._chatImages = this._chatImages || [];
+      this._chatImages.push(dataURL);
+      this.renderAttachChips();
+      this.setStatus('已截图，输入问题后发送（视觉问答）');
+      this.toggleChat(true);
+    }
+    /** 渲染附图 chip 行（composer context 容器内，可移除）。 */
+    renderAttachChips() {
+      const ctx = document.getElementById('rcd-mentions-row');
+      if (!ctx) return;
+      const imgs = this._chatImages || [];
+      // 先移除旧附图 chip，保留 @ 引用 chip
+      ctx.querySelectorAll('.chat-attach-chip').forEach((n) => n.remove());
+      if (!imgs.length) return;
+      const esc = (s) => String(s || '').replace(/"/g, '&quot;');
+      ctx.insertAdjacentHTML('beforeend', imgs.map((src, i) => `<span class="chat-attach-chip"><img src="${esc(src)}" alt="附图 ${i + 1}"/><button class="ca-x" data-idx="${i}" type="button" aria-label="移除附图">×</button></span>`).join(''));
+      ctx.querySelectorAll('.ca-x').forEach((b) => {
+        b.onclick = () => {
+          const idx = Number(b.dataset.idx);
+          this._chatImages.splice(idx, 1);
+          this.renderAttachChips();
+          this.updateSendEnabled();
+        };
+      });
+      this.updateSendEnabled();
+    }
+    /** 注入预置浮层 + 接线 @ 引用 chip 行（HTML 已含 .chat-composer-context 容器）。
+     *  旧版向 .rcd-input-row 注入 presetsRow/mentionsRow；新版复用 #rcd-mentions-row 容器 + 快捷浮层。 */
+    injectPresetAndMentionRows() {
+      const composer = this.elChatDrawer.querySelector('#reader-chat-composer');
+      if (!composer || composer.dataset.injected === '1') return;
+      composer.dataset.injected = '1';
+      const W = window;
+      // 预置浮层（折叠式，点 #rcd-presets-btn 展开）
+      const presets = (W.getChatPresets && W.getChatPresets()) || [];
+      const pop = document.createElement('div');
+      pop.className = 'chat-presets-pop rcd-presets-pop';
+      pop.id = 'rcd-presets-pop';
+      pop.hidden = true;
+      pop.innerHTML = presets.map((pr) => `<button class="chat-preset-item" data-prompt="${(pr.prompt || '').replace(/"/g, '&quot;')}"><span>${(pr.label || '').replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]))}</span><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M13 6l6 6-6 6"/></svg></button>`).join('');
+      composer.appendChild(pop);
+      this.elPresetsPop = pop;
+      const presetsBtn = this.elChatDrawer.querySelector('#rcd-presets-btn');
+      if (presetsBtn) {
+        presetsBtn.addEventListener('click', (e) => { e.stopPropagation(); pop.hidden = !pop.hidden; });
+        document.addEventListener('click', (e) => {
+          if (!pop.hidden && !pop.contains(e.target) && e.target !== presetsBtn && !presetsBtn.contains(e.target)) pop.hidden = true;
+        });
+      }
+      // 预置项点击 = 填入并发送
+      pop.addEventListener('click', (e) => {
+        const btn = e.target.closest('.chat-preset-item');
+        if (!btn) return;
+        if (this.elChatInput) this.elChatInput.value = btn.dataset.prompt || '';
+        pop.hidden = true;
+        this.autoResizeInput();
+        this.sendChat();
+      });
+      // @ 引用 chip 行容器（HTML 已建 #rcd-mentions-row）
+      this.elMentionsRow = this.elChatDrawer.querySelector('#rcd-mentions-row');
+      if (this.elMentionsRow) {
+        this.elMentionsRow.addEventListener('click', (e) => {
+          const x = e.target.closest('.extra-chip-x');
+          if (!x) return;
+          const eid = x.dataset.eid;
+          this._chatExtraIds = (this._chatExtraIds || []).filter((i) => i !== eid);
+          this.renderExtraIdsRow();
+        });
+      }
+      this._chatExtraIds = this._chatExtraIds || [];
+      this.renderExtraIdsRow();
+    }
+    /** 渲染当前 _chatExtraIds 的 chip 行（composer context 容器内）。 */
+    renderExtraIdsRow() {
+      const row = this.elMentionsRow;
+      if (!row) return;
+      const ids = this._chatExtraIds || [];
+      if (!ids.length) { row.innerHTML = ''; return; }
+      const esc = (s) => String(s || '').replace(/[<>&"]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]));
+      row.innerHTML = ids.map((id) => {
+        const W = window;
+        // 标题从 window 查（reader 无 state.papers），查不到用 id
+        let title = id;
+        const found = W.searchPapersForMention && W.searchPapersForMention('', this.paper && this.paper.id);
+        if (found) { const m = found.find((x) => x.id === id); if (m && m.title) title = m.title; }
+        const tc = W.truncateChatTitle ? W.truncateChatTitle(title, 20) : title.slice(0, 20);
+        return `<span class="extra-chip" title="${esc(title)}"><svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>${esc(tc)}<button class="extra-chip-x" data-eid="${esc(id)}" type="button" aria-label="移除引用">×</button></span>`;
+      }).join('');
+    }
+    /** @ 触发器：检测输入框光标前最近的 @，弹论文选择浮层（v2.7 共享版，经 window 桥）。 */
+    handleMentionTrigger() {
+      const input = this.elChatInput;
+      if (!input || !this.paper) return;
+      const W = window;
+      if (!W.openChatMentionPicker) return;
+      const val = input.value;
+      const pos = input.selectionStart != null ? input.selectionStart : val.length;
+      const before = val.slice(0, pos);
+      const atIdx = before.lastIndexOf('@');
+      if (atIdx < 0) { if (W.closeChatMentionPicker) W.closeChatMentionPicker(); return; }
+      const charBefore = atIdx > 0 ? before[atIdx - 1] : ' ';
+      if (charBefore && !/\s/.test(charBefore)) { if (W.closeChatMentionPicker) W.closeChatMentionPicker(); return; }
+      const query = before.slice(atIdx + 1);
+      if (query.includes('\n') || query.length > 40) { if (W.closeChatMentionPicker) W.closeChatMentionPicker(); return; }
+      W.openChatMentionPicker(input, {
+        excludeId: this.paper.id,
+        selectedIds: this._chatExtraIds || [],
+        onPick: (id) => {
+          this._chatExtraIds = this._chatExtraIds || [];
+          if (!this._chatExtraIds.includes(id)) this._chatExtraIds.push(id);
+          this.renderExtraIdsRow();
+          this.autoResizeInput();
+          this.updateSendEnabled();
+        },
+      }, query, atIdx);
+    }
+    closeMentionPop() { const W = window; if (W.closeChatMentionPicker) W.closeChatMentionPicker(); }
+    /** 注入参数浮层按钮（rcd-actions）+ 浮层（复用 app.js 的 wireChatParamsShell / CHAT_PARAM_FIELDS）。 */
+    injectParamsButton() {
+      if (this.elParamsBtn || !this.elChatDrawer) return;
+      const W = window;
+      if (!W.CHAT_PARAM_FIELDS || !W.getChatParams) return; // app.js 未就绪则跳过
+      const actions = this.elChatDrawer.querySelector('.rcd-actions');
+      const closeBtn = this.elChatDrawer.querySelector('#reader-chat-close');
+      if (!actions || !closeBtn) return;
+      const btn = document.createElement('button');
+      btn.className = 'chat-params-btn rcd-params-btn';
+      btn.id = 'rcd-params-btn';
+      btn.type = 'button';
+      btn.title = '模型参数';
+      btn.innerHTML = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg><span class="cp-badge"></span>';
+      actions.insertBefore(btn, closeBtn);
+      this.elParamsBtn = btn;
+      // 浮层
+      const pop = document.createElement('div');
+      pop.className = 'chat-params-pop rcd-params-pop';
+      pop.id = 'rcd-params-pop';
+      pop.hidden = true;
+      const cards = W.CHAT_PARAM_FIELDS.map((f) => {
+        const inputHtml = f.kind === 'range'
+          ? `<input type="range" class="pp-in" min="${f.min}" max="${f.max}" step="${f.step}" disabled />`
+          : `<input type="number" class="pp-in" min="${f.min}" step="${f.step}" placeholder="不限" disabled />`;
+        return `<div class="pp-card" data-key="${f.key}"><div class="pp-card-head"><span class="pp-label">${f.label}</span><b class="pp-val">默认</b><label class="pp-switch-wrap"><input type="checkbox" class="pp-switch" /><span class="pp-track"></span></label></div>${inputHtml}</div>`;
+      }).join('');
+      pop.innerHTML = '<div class="pp-title">模型参数 <span class="pp-hint">仅启用的参数随请求发送</span></div>' + cards;
+      this.elChatDrawer.appendChild(pop);
+      this.elParamsPop = pop;
+      // 接线（复用 app.js 暴露的浮层接线逻辑）
+      if (W.wireChatParamsShell) W.wireChatParamsShell('rcd-params-pop', 'rcd-params-btn');
+      btn.addEventListener('click', (e) => { e.stopPropagation(); pop.hidden = !pop.hidden; });
+      document.addEventListener('click', (e) => {
+        if (!pop.hidden && !pop.contains(e.target) && e.target !== btn && !btn.contains(e.target)) pop.hidden = true;
+      });
+    }
+    /** 输入框自动增高：按内容撑高，限制 1~8 行（超出滚动）。流式期间不动。 */
+    autoResizeInput() {
+      const ta = this.elChatInput;
+      if (!ta || ta.disabled) return;
+      ta.style.height = 'auto';                       // 先重置再测 scrollHeight，否则缩不回
+      const lineH = 21;                                // ≈ 13.5px * 1.55 line-height
+      const maxH = lineH * 8 + 18;                     // 8 行 + 上下 padding
+      ta.style.height = Math.min(ta.scrollHeight, maxH) + 'px';
+      this.updateSendEnabled();
+    }
+    /** 发送键空输入禁用（流式中由 setSending 控制 morphing，此处跳过）。 */
+    updateSendEnabled() {
+      if (!this.elChatSend || this._chatBusy) return;
+      const empty = !(this.elChatInput && (this.elChatInput.value || '').trim()) && !this.hasChatQuotes() && !this.hasChatImages();
+      this.elChatSend.disabled = empty;
+    }
+    hasChatQuotes() { return Array.isArray(this._chatQuotes) && this._chatQuotes.length > 0; }
+    hasChatImages() { return Array.isArray(this._chatImages) && this._chatImages.length > 0; }
+    /** morphing 发送键：busy=true 变红方块停止图标；false 恢复箭头。 */
+    setSending(busy) {
+      const btn = this.elChatSend;
+      if (!btn) return;
+      btn.disabled = false;                            // 停止键始终可点
+      btn.classList.toggle('sending', !!busy);
+      btn.title = busy ? '停止生成' : '发送（Enter）';
+      btn.setAttribute('aria-label', busy ? '停止生成' : '发送');
+      btn.innerHTML = busy
+        ? '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>'
+        : '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg>';
+    }
+    /** FAB（#reader-chat）纵向拖动：贴右侧、可拖到任意纵向位置，不随页面滚动变化。
+     *  与点击共用一按钮：位移 > 4px 才进入拖动，拖动过的本次指针序列会吞掉随后的 click。
+     *  位置持久化到 localStorage:reader-chat-fab-top；resize 时 clamp 进界防跑到屏外。
+     *  机制仿 wireDrawerSplitter（setPointerCapture + body 类禁选文本）。 */
+    wireFabDrag() {
+      const fab = this.elChatBtn;
+      if (!fab || fab.dataset.wired === '1') return;
+      fab.dataset.wired = '1';
+      const FAB_H = 44;                  // 按钮高度（须与 styles.css .reader-chat-fab 一致）
+      const MARGIN = 8;                  // 离视口上下边的最小留白
+      const BAR_H = 54;                  // 顶栏高度（= --rdr-bar-h），FAB 不能盖到顶栏上
+      const KEY = 'reader-chat-fab-top';
+      // clamp：top 合法区间 [顶栏下+留白, 视口高-按钮高-留白]
+      const clampTop = (t) => Math.max(BAR_H + MARGIN, Math.min(window.innerHeight - FAB_H - MARGIN, t));
+      // 恢复上次位置：有持久化值就用（先 clamp），否则保持 CSS 默认居中（不写内联样式）
+      const saved = Number(localStorage.getItem(KEY));
+      if (Number.isFinite(saved) && saved > 0) fab.style.top = clampTop(saved) + 'px';
+      this._fabJustDragged = false;
+      let startY = 0, startTop = 0, moved = false;
+      fab.addEventListener('pointerdown', (e) => {
+        if (e.button != null && e.button !== 0) return;   // 仅左键
+        e.preventDefault();
+        fab.setPointerCapture(e.pointerId);
+        document.body.classList.add('fab-dragging');
+        startY = e.clientY;
+        // 起点取当前实际渲染的 top（px），优先用内联，回退 getBoundingClientRect（相对视口）
+        const inlineTop = parseFloat(fab.style.top);
+        startTop = Number.isFinite(inlineTop) ? inlineTop : fab.getBoundingClientRect().top;
+        moved = false;
+        const move = (ev) => {
+          const dy = ev.clientY - startY;
+          if (!moved && Math.abs(dy) < 4) return;          // 4px 阈值后才算拖动
+          moved = true;
+          fab.classList.add('dragging');
+          fab.style.top = clampTop(startTop + dy) + 'px';
+        };
+        const up = (ev) => {
+          try { fab.releasePointerCapture(ev.pointerId); } catch {}
+          document.body.classList.remove('fab-dragging');
+          fab.classList.remove('dragging');
+          if (moved) {
+            // 持久化最终 top（取内联值，已 clamp）
+            const finalTop = parseFloat(fab.style.top);
+            if (Number.isFinite(finalTop)) localStorage.setItem(KEY, String(Math.round(finalTop)));
+          }
+          this._fabJustDragged = moved;                    // 供 onclick 守卫判断
+          fab.removeEventListener('pointermove', move);
+          fab.removeEventListener('pointerup', up);
+          fab.removeEventListener('pointercancel', up);
+        };
+        fab.addEventListener('pointermove', move);
+        fab.addEventListener('pointerup', up);
+        fab.addEventListener('pointercancel', up);
+      });
+      // 缩窗时把当前 top 重新 clamp 进新视口高度，防按钮跑到屏外
+      this._onFabResize = () => {
+        const cur = parseFloat(fab.style.top);
+        if (Number.isFinite(cur)) fab.style.top = clampTop(cur) + 'px';
+      };
+      window.addEventListener('resize', this._onFabResize);
+    }
+    /** 抽屉左侧 splitter：拖拽改变抽屉宽度（持久化 localStorage:reader-drawer-width）。 */
+    wireDrawerSplitter() {
+      const sp = document.getElementById('reader-drawer-splitter');
+      const drawer = this.elChatDrawer;
+      if (!sp || !drawer || sp.dataset.wired === '1') return;
+      sp.dataset.wired = '1';
+      // 恢复上次宽度
+      const saved = Number(localStorage.getItem('reader-drawer-width'));
+      if (saved && saved > 280) drawer.style.width = saved + 'px';
+      const applyW = (w) => {
+        const min = 300, max = Math.floor(window.innerWidth * 0.7);
+        drawer.style.width = Math.max(min, Math.min(max, w)) + 'px';
+      };
+      sp.onpointerdown = (e) => {
+        e.preventDefault();
+        sp.setPointerCapture(e.pointerId);
+        document.body.classList.add('is-resizing');
+        const move = (ev) => {
+          // 抽屉贴右，宽度 = 视口右边界 - 鼠标 x
+          applyW(window.innerWidth - ev.clientX);
+        };
+        const up = (ev) => {
+          const w = window.innerWidth - ev.clientX;
+          applyW(w);
+          localStorage.setItem('reader-drawer-width', String(Math.round(drawer.getBoundingClientRect().width)));
+          document.body.classList.remove('is-resizing');
+          sp.removeEventListener('pointermove', move);
+          sp.removeEventListener('pointerup', up);
+          sp.removeEventListener('pointercancel', up);
+        };
+        sp.addEventListener('pointermove', move);
+        sp.addEventListener('pointerup', up);
+        sp.addEventListener('pointercancel', up);
+      };
+      sp.onkeydown = (e) => {
+        if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+        e.preventDefault();
+        const cur = drawer.getBoundingClientRect().width;
+        applyW(cur + (e.key === 'ArrowLeft' ? 32 : -32));
+        localStorage.setItem('reader-drawer-width', String(Math.round(drawer.getBoundingClientRect().width)));
+      };
     }
     /** 打开/关闭抽屉；首次打开时拉取已有聊天历史渲染。 */
     async toggleChat(force) {
@@ -203,75 +731,582 @@ import '/vendor/pdfjs-viewer.js';
       this._chatOpen = open;
       this.elChatDrawer.hidden = !open;
       this.elChatBtn.classList.toggle('active', open);
+      this.view.classList.toggle('chat-open', open);   // 抽屉开时隐藏 FAB（避免重叠）
+      if (!open) {
+        this.toggleChatOutline(false);             // 关抽屉时一并关大纲浮窗
+        this.closeMentionPop();                    // 关 @ 引用浮层
+        if (this.elParamsPop) this.elParamsPop.hidden = true; // 关参数浮层
+        if (this._chatClose) { try { this._chatClose(); } catch {} this._chatClose = null; this._chatBusy = false; } // 关闭 EventSource 流
+      }
       if (open && this.elChatList && this.elChatList.dataset.loaded !== '1') {
         this.elChatList.dataset.loaded = '1';
         await this.loadChatHistory();
       }
+      if (open) {
+        // 打开时校准输入框高度 + 发送键状态（草稿可能已存在）
+        this.autoResizeInput();
+        this.updateSendEnabled();
+      }
+    }
+    /** 抽屉的「问答大纲」浮窗：列出每个用户提问（Q1/Q2…），点击实时重查 #reader-chat-list 跳转。
+     *  与 app.js 的 toggleChatOutline 同构；条目从 this.paper 的 chat（或已渲染 DOM 的 user 消息）取。
+     *  open 不传则切换；点 mask/关闭/跳转后关闭。
+     *  v2.7 修复：浮窗 position:fixed 挂 body，锚定视口右上——不再随抽屉滚动消失/跟随。 */
+    toggleChatOutline(open) {
+      const existing = document.querySelector('body > .chat-outline-pop');
+      const mask = document.querySelector('body > .co-mask');
+      // open === false（显式关）：无条件关闭。open === true（显式开）：仅已关时创建。
+      // open == null（toggle）：已开则关、未开则开。
+      if (open === false) { if (existing) existing.remove(); if (mask) mask.remove(); return; }
+      if (existing) {
+        if (open !== true) { existing.remove(); if (mask) mask.remove(); }
+        return;
+      }
+      // 条目来源：优先 DOM 里已渲染的 user 消息（索引=其在 .chat-msg 序列中的位置），与 data-mi 对齐
+      const list = document.getElementById('reader-chat-list');
+      if (!list) return;
+      const rows = [...list.querySelectorAll('.chat-msg')];
+      const items = [];
+      rows.forEach((el) => {
+        if (el.classList.contains('user')) {
+          items.push({ mi: Number(el.getAttribute('data-mi')), q: (el.textContent || '').trim() });
+        }
+      });
+      if (!items.length) { this.setStatus('还没有对话'); return; }
+
+      const pop = document.createElement('div');
+      pop.className = 'chat-outline-pop fixed';
+      pop.innerHTML = `<div class="co-head">
+        <span>问答大纲<span class="co-count"> · ${items.length} 个问题</span></span>
+        <button class="co-close" title="关闭" aria-label="关闭"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="6" y1="18" x2="18" y2="6"/></svg></button>
+      </div><div class="co-list"></div>`;
+      const coList = pop.querySelector('.co-list');
+      const trunc = (s, max = 24) => { const t = (s || '').replace(/\s+/g, ' ').trim(); return t.length > max ? t.slice(0, max) + '…' : (t || '（空问题）'); };
+      items.forEach((it, idx) => {
+        const row = document.createElement('div');
+        row.className = 'co-item';
+        row.innerHTML = `<span class="co-q">Q${idx + 1}</span><span class="co-title"></span>`;
+        row.querySelector('.co-title').textContent = trunc(it.q);
+        row.onclick = () => {
+          // 实时重查目标节点（renderChatList/切论文可能已重建 list）
+          const liveList = document.getElementById('reader-chat-list');
+          const target = liveList && liveList.querySelector('.chat-msg[data-mi="' + it.mi + '"]');
+          if (target) {
+            target.scrollIntoView({ block: 'center', behavior: 'smooth' });
+            target.classList.remove('flash'); void target.offsetWidth; target.classList.add('flash');
+            setTimeout(() => target.classList.remove('flash'), 800);
+          }
+          this.toggleChatOutline(false);
+        };
+        coList.appendChild(row);
+      });
+      pop.querySelector('.co-close').onclick = () => this.toggleChatOutline(false);
+      const m = document.createElement('div');
+      m.className = 'co-mask';
+      m.onclick = () => this.toggleChatOutline(false);
+      document.body.appendChild(m);
+      document.body.appendChild(pop);
     }
     async loadChatHistory() {
       if (!this.paper) return;
       try {
-        const r = await fetch('/api/papers/' + encodeURIComponent(this.paper.id)).then((x) => x.json());
+        const r = await fetch(sp('/api/papers/' + encodeURIComponent(this.paper.id))).then((x) => x.json());
         this.renderChatList((r.data && r.data.chat) || []);
       } catch { /* ignore */ }
     }
     renderChatList(msgs) {
       if (!this.elChatList) return;
       if (!msgs.length) {
-        this.elChatList.innerHTML = '<div class="rcd-empty">向 AI 提问关于这篇论文的问题</div>';
+        this.elChatList.innerHTML = this.chatEmptyHtml();
         return;
       }
-      this.elChatList.innerHTML = msgs.map((m) => this.chatMsgHtml(m)).join('');
+      // 用 app.js 暴露的全宽扁平消息渲染（含 markdown/公式/时间戳/操作按钮）
+      const W = window;
+      const html = msgs.map((m, i) => {
+        const regenerable = i === msgs.length - 1 && m.role === 'assistant';
+        return W.chatMsgHtml ? W.chatMsgHtml(m, i, { regenerable }) : this.chatMsgHtml(m, i);
+      }).join('');
+      // 加滚动到底部 FAB
+      const fab = '<button class="scroll-bottom-btn" id="reader-chat-scroll-bottom" title="滚动到底部" aria-label="滚动到底部"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M19 12l-7 7-7-7"/></svg></button>';
+      this.elChatList.innerHTML = html + fab;
       this.elChatList.scrollTop = this.elChatList.scrollHeight;
+      this.wireDrawerExtras();
     }
-    chatMsgHtml(m) {
+    /** 空状态：提示 + 建议卡片（复用 app.js 的 chatEmptyHtml，或本地兜底） */
+    chatEmptyHtml() {
+      const W = window;
+      if (W.chatEmptyHtml) return W.chatEmptyHtml();
+      return '<div class="rcd-empty">向 AI 提问关于这篇论文的问题</div>';
+    }
+    /** 兜底渲染（app.js 未加载时）：纯文本。正常走 window.chatMsgHtml。 */
+    chatMsgHtml(m, i) {
       const content = (m.content || '').replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c])).replace(/\n/g, '<br/>');
-      return `<div class="chat-msg ${m.role}"><div class="chat-bubble">${content}</div></div>`;
+      const mi = i != null ? ` data-mi="${i}"` : '';
+      return `<div class="chat-msg ${m.role}"${mi}><div class="chat-bubble">${content}</div></div>`;
     }
-    async sendChat() {
-      if (!this.paper || this._chatBusy || !this.elChatInput) return;
-      const message = (this.elChatInput.value || '').trim();
-      if (!message) return;
-      this.elChatInput.value = '';
-      // 乐观追加 user 消息
-      this.appendChat({ role: 'user', content: message });
-      this._chatBusy = true;
-      if (this.elChatSend) { this.elChatSend.disabled = true; this.elChatSend.textContent = '回答中…'; }
-      this.elChatInput.disabled = true;
-      // 等待中显示占位 assistant 气泡
-      const placeholder = document.createElement('div');
-      placeholder.className = 'chat-msg assistant';
-      placeholder.innerHTML = '<div class="chat-bubble rcd-typing">AI 正在思考…</div>';
-      this.elChatList.appendChild(placeholder);
-      this.elChatList.scrollTop = this.elChatList.scrollHeight;
-      try {
-        const r = await fetch('/api/papers/' + encodeURIComponent(this.paper.id) + '/chat', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message }),
-        }).then((x) => x.json());
-        placeholder.remove();
-        if (r.ok) this.appendChat({ role: 'assistant', content: r.data.reply });
-        else this.appendChat({ role: 'assistant', content: '（回答失败：' + (r.error || '未知错误') + '）' });
-      } catch (e) {
-        placeholder.remove();
-        this.appendChat({ role: 'assistant', content: '（网络错误）' });
-      } finally {
-        this._chatBusy = false;
-        if (this.elChatSend) { this.elChatSend.disabled = false; this.elChatSend.textContent = '发送'; }
-        this.elChatInput.disabled = false;
-        this.elChatInput.focus();
+    /** 接线抽屉的滚动FAB + 消息操作（复制/重新生成/编辑/删除/显示原文）+ 代码块复制/展开 */
+    async wireDrawerExtras() {
+      const list = this.elChatList;
+      if (!list) return;
+      const fab = list.querySelector('#reader-chat-scroll-bottom');
+      if (fab) {
+        const update = () => {
+          const near = list.scrollHeight - list.scrollTop - list.clientHeight < 200;
+          fab.classList.toggle('show', !near && list.scrollHeight > list.clientHeight + 50);
+        };
+        list.addEventListener('scroll', update, { passive: true });
+        update();
+        fab.onclick = () => list.scrollTo({ top: list.scrollHeight, behavior: 'smooth' });
+      }
+      // 消息操作 + 代码块操作（事件委托）
+      if (!list.dataset.wired) {
+        list.dataset.wired = '1';
+        list.addEventListener('click', async (e) => {
+          // —— 代码块复制 / 展开 ——
+          const cbCopy = e.target.closest('.cb-copy');
+          if (cbCopy) {
+            const card = cbCopy.closest('.cb-card');
+            const pre = card && card.querySelector('pre');
+            const text = pre ? pre.textContent : '';
+            if (navigator.clipboard && text) navigator.clipboard.writeText(text).then(() => { cbCopy.classList.add('copied'); const sp = cbCopy.querySelector('span'); if (sp) sp.textContent = '已复制'; setTimeout(() => { cbCopy.classList.remove('copied'); const sp2 = cbCopy.querySelector('span'); if (sp2) sp2.textContent = '复制'; }, 1200); }).catch(() => {});
+            return;
+          }
+          const cbExp = e.target.closest('.cb-expand');
+          if (cbExp) { const card = cbExp.closest('.cb-card'); if (card) card.classList.remove('collapsed'); return; }
+          // —— 消息操作 ——
+          const act = e.target.closest('.chat-act');
+          if (!act) return;
+          const mi = Number(act.dataset.mi);
+          if (act.dataset.act === 'copy') {
+            // 从 DOM 取正文（不依赖 this.paper.chat——首次发送前它为空，历史消息复制会失败）。
+            const msg = act.closest('.chat-msg');
+            const content = msg ? msg.querySelector('.chat-content') : null;
+            const text = content ? content.textContent : '';
+            if (navigator.clipboard && text) navigator.clipboard.writeText(text).then(() => this.setStatus('已复制')).catch(() => {});
+          } else if (act.dataset.act === 'regen') {
+            this.regenerate();
+          } else if (act.dataset.act === 'source') {
+            // 切换显示原文 ⇄ 渲染态
+            const node = act.closest('.chat-msg');
+            if (!node) return;
+            const isRaw = node.getAttribute('data-show-source') === '1';
+            node.setAttribute('data-show-source', isRaw ? '0' : '1');
+            act.title = isRaw ? '显示原文' : '显示渲染';
+          } else if (act.dataset.act === 'edit') {
+            // 编辑：把 user 消息内容填回输入框（reader 用简化版：不截断历史，用户改完手动重新提问）
+            const msg = (this.paper && this.paper.chat && this.paper.chat[mi]) || null;
+            if (!msg) return;
+            if (this._chatBusy) { this.setStatus('请等当前回答完成'); return; }
+            if (this.elChatInput) this.elChatInput.value = msg.content || '';
+            this.autoResizeInput();
+            this.setStatus('已载入，修改后按发送');
+          } else if (act.dataset.act === 'delete') {
+            if (this._chatBusy) { this.setStatus('请等当前回答完成'); return; }
+            const chat = (this.paper && this.paper.chat) || [];
+            const msg = chat[mi];
+            if (!msg) return;
+            const cut = [mi];
+            if (msg.role === 'user' && chat[mi + 1] && chat[mi + 1].role === 'assistant') cut.push(mi + 1);
+            if (!confirm('删除这条消息？' + (cut.length > 1 ? '（及其回复也会删除）' : ''))) return;
+            const next = chat.filter((_, idx) => !cut.includes(idx));
+            try {
+              await fetch(sp('/api/papers/' + encodeURIComponent(this.paper.id)), {
+                method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat: next }),
+              }).then((r) => r.json());
+              if (this.paper) this.paper.chat = next;
+              this.renderChatList(next);
+            } catch { /* ignore */ }
+          }
+        });
       }
     }
-    appendChat(m) {
-      if (!this.elChatList) return;
-      // 清掉空态提示
-      const empty = this.elChatList.querySelector('.rcd-empty');
-      if (empty) empty.remove();
-      this.elChatList.insertAdjacentHTML('beforeend', this.chatMsgHtml(m));
-      this.elChatList.scrollTop = this.elChatList.scrollHeight;
+    async sendChat(opts) {
+      opts = opts || {};
+      if (!this.paper || !this.elChatInput) return;
+      // 流式中点发送键（已 morphing 为停止键）= 中止生成
+      if (this._chatBusy) {
+        if (this._chatClose) { try { this._chatClose(); } catch {} }
+        this._chatBusy = false;
+        this._chatClose = null;
+        this.setSending(false);
+        this.updateSendEnabled();
+        this.elChatInput.disabled = false;
+        return;
+      }
+      const regenerate = !!opts.regenerate;
+      const userText = regenerate ? '' : (this.elChatInput.value || '').trim();
+      if (!userText && !regenerate) return;
+      // 合并引用 badge 文本作为上下文（划线 Ctrl+L 添加的），拼到问题前发给 AI
+      const message = regenerate ? '' : (this.getChatQuotesBlock() + userText);
+      // @ 引用论文（输入框 @ 添加的其它论文，联合问答）
+      const extraIds = regenerate ? [] : (this._chatExtraIds || []).slice();
+      // Phase 3 附图（框选截图）：本次发送携带，发送后清空 chip
+      const sendImages = regenerate ? [] : (this._chatImages || []).slice();
+      const useVision = sendImages.length > 0;
+      this._chatBusy = true;
+      const myPaperId = this.paper.id;                 // 锁定本次请求所属论文，切换后响应作废
+      const reasoningStart = Date.now();
+      // 关闭上一个 EventSource（若有），再开新的。_chatClose 是 streamChatFetch 返回的中止函数。
+      if (this._chatClose) { try { this._chatClose(); } catch {} }
+      let myClose = null;
+      // 立即清输入 + 锁定（状态先于 UI）+ 清空引用 badge / 附图（已发送）
+      if (!regenerate) {
+        this.elChatInput.value = '';
+        this._chatQuotes = []; this.renderQuotes();   // 引用已并入消息发送，清空 badge
+        this._chatExtraIds = []; this.renderExtraIdsRow(); // @ 引用已发送，清空 chip
+        this._chatImages = []; this.renderAttachChips();   // 附图已发送，清空 chip
+      }
+      // 发送键 morphing：变红方块停止
+      this.setSending(true);
+      this.elChatInput.disabled = true;
+      // 乐观追加 user 消息（重新生成跳过）。视觉问答时回显附图缩略图。
+      if (!opts.skipUserMsg) {
+        const userMsg = { role: 'user', content: message };
+        if (extraIds.length) userMsg.extraIds = extraIds;
+        if (sendImages.length) userMsg.images = sendImages;
+        this.appendChatById('reader-chat-list', userMsg);
+      }
+      // 占位 assistant 消息：skeleton shimmer（带 req 标记，首 token 后逐字 renderMd 重渲）
+      const W = window;
+      const placeholder = document.createElement('div');
+      placeholder.className = 'chat-msg assistant';
+      placeholder.dataset.req = '1';
+      const roleHtml = W.CHAT_ROLE_ICO
+        ? `<div class="chat-role"><span class="chat-role-ico">${W.CHAT_ROLE_ICO.assistant}</span><span class="chat-role-label">AI</span></div><div class="chat-body"><div class="chat-bubble thinking-skeleton"><div class="chat-content thinking"><span class="sk-line"></span><span class="sk-line"></span><span class="sk-line"></span></div></div></div>`
+        : '<div class="chat-body"><div class="chat-bubble thinking-skeleton"><div class="chat-content thinking"><span class="sk-line"></span><span class="sk-line"></span><span class="sk-line"></span></div></div></div>';
+      placeholder.innerHTML = roleHtml;
+      const phList = document.getElementById('reader-chat-list');
+      if (phList) { phList.appendChild(placeholder); phList.scrollTop = phList.scrollHeight; }
+
+      // 流式渲染：用 renderMd（markdown/公式），与详情 tab 一致
+      let accumulated = '';
+      let accumulatedReasoning = '';  // 思考过程（reasoning_content）
+      const getBubble = () => {
+        const livePh = document.querySelector('#reader-chat-list .chat-msg.assistant[data-req="1"]');
+        return livePh ? livePh.querySelector('.chat-bubble') : null;
+      };
+      const renderMdSafe = (md) => (W.renderMd ? W.renderMd(md) : (md || '').replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c])).replace(/\n/g, '<br/>'));
+      // 智能「跟随底部」：用户向上滚阅读时，新 token 不再把视图拽到底；滚回底部附近则恢复跟随。
+      const listEl = document.getElementById('reader-chat-list');
+      let stickBottom = true;
+      const onStreamScroll = () => {
+        if (!listEl) return;
+        const near = listEl.scrollHeight - listEl.scrollTop - listEl.clientHeight < 80;
+        stickBottom = near;
+      };
+      if (listEl) listEl.addEventListener('scroll', onStreamScroll, { passive: true });
+      // 仅在 stickBottom 时滚到底；发给 UI 的状态由 scroll 监听维护
+      const scrollIfStuck = () => { if (listEl && stickBottom) listEl.scrollTop = listEl.scrollHeight; };
+      const renderAccumulated = () => {
+        const bubble = getBubble();
+        if (!bubble) return;
+        // 首 token：skeleton → streaming 气泡
+        bubble.classList.remove('thinking-skeleton');
+        bubble.classList.add('streaming');
+        let content = bubble.querySelector('.chat-content');
+        if (!content) { content = document.createElement('div'); content.className = 'chat-content streaming'; bubble.appendChild(content); }
+        content.classList.remove('thinking');
+        content.classList.add('streaming');
+        content.innerHTML = renderMdSafe(accumulated);
+        scrollIfStuck();
+      };
+      // 思考过程渲染：在正文上方显示可折叠的思考区
+      const renderReasoning = () => {
+        const livePh = document.querySelector('#reader-chat-list .chat-msg.assistant[data-req="1"]');
+        if (!livePh) return;
+        const body = livePh.querySelector('.chat-body');
+        if (!body) return;
+        let reasoningEl = body.querySelector('.chat-reasoning');
+        if (!reasoningEl) {
+          reasoningEl = document.createElement('div');
+          reasoningEl.className = 'chat-reasoning';
+          body.insertBefore(reasoningEl, body.firstChild);
+        }
+        reasoningEl.innerHTML = '<details open><summary>思考中…</summary><div class="chat-reasoning-body"></div></details>';
+        const rb = reasoningEl.querySelector('.chat-reasoning-body');
+        if (rb) { rb.textContent = accumulatedReasoning; }
+        scrollIfStuck();
+      };
+      const finish = (restore) => {
+        const stale = !(this.paper && this.paper.id === myPaperId);
+        const ph = document.querySelector('#reader-chat-list .chat-msg.assistant[data-req="1"]');
+        if (ph) ph.removeAttribute('data-req');
+        if (listEl) listEl.removeEventListener('scroll', onStreamScroll);
+        if (!stale) {
+          this._chatBusy = false;
+          this._chatClose = null;
+          this.setSending(false);
+          this.updateSendEnabled();
+          this.elChatInput.disabled = false;
+          if (restore) { try { this.elChatInput.focus(); } catch {} }
+        }
+      };
+
+      myClose = this.streamChatFetch(myPaperId, message, {
+        regenerate,
+        extraIds: extraIds.length ? extraIds : undefined,
+        images: useVision ? sendImages : undefined,
+        onToken: (t, kind) => {
+          if (!(this.paper && this.paper.id === myPaperId)) { try { myClose(); } catch {} return; }
+          if (kind === 'reasoning') {
+            // 思考过程：实时显示在可折叠思考区，不计入正式回答
+            accumulatedReasoning += t;
+            renderReasoning();
+            return;
+          }
+          accumulated += t;
+          renderAccumulated();
+        },
+        onDone: (data) => {
+          if (!(this.paper && this.paper.id === myPaperId)) return;
+          // 用服务端权威 chat 更新本地（供复制/重新生成读取）
+          if (data && Array.isArray(data.chat)) this.paper.chat = data.chat;
+          // 重渲最后一条 assistant 为定型结构（含时间戳 + 复制 + 重新生成按钮），补全流式占位缺失的字段
+          if (data && data.reply != null) {
+            accumulated = data.reply;
+            const W = window;
+            const livePh = document.querySelector('#reader-chat-list .chat-msg.assistant[data-req="1"]');
+            if (livePh && W.chatMsgHtml && this.paper.chat && this.paper.chat.length) {
+              const lastMsg = this.paper.chat[this.paper.chat.length - 1];
+              const mi = Number(livePh.dataset.mi || 0);
+              const hadReasoning = !!accumulatedReasoning;
+              const tmp = document.createElement('div');
+              tmp.innerHTML = W.chatMsgHtml(lastMsg, mi, { regenerable: true });
+              if (tmp.firstElementChild) {
+                livePh.replaceWith(tmp.firstElementChild);
+                // 思考过程：完成后自动收起 + 显示「思考了 X 秒」
+                if (hadReasoning) {
+                  const newBody = tmp.firstElementChild.querySelector('.chat-body');
+                  if (newBody) {
+                    const dur = Math.max(1, Math.round((Date.now() - reasoningStart) / 1000));
+                    const rEl = document.createElement('div');
+                    rEl.className = 'chat-reasoning';
+                    rEl.innerHTML = `<details><summary><span class="rs-label">思考过程</span><span class="rs-duration">思考了 ${dur} 秒</span></summary><div class="chat-reasoning-body"></div></details>`;
+                    rEl.querySelector('.chat-reasoning-body').textContent = accumulatedReasoning;
+                    newBody.insertBefore(rEl, newBody.firstChild);
+                  }
+                }
+              }
+            } else {
+              renderAccumulated();
+            }
+          }
+          if (!accumulated) {
+            const bubble = getBubble();
+            if (bubble) {
+              bubble.classList.remove('thinking-skeleton', 'streaming');
+              let cc = bubble.querySelector('.chat-content');
+              if (!cc) { cc = document.createElement('div'); cc.className = 'chat-content'; bubble.appendChild(cc); }
+              cc.classList.remove('thinking', 'streaming');
+              cc.textContent = '（无回复）';
+            }
+          }
+          finish(true);
+        },
+        onFail: (err) => {
+          if (!(this.paper && this.paper.id === myPaperId)) return;
+          if (!accumulated) {
+            const bubble = getBubble();
+            if (bubble) {
+              bubble.classList.remove('thinking-skeleton', 'streaming');
+              let cc = bubble.querySelector('.chat-content');
+              if (!cc) { cc = document.createElement('div'); cc.className = 'chat-content'; bubble.appendChild(cc); }
+              cc.classList.remove('thinking', 'streaming');
+              cc.textContent = '（' + (err || 'AI 回答失败') + '）';
+            }
+          }
+          finish(true);
+        },
+      });
+      this._chatClose = myClose;
     }
+    /** 重新生成最后一条 assistant 回答 */
+    regenerate() {
+      if (this._chatBusy) { this.setStatus('请等当前回答完成'); return; }
+      const list = this.elChatList;
+      if (!list) return;
+      const msgs = [...list.querySelectorAll('.chat-msg')];
+      const lastUser = [...msgs].reverse().find((m) => m.classList.contains('user'));
+      const lastAssistant = [...msgs].reverse().find((m) => m.classList.contains('assistant'));
+      if (lastAssistant) lastAssistant.remove();
+      if (lastUser) lastUser.remove();
+      this.sendChat({ regenerate: true, skipUserMsg: true });
+    }
+    /** 流式读取 AI 对话（抽屉版）：GET /api/papers/:id/chat?message=（EventSource，discover 同款）。
+     *  与 app.js streamChatFetch 同构（reader.js 是独立 ESM，无法 import app.js，故复制一份）。
+     *  返回 close() 中止函数。POST+fetch SSE 在浏览器有挂起问题，故统一用 EventSource。
+     *  事件 token/done/fail（避免 error 防 EventSource 原生 error 误判 + 自动重连）。 */
+    streamChatFetch(paperId, message, { onToken, onDone, onFail, regenerate, extraIds, images } = {}) {
+      const W = window;
+      // Phase 3 视觉问答：带图片走 POST /chat/vision（fetch + ReadableStream，EventSource 无法带 body）
+      if (Array.isArray(images) && images.length) {
+        return this.streamVisionFetch(paperId, message, { onToken, onDone, onFail, regenerate, extraIds, images });
+      }
+      const params = new URLSearchParams();
+      if (message) params.set('message', message);
+      if (regenerate) params.set('regenerate', '1');
+      // @ 引用论文（逗号分隔透传）
+      if (Array.isArray(extraIds) && extraIds.length) params.set('extraIds', extraIds.join(','));
+      // 透传模型参数（复用 app.js 暴露的 getChatParams）
+      const cp = (W.getChatParams && W.getChatParams()) || {};
+      for (const k of ['thinking', 'temperature', 'topP', 'maxTokens']) {
+        if (cp[k] != null && cp[k] !== '' && !Number.isNaN(cp[k])) params.set(k, String(cp[k]));
+      }
+      // Phase 2 模型切换：透传选中模型（复用 app.js 暴露的 getSelectedModel）
+      const selModel = W.getSelectedModel ? W.getSelectedModel() : '';
+      if (selModel) params.set('model', selModel);
+      const url = sp('/api/papers/' + encodeURIComponent(paperId) + '/chat?' + params.toString());
+      const es = new EventSource(url);
+      let finished = false;
+      es.addEventListener('token', (e) => {
+        let obj = null;
+        try { obj = JSON.parse(e.data); } catch { return; }
+        if (obj && obj.t && typeof onToken === 'function') onToken(obj.t, obj.kind || 'content');
+      });
+      es.addEventListener('done', (e) => {
+        finished = true;
+        try { es.close(); } catch {}
+        let obj = {};
+        try { obj = JSON.parse(e.data); } catch {}
+        if (typeof onDone === 'function') onDone(obj);
+      });
+      es.addEventListener('fail', (e) => {
+        finished = true;
+        try { es.close(); } catch {}
+        let msg = 'AI 回答失败';
+        try { msg = JSON.parse(e.data).error || msg; } catch {}
+        if (typeof onFail === 'function') onFail(msg);
+      });
+      es.onerror = () => {
+        if (finished) return;
+        finished = true;
+        try { es.close(); } catch {}
+        if (typeof onFail === 'function') onFail('连接中断，请重试');
+      };
+      return () => { finished = true; try { es.close(); } catch {} };
+    }
+    /** Phase 3 视觉问答流式：POST /api/papers/:id/chat/vision（fetch + ReadableStream 解析 SSE）。
+     *  EventSource 无法携带 body（图片 base64），故视觉问答走 fetch 流。
+     *  事件协议与 GET /chat 一致（token/done/fail），手动按 \n\n 分块解析。
+     *  返回 close() 中止函数（AbortController.abort）。 */
+    streamVisionFetch(paperId, message, { onToken, onDone, onFail, regenerate, extraIds, images } = {}) {
+      const W = window;
+      const cp = (W.getChatParams && W.getChatParams()) || {};
+      const chatParams = {};
+      for (const k of ['thinking', 'temperature', 'topP']) {
+        if (cp[k] != null && cp[k] !== '' && !Number.isNaN(cp[k])) chatParams[k] = Number(cp[k]);
+      }
+      if (cp.maxTokens != null && cp.maxTokens !== '' && !Number.isNaN(cp.maxTokens)) chatParams.maxTokens = parseInt(cp.maxTokens, 10);
+      const selModel = W.getSelectedModel ? W.getSelectedModel() : '';
+      if (selModel) chatParams.model = selModel;
+      const body = JSON.stringify({
+        message: message || '',
+        regenerate: !!regenerate,
+        extraIds: Array.isArray(extraIds) && extraIds.length ? extraIds : undefined,
+        images: Array.isArray(images) ? images : [],
+        chatParams,
+      });
+      const url = sp('/api/papers/' + encodeURIComponent(paperId) + '/chat/vision');
+      const ctrl = new AbortController();
+      let finished = false;
+      const close = () => { finished = true; try { ctrl.abort(); } catch {} };
+      (async () => {
+        let res;
+        try {
+          res = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body,
+            signal: ctrl.signal,
+          });
+        } catch (e) {
+          if (!finished && typeof onFail === 'function') onFail('连接中断，请重试');
+          return;
+        }
+        if (!res.ok) {
+          // 视觉模型不可用 / 鉴权失败等：读错误信息
+          let msg = '视觉问答失败（HTTP ' + res.status + '）';
+          try { const j = await res.json(); if (j && j.error) msg = j.error; } catch {}
+          // 常见：当前模型不支持图片输入
+          if (res.status === 400 || res.status === 404 || res.status === 422) {
+            msg = msg + '。当前模型可能不支持图片输入，请在右下角切换到视觉模型（如 gpt-4o / glm-4.5v）。';
+          }
+          if (typeof onFail === 'function') onFail(msg);
+          return;
+        }
+        const reader = res.body && res.body.getReader ? res.body.getReader() : null;
+        if (!reader) { if (typeof onFail === 'function') onFail('浏览器不支持流式读取'); return; }
+        const decoder = new TextDecoder('utf-8');
+        let buffer = '';
+        // 简易 SSE 解析：块间 \n\n 分隔，每块形如 `event: xx\ndata: {...}`
+        const dispatch = (block) => {
+          const lines = block.split('\n');
+          let event = 'message', dataStr = '';
+          for (const ln of lines) {
+            if (ln.startsWith('event:')) event = ln.slice(6).trim();
+            else if (ln.startsWith('data:')) dataStr += ln.slice(5).trim();
+          }
+          if (!dataStr) return;
+          let obj = null; try { obj = JSON.parse(dataStr); } catch { return; }
+          if (event === 'token' && obj && obj.t && typeof onToken === 'function') onToken(obj.t, obj.kind || 'content');
+          else if (event === 'done') { finished = true; if (typeof onDone === 'function') onDone(obj); }
+          else if (event === 'fail') { finished = true; if (typeof onFail === 'function') onFail((obj && obj.error) || 'AI 回答失败'); }
+        };
+        try {
+          for (;;) {
+            const chunk = await reader.read();
+            if (chunk.done) break;
+            buffer += decoder.decode(chunk.value, { stream: true });
+            let sep;
+            while ((sep = buffer.indexOf('\n\n')) >= 0) {
+              const block = buffer.slice(0, sep);
+              buffer = buffer.slice(sep + 2);
+              dispatch(block);
+              if (finished) break;
+            }
+            if (finished) break;
+          }
+        } catch (e) {
+          if (!finished && typeof onFail === 'function') onFail('连接中断，请重试');
+        }
+      })();
+      return close;
+    }
+    /** 按 elementId 实时重查目标节点追加消息（绝不用 stale 闭包引用）。
+     *  reader 抽屉虽无 10s 定时刷新，但切换论文/重开抽屉会清空 list，故同样用实时重查保稳健。
+     *  全宽扁平结构：优先用 app.js 暴露的 window.chatMsgHtml（含 markdown/角色/时间戳），兜底本地纯文本。 */
+    appendChatById(elementId, m) {
+      const list = document.getElementById(elementId);
+      if (!list) return;
+      const empty = list.querySelector('.rcd-empty, .chat-empty');
+      if (empty) empty.remove();
+      const mi = list.querySelectorAll('.chat-msg').length;
+      const W = window;
+      const html = W.chatMsgHtml ? W.chatMsgHtml(m, mi) : this.chatMsgHtml(m, mi);
+      // 保留 FAB（若存在）
+      const fab = list.querySelector('.scroll-bottom-btn');
+      if (fab) fab.insertAdjacentHTML('beforebegin', html);
+      else list.insertAdjacentHTML('beforeend', html);
+      list.scrollTop = list.scrollHeight;
+    }
+    appendChat(m) { this.appendChatById('reader-chat-list', m); }
 
     async open(paper, readProgress, annotations) {
       this.paper = paper;
+      // 文字清晰度（综合 SO 高赞方案的完整技术，核心是「过采样 + 高质量降采样」缺一不可）：
+      //   ① pdf.js 的 OutputScale 直接读 window.devicePixelRatio 决定 canvas 内部分辨率。
+      //     双页模式每页 CSS 显示仅 ~675px，论文密集小字若 canvas 也只 675px(1:1) 会发糊。
+      //     需让 canvas 渲染到更高分辨率(2x=1350px)，再由浏览器缩小到 675px 显示。
+      //   ② 但仅过采样不够——浏览器默认 bilinear(平滑)缩小会把文字边缘糊化(之前 2x 仍糊的根因)。
+      //     必须配合 CSS image-rendering/text-rendering(见 styles.css .page canvas) 用高质量算法降采样。
+      //   ③ 取 max(真实 dpr, 2)：dpr=1 普通屏→2x 过采样刚好不锯齿；dpr≥2 高清屏→用真实值不浪费不过锐。
+      //     (固定 3x 在 dpr=1 屏会过度缩小失真出锯齿。)
+      this._origDpr = window.devicePixelRatio;
+      const targetDpr = Math.max(window.devicePixelRatio, 2);
+      if (window.devicePixelRatio !== targetDpr) {
+        try { Object.defineProperty(window, 'devicePixelRatio', { value: targetDpr, configurable: true }); }
+        catch { /* 部分浏览器不可写，忽略 */ }
+      }
       readProgress = readProgress || {};
       this._pendingAnnotations = annotations || null;
       this._annotationsDirty = false;
@@ -289,7 +1324,8 @@ import '/vendor/pdfjs-viewer.js';
       const loadingEl = this.wrap.querySelector('#reader-loading');
       if (loadingEl) loadingEl.classList.remove('done');
 
-      const url = '/papers/' + encodeURIComponent(paper.filename);
+      // PDF 原文：必须带 ?space= 让 server.js 从该空间绑定的文件夹解析（filename 跨空间可能重复）
+      const url = sp('/papers/' + encodeURIComponent(paper.filename));
       try {
         const task = pdfjsLib.getDocument({ url, isEvalSupported: false, disableAutoFetch: false });
         this.doc = await task.promise;
@@ -420,6 +1456,7 @@ import '/vendor/pdfjs-viewer.js';
 
       this.setupSelectionPopup();
       this.setupAnnotationPointerGuards();
+      this.loadTranslateConfig();   // 拉划线翻译设置（显隐翻译按钮）
 
       this.linkService.setDocument(this.doc);
       await this.viewer.setDocument(this.doc);
@@ -805,6 +1842,7 @@ import '/vendor/pdfjs-viewer.js';
           '<span class="rsp-swatches">' + swatches + '</span>' +
           '<span class="rsp-sep"></span>' +
           '<button class="rsp-act" type="button" data-act="ai" title="划线问 AI（基于所选文字提问）">' + ICON.ai + '</button>' +
+          '<button class="rsp-act" type="button" data-act="translate" title="翻译所选文字（按设置中的引擎）" id="rsp-translate" hidden>' + ICON.translate + '</button>' +
           '<button class="rsp-act" type="button" data-act="note" title="高亮并添加便签">' + ICON.note + '</button>' +
           '<button class="rsp-act" type="button" data-act="copy" title="复制所选文字">' + ICON.copy + '</button>' +
         '</div>' +
@@ -818,11 +1856,16 @@ import '/vendor/pdfjs-viewer.js';
         const abtn = e.target.closest('.rsp-act');
         if (!abtn) return;
         if (abtn.dataset.act === 'copy') this.copySelection();
+        else if (abtn.dataset.act === 'translate') this.translateSelection();
         else if (abtn.dataset.act === 'note') this.quickHighlight(this.curColor, true);
         else if (abtn.dataset.act === 'ai') this.askSelection();
       });
       this.view.appendChild(pop);
       this._pop = pop;
+      // 翻译按钮显隐：open 时 loadTranslateConfig 先跑、按钮此时才懒创建，
+      // 故创建后立即按已加载的 _translateCfg 同步一次（engine=none 隐藏，其余显示）
+      const trBtn = pop.querySelector('#rsp-translate');
+      if (trBtn) trBtn.hidden = (this._translateCfg && this._translateCfg.engine) === 'none';
       return pop;
     }
 
@@ -862,6 +1905,8 @@ import '/vendor/pdfjs-viewer.js';
     }
 
     hideSelectionPopup() {
+      // 翻译浮层与选区浮窗同生命周期：滚动/缩放/翻页/重交互时一并收起
+      this.cancelTranslate();
       if (!this._pop || this._pop.hidden) return;
       this._pop.classList.remove('show');
       this._pop.hidden = true;
@@ -930,6 +1975,282 @@ import '/vendor/pdfjs-viewer.js';
       if (this.elChatInput) this.elChatInput.value = question;
       // 直接发送（用户也可在发送前编辑输入框内容）
       this.sendChat();
+    }
+
+    /** 翻译选区文字：统一以浮窗展示译文（不跳转外链）。
+     *  - engine=ai：浮窗内流式渲染 AI 译文（SSE，不离开页面）
+     *  - engine=google：浮窗内显示 Google 译文（RESTful，服务端调免费端点，秒回）
+     *  - engine=bing：浮窗内显示原文 + 「打开外部翻译」链接（Bing 无稳定免费端点，需抓 token，暂走外链）
+     *  - engine=none：不应到这（按钮已隐藏） */
+    translateSelection() {
+      const raw = (document.getSelection().toString() || '').trim();
+      if (!raw) { this.setStatus('未选中文本'); return; }
+      const txt = this.cleanTranslateText(raw);   // 剔除 PDF 排版换行（行宽截断产生的假换行）
+      const cfg = this._translateCfg || { engine: 'google', targetLang: 'zh-CN' };
+      if (cfg.engine === 'none') { this.setStatus('划线翻译已关闭（设置中可开启）'); return; }
+      let rect;
+      try { rect = document.getSelection().getRangeAt(0).getBoundingClientRect(); } catch {}
+      if (!rect || (!rect.width && !rect.height)) rect = { left: window.innerWidth / 2, top: 120, width: 0, bottom: 120 };
+      this.hideSelectionPopup();
+      if (cfg.engine === 'bing') {
+        // Bing：无稳定免费端点（需抓 JWT token + 地区重定向），暂走外链兜底
+        const tl = encodeURIComponent(cfg.targetLang || 'zh-CN');
+        const q = encodeURIComponent(txt);
+        const extUrl = `https://www.bing.com/translator?from=&to=${tl}&text=${q}`;
+        this.showTranslatePanel(rect, txt, { external: true, extUrl, engineName: '必应 Bing 翻译' });
+      } else {
+        // ai / google：都走后端浮窗（ai=SSE 流式，google=RESTful JSON）
+        this.showTranslatePanel(rect, txt, { engine: cfg.engine || 'ai' });
+      }
+    }
+    /** 清理 PDF 排版换行：提交给翻译引擎前剔除行宽截断产生的假换行。
+     *  PDF 文本层每行结尾的 \n 是排版产物（行宽不够折到下一行），不是真正的句子断开。
+     *  - 连字符断词（opti-\nmization）→ 直接接回（去 \n 不加空格）
+     *  - 行内换行（同一句折行）→ 换成空格（CJK 与 CJK 之间不加空格，避免译文词间距怪异）
+     *  - 真正的段落分隔（\n\n+）→ 保留为单个换行，让译文也有段落感
+     *  注意：原文预览（浮窗外链模式）也用清理后的文本，与提交给引擎的文本一致。 */
+    cleanTranslateText(s) {
+      if (!s) return s;
+      // 1. 规范化换行：\r\n / \r → \n
+      let t = s.replace(/\r\n?/g, '\n');
+      // 2. 连字符断词：行尾 -\n → 接回（opti-\nmization → optimization，state-of-\nthe-art → state-of-the-art）
+      //    仅当 - 紧贴 \n 且 \n 后是字母时，去掉 \n（保留 -，让词复原）
+      t = t.replace(/-\n([A-Za-z])/g, '-$1');
+      // 3. 段落分隔（\n\n+）先占位保护
+      t = t.replace(/\n{2,}/g, '\u0000PARA\u0000');
+      // 4. 行内换行（剩下的单个 \n）：行尾去空白后，按上下文决定拼接方式
+      //    - 上行尾或下行首是 CJK → 直接接回（不加空格）
+      //    - 否则 → 换成空格（西文词之间需要空格分隔）
+      t = t.replace(/([^\n])\n([^\n])/g, (m, a, b) => {
+        const cjk = /[\u4e00-\u9fff\u3000-\u303f\uff00-\uffef]/;
+        return (cjk.test(a) || cjk.test(b)) ? a + b : a + ' ' + b;
+      });
+      // 5. 还原段落分隔为单个换行（\u0000PARA\u0000 是上文段落占位符，禁用 control-regex 规则校验）
+      t = t.replace(/\u0000PARA\u0000/g, '\n'); // eslint-disable-line no-control-regex
+      // 6. 收尾：压缩多余空白
+      return t.replace(/[ \t]+/g, ' ').replace(/ *\n */g, '\n').trim();
+    }
+    /** 翻译浮窗：定位在选区附近，浮窗内显示译文（不跳转）。
+     *  - opts.engine='ai'（默认）：SSE 流式（GET /api/translate?text=，EventSource），复用 renderMd。
+     *  - opts.engine='google'：RESTful JSON（GET /api/translate?text=&engine=google，fetch），秒回。
+     *  - opts.external=true（Bing）：显示原文预览 + 「打开外部翻译」按钮（无免费端点）。
+     *  可关闭、可复制；滚轮/翻页/缩放时自动收起（同选区浮窗生命周期）。 */
+    showTranslatePanel(rect, text, opts) {
+      this.cancelTranslate(true);                     // 先关掉上一个（强制，含钉住态：新翻译替换旧钉住面板）
+      const W = window;
+      const cfg = this._translateCfg || { targetLang: 'zh-CN' };
+      const langName = ({ 'zh-CN': '简体中文', 'zh-TW': '繁体中文', en: '英文', ja: '日文', ko: '韩文', fr: '法文', de: '德文' })[cfg.targetLang] || cfg.targetLang;
+      const external = !!(opts && opts.external);
+      const engine = (opts && opts.engine) || 'ai';
+      const loadingText = engine === 'google' ? 'Google 翻译中' : 'AI 正在翻译';
+      const panel = document.createElement('div');
+      panel.className = 'reader-tr-panel' + (external ? ' rtp-external' : '');
+      panel.innerHTML =
+        '<div class="rtp-head">' +
+          '<span class="rtp-title">' + ICON.translate + '翻译为' + langName + '</span>' +
+          '<div class="rtp-actions">' +
+            (external ? '' : '<button class="rtp-act" type="button" data-act="copy" title="复制译文">' + ICON.copy + '</button>') +
+            '<button class="rtp-act" type="button" data-act="pin" title="钉住（滚动/翻页时不自动收起，再点取消）">' + ICON.pin + '</button>' +
+            '<button class="rtp-act" type="button" data-act="close" title="关闭"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>' +
+          '</div>' +
+        '</div>' +
+        '<div class="rtp-body"><div class="rtp-content thinking">' + (external ? '' : loadingText) + '</div></div>';
+      this.view.appendChild(panel);
+      this._trPanel = panel;
+      this._trAccumulated = '';
+      this._trPinned = false;          // 新翻译默认未钉住（showTranslatePanel 开头已 cancelTranslate 旧面板）
+      const content = panel.querySelector('.rtp-content');
+      const renderMdSafe = (md) => (W.renderMd ? W.renderMd(md) : (md || '').replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c])).replace(/\n/g, '<br/>'));
+      const escPlain = (s) => s.replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c])).replace(/\n/g, '<br/>');
+      // 定位（复用 showSelectionPopup 的策略：优先选区上方，空间不足放下方）
+      const pw = 360, ph = 160;
+      const vw = window.innerWidth;
+      let left = rect.left + rect.width / 2 - pw / 2;
+      left = Math.max(10, Math.min(vw - pw - 10, left));
+      let top = rect.top - ph - 12;
+      let below = false;
+      if (top < 56) { top = rect.bottom + 12; below = true; }
+      panel.classList.toggle('below', below);
+      panel.style.left = Math.round(left) + 'px';
+      panel.style.top = Math.round(top) + 'px';
+      requestAnimationFrame(() => panel.classList.add('show'));
+      // 关闭（钉住态也能关：cancelTranslate(force) 强制移除）
+      panel.querySelector('[data-act="close"]').onclick = () => this.cancelTranslate(true);
+      // 钉住切换：钉住后滚动/翻页/缩放/重选不自动收起（cancelTranslate 不移除面板），再点取消
+      panel.querySelector('[data-act="pin"]').onclick = (e) => {
+        this._trPinned = !this._trPinned;
+        const btn = e.currentTarget;
+        btn.classList.toggle('active', this._trPinned);
+        btn.title = this._trPinned ? '已钉住（点击取消，取消后滚动会自动收起）' : '钉住（滚动/翻页时不自动收起，再点取消）';
+        this.setStatus(this._trPinned ? '已钉住翻译浮窗' : '已取消钉住');
+      };
+      // 复制按钮（ai/google 共用）
+      if (!external) {
+        panel.querySelector('[data-act="copy"]').onclick = () => {
+          const t = (this._trAccumulated || content.textContent || '').trim();
+          if (navigator.clipboard && t) navigator.clipboard.writeText(t).then(() => this.setStatus('已复制译文')).catch(() => {});
+        };
+      }
+      // —— Bing 外链模式：原文预览 + 外链按钮 ——
+      if (external) {
+        content.classList.remove('thinking');
+        const preview = text.length > 120 ? text.slice(0, 120) + '…' : text;
+        content.innerHTML =
+          '<div class="rtp-src">' + escPlain(preview) + '</div>' +
+          '<a class="rtp-ext-link" href="' + opts.extUrl + '" target="_blank" rel="noopener">' +
+            '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>' +
+            '在 ' + opts.engineName + ' 中打开' +
+          '</a>' +
+          '<div class="rtp-ext-hint">外部引擎无法在浮窗内嵌入，点击在新标签页查看完整翻译</div>';
+        this._trClose = null;
+        return;
+      }
+      // —— Google：RESTful JSON（fetch，一次性返回完整译文，秒回）——
+      if (engine === 'google') {
+        const params = new URLSearchParams();
+        params.set('text', text);
+        params.set('engine', 'google');
+        const ctrl = new AbortController();
+        let settled = false;
+        fetch(sp('/api/translate?' + params.toString()), { signal: ctrl.signal })
+          .then((r) => r.json())
+          .then((j) => {
+            settled = true;
+            if (j && j.ok === false) {
+              content.classList.remove('thinking');
+              content.textContent = '（' + (j.error || '翻译失败') + '）';
+              return;
+            }
+            const reply = (j && j.data && j.data.reply) || '';
+            this._trAccumulated = reply;
+            content.classList.remove('thinking');
+            content.innerHTML = reply ? escPlain(reply) : '（无译文）';
+          })
+          .catch((e) => {
+            if (settled) return;
+            content.classList.remove('thinking');
+            const msg = (e && e.name === 'AbortError') ? '请求超时' : '翻译失败';
+            content.textContent = '（' + msg + '）';
+          });
+        this._trClose = () => { try { ctrl.abort(); } catch {} };
+        return;
+      }
+      // —— AI：SSE 流式（EventSource）——
+      const params = new URLSearchParams();
+      params.set('text', text);
+      const url = sp('/api/translate?' + params.toString());
+      const es = new EventSource(url);
+      let finished = false;
+      es.addEventListener('token', (e) => {
+        let obj = null;
+        try { obj = JSON.parse(e.data); } catch { return; }
+        if (!obj || !obj.t) return;
+        this._trAccumulated += obj.t;
+        content.classList.remove('thinking');
+        // try/catch 保护：流式中 _trAccumulated 是不完整片段（如半个公式 $$），
+        // marked/katex 偶发抛异常，一旦抛出会中断回调让后续 token 全失效 → 永远「翻译中」。
+        // 兜底：渲染失败时退化为纯文本（转义 + 换行），保证至少能看到译文。
+        try {
+          content.innerHTML = renderMdSafe(this._trAccumulated);
+        } catch {
+          content.textContent = '';
+          content.innerHTML = escPlain(this._trAccumulated);
+        }
+        content.classList.add('streaming');
+      });
+      es.addEventListener('done', () => {
+        finished = true;
+        try { es.close(); } catch {}
+        // 完成态最终渲染一次（完整片段，renderMd 通常不再抛）
+        try { content.innerHTML = renderMdSafe(this._trAccumulated); } catch {}
+        content.classList.remove('streaming');
+        if (!this._trAccumulated.trim()) content.textContent = '（无译文）';
+      });
+      es.addEventListener('fail', (e) => {
+        finished = true;
+        try { es.close(); } catch {}
+        let msg = '翻译失败';
+        try { msg = JSON.parse(e.data).error || msg; } catch {}
+        content.classList.remove('thinking', 'streaming');
+        content.textContent = '（' + msg + '）';
+      });
+      es.onerror = () => {
+        if (finished) return;
+        finished = true;
+        try { es.close(); } catch {}
+        if (!this._trAccumulated) {
+          content.classList.remove('thinking', 'streaming');
+          content.textContent = '（连接中断，请重试）';
+        } else {
+          // 已收到部分译文：完成态渲染 + 去掉流式光标（连接断了但已有内容可读）
+          try { content.innerHTML = renderMdSafe(this._trAccumulated); } catch {}
+          content.classList.remove('streaming');
+        }
+      };
+      this._trClose = () => { finished = true; try { es.close(); } catch {} };
+    }
+    /** 关闭翻译浮层 + 中止流。
+     *  - force=false（默认，滚动/翻页/缩放/重选触发）：若已钉住（_trPinned），只中止流不移除面板，让译文常驻
+     *  - force=true（点关闭键 / teardown / 切论文）：无论钉住与否都移除面板 */
+    cancelTranslate(force) {
+      if (this._trClose) { try { this._trClose(); } catch {} this._trClose = null; }
+      if (this._trPinned && !force) return;   // 钉住态：中止流但保留面板（译文已落盘到 DOM）
+      if (this._trPanel) { this._trPanel.remove(); this._trPanel = null; }
+      this._trAccumulated = '';
+      this._trPinned = false;
+    }
+
+    /** 添加划线引用 badge：选中文本以卡片形式加入对话框（非纯文本塞 textarea）。 */
+    addChatQuote(text) {
+      const t = String(text || '').trim();
+      if (!t) return;
+      if (!this._chatQuotes) this._chatQuotes = [];
+      // 去重：已存在相同文本则不重复加
+      if (this._chatQuotes.some((q) => q === t)) { this.setStatus('该段已添加'); return; }
+      this._chatQuotes.push(t);
+      this.renderQuotes();
+      this.setStatus('已添加引用，输入问题后发送');
+    }
+    /** 渲染引用 badge 区。每个 badge：行数标签 + 截断文本 + × 删除。 */
+    renderQuotes() {
+      const box = document.getElementById('reader-chat-quotes');
+      if (!box) return;
+      const qs = this._chatQuotes || [];
+      if (!qs.length) { box.hidden = true; box.innerHTML = ''; return; }
+      box.hidden = false;
+      box.innerHTML = qs.map((q, i) => {
+        const lines = q.split(/\r?\n/).filter(Boolean);
+        const lineLabel = lines.length > 1 ? (lines.length + ' 行') : '1 行';
+        return `<div class="rcd-quote"><span class="rcd-quote-tag">${lineLabel}</span><span class="rcd-quote-text"></span><button class="rcd-quote-x" data-qi="${i}" title="移除" aria-label="移除引用">×</button></div>`;
+      }).join('');
+      // textContent 设文本（防 XSS；DOMPurify 已加载但文本直接设最稳）
+      [...box.querySelectorAll('.rcd-quote-text')].forEach((el, i) => { el.textContent = qs[i].replace(/\s+/g, ' ').slice(0, 120) + (qs[i].length > 120 ? '…' : ''); });
+      // × 删除接线
+      box.querySelectorAll('.rcd-quote-x').forEach((btn) => {
+        btn.onclick = () => {
+          const idx = Number(btn.dataset.qi);
+          this._chatQuotes.splice(idx, 1);
+          this.renderQuotes();
+        };
+      });
+    }
+    /** 取所有引用文本拼成上下文（发送时拼到问题前）。 */
+    getChatQuotesBlock() {
+      const qs = this._chatQuotes || [];
+      if (!qs.length) return '';
+      return qs.map((q, i) => `【引用${i + 1}】\n${q}`).join('\n\n') + '\n\n';
+    }
+
+    /** 拉取划线翻译设置（engine + targetLang），更新选区浮窗的翻译按钮显隐。仅在 open 时拉一次。 */
+    async loadTranslateConfig() {
+      try {
+        const r = await fetch(sp('/api/settings')).then((x) => x.json());
+        const t = (r.data && r.data.translate) || {};
+        this._translateCfg = { engine: t.engine || 'google', targetLang: t.targetLang || 'zh-CN' };
+      } catch { this._translateCfg = { engine: 'google', targetLang: 'zh-CN' }; }
+      // 按设置显隐翻译按钮（engine=none 隐藏，ai/bing/google 都显示）
+      const btn = document.getElementById('rsp-translate');
+      if (btn) btn.hidden = this._translateCfg.engine === 'none';
     }
 
     // ---- 批注持久化（用 annotationStorage.serializable）----
@@ -1114,6 +2435,7 @@ import '/vendor/pdfjs-viewer.js';
       this._onAnnotGuardDown = this._onAnnotGuardUp = this._onAnnotToolbarClick = null;
       this._onTouchStart = this._onTouchMove = this._onTouchEnd = null;
       this.hideSelectionPopup();
+      this.cancelTranslate(true);              // teardown 强制移除翻译浮窗（含钉住态，PDF 已销毁）
       if (this._pop) { this._pop.remove(); this._pop = null; }
       // 等批注/进度落盘完成后再销毁 doc，避免网络尚未返回就被 destroy 打断
       try { await saveP; } catch {}
@@ -1133,6 +2455,11 @@ import '/vendor/pdfjs-viewer.js';
       await this._teardown(true);
       this.view.classList.remove('active');
       document.body.style.overflow = '';
+      // 恢复原 devicePixelRatio（open 时为清晰度临时提到 max(dpr,2)）
+      if (this._origDpr != null && window.devicePixelRatio !== this._origDpr) {
+        try { Object.defineProperty(window, 'devicePixelRatio', { value: this._origDpr, configurable: true }); }
+        catch { /* ignore */ }
+      }
       this.onClose();
     }
   }

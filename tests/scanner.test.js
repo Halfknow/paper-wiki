@@ -3,7 +3,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
-const { diffPapers, createScanner } = require('../lib/scanner');
+const { diffPapers, createScanner, createMultiSpaceScanner } = require('../lib/scanner');
 const { cleanFilenameToTitle } = require('../lib/util');
 
 test('diffPapers 计算 added/changed/missing', () => {
@@ -62,20 +62,40 @@ test('scan 不用空记录覆盖已 enrich 的论文（防 id 冲突丢数据）
   const { sha1OfFile } = require('../lib/util');
   const id = (await sha1OfFile(path.join(dir, 'real.pdf'))).slice(0, 16);
   const store = {
-    version: 2, tags: [], topics: [], folders: [], concepts: [],
+    version: 2,
+    tags: [],
+    topics: [],
+    folders: [],
+    concepts: [],
     papers: {
       [id]: {
-        id, filename: 'real.pdf', filepath: path.join(dir, 'real.pdf'),
-        status: 'ready', title: '重要标题', summary: '## TL;DR\n已有总结',
-        tags: ['x'], topics: [], addedAt: 1, updatedAt: 1,
+        id,
+        filename: 'real.pdf',
+        filepath: path.join(dir, 'real.pdf'),
+        status: 'ready',
+        title: '重要标题',
+        summary: '## TL;DR\n已有总结',
+        tags: ['x'],
+        topics: [],
+        addedAt: 1,
+        updatedAt: 1,
       },
     },
   };
   const deps = {
     parser: { extractText: async () => ({ text: 't', charCount: 1, numPages: 1 }) },
-    ai: { summarize: async () => '', extractTagsTopics: async () => ({ tags: [], topics: [] }), buildSummaryMarkdown: () => '', applySettingsOverride: (c) => c },
-    arxiv: {}, rateLimitArxiv: async () => {}, config: { ai: {}, arxiv: { enabled: false } },
-    saveStore: async (s) => {}, mergeTags: () => {}, mergeTopics: () => {},
+    ai: {
+      summarize: async () => '',
+      extractTagsTopics: async () => ({ tags: [], topics: [] }),
+      buildSummaryMarkdown: () => '',
+      applySettingsOverride: (c) => c,
+    },
+    arxiv: {},
+    rateLimitArxiv: async () => {},
+    config: { ai: {}, arxiv: { enabled: false } },
+    saveStore: async (s) => {},
+    mergeTags: () => {},
+    mergeTopics: () => {},
   };
   const scanner = createScanner({ store, storePath, papersDir: dir, deps });
   await scanner.scan();
@@ -453,8 +473,10 @@ test('retagPapers 重新打标 + 标签/主题库联动（多的入库、少的�
   fs.writeFileSync(path.join(textDir, 'b.txt'), '论文b全文');
   const store = {
     version: 2,
-    tags: ['oldtag', 'keep'], topics: ['旧主题'],
-    folders: [], concepts: [],
+    tags: ['oldtag', 'keep'],
+    topics: ['旧主题'],
+    folders: [],
+    concepts: [],
     papers: {
       a: { id: 'a', title: 'A', tags: ['oldtag'], topics: ['旧主题'], updatedAt: 0 },
       b: { id: 'b', title: 'B', tags: ['keep'], topics: [], updatedAt: 0 },
@@ -472,8 +494,12 @@ test('retagPapers 重新打标 + 标签/主题库联动（多的入库、少的�
       applySettingsOverride: (c) => c,
       buildSummaryMarkdown: (md) => md,
     },
-    arxiv: {}, rateLimitArxiv: async () => {}, config: { ai: {}, arxiv: { enabled: false } },
-    saveStore: async (s) => {}, mergeTags: () => {}, mergeTopics: () => {},
+    arxiv: {},
+    rateLimitArxiv: async () => {},
+    config: { ai: {}, arxiv: { enabled: false } },
+    saveStore: async (s) => {},
+    mergeTags: () => {},
+    mergeTopics: () => {},
   };
   const scanner = createScanner({ store, storePath: path.join(dir, 'papers.json'), papersDir: dir, deps });
   const r = await scanner.retagPapers(['a', 'b']);
@@ -488,4 +514,240 @@ test('retagPapers 重新打标 + 标签/主题库联动（多的入库、少的�
   assert.ok(store.tags.includes('keep'), '字典：keep 保留');
   assert.ok(store.topics.includes('新主题') && !store.topics.includes('旧主题'), '字典主题联动');
   fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('chatPaper 透传 extraIds：读额外论文全文 + 持久化 user.extraIds', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pwchat-'));
+  const storePath = path.join(dir, 'papers.json');
+  const textDir = path.join(dir, 'text');
+  fs.mkdirSync(textDir, { recursive: true });
+  // 主论文 a + 额外论文 b（a @ 引用 b）
+  fs.writeFileSync(path.join(textDir, 'a.txt'), '主论文全文');
+  fs.writeFileSync(path.join(textDir, 'b.txt'), '额外论文全文');
+  const store = {
+    version: 2,
+    tags: [],
+    topics: [],
+    folders: [],
+    concepts: [],
+    settings: {},
+    papers: {
+      a: { id: 'a', title: '主论文', abstract: '主摘要', chat: [], status: 'ready' },
+      b: { id: 'b', title: '额外论文', abstract: '额外摘要', status: 'ready' },
+    },
+  };
+  let capturedExtra;
+  const deps = {
+    parser: { extractText: async () => ({ text: '', charCount: 0, numPages: 1 }) },
+    ai: {
+      chatPaper: async (args) => {
+        capturedExtra = args.extraPapers; // 捕获透传的 extraPapers
+        return '回复';
+      },
+      applySettingsOverride: (c) => c,
+      buildSummaryMarkdown: (md) => md,
+    },
+    arxiv: {},
+    rateLimitArxiv: async () => {},
+    config: { ai: {}, arxiv: { enabled: false } },
+    saveStore: async (s) => {},
+    mergeTags: () => {},
+    mergeTopics: () => {},
+  };
+  const scanner = createScanner({ store, storePath, papersDir: dir, deps });
+  const r = await scanner.chatPaper('a', '对比一下', { extraIds: ['b'] });
+  assert.strictEqual(r.reply, '回复');
+  // extraPapers 透传：含额外论文 b 的 title/abstract/fulltext
+  assert.ok(Array.isArray(capturedExtra) && capturedExtra.length === 1, 'extraPapers 透传 1 篇');
+  assert.strictEqual(capturedExtra[0].title, '额外论文');
+  assert.strictEqual(capturedExtra[0].fulltext, '额外论文全文', '读取额外论文全文');
+  // 持久化：user 消息带 extraIds
+  const userMsg = store.papers.a.chat.find((m) => m.role === 'user');
+  assert.ok(userMsg, 'user 消息已落盘');
+  assert.deepStrictEqual(userMsg.extraIds, ['b'], 'user.extraIds 持久化');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('chatPaper 无 extraIds 时不挂 extraIds 字段（向后兼容）', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pwchat2-'));
+  const storePath = path.join(dir, 'papers.json');
+  const store = {
+    version: 2,
+    tags: [],
+    topics: [],
+    folders: [],
+    concepts: [],
+    settings: {},
+    papers: { a: { id: 'a', title: 'T', abstract: 'A', chat: [], status: 'ready' } },
+  };
+  const deps = {
+    parser: { extractText: async () => ({ text: '', charCount: 0, numPages: 1 }) },
+    ai: { chatPaper: async () => '回复', applySettingsOverride: (c) => c, buildSummaryMarkdown: (md) => md },
+    arxiv: {},
+    rateLimitArxiv: async () => {},
+    config: { ai: {}, arxiv: { enabled: false } },
+    saveStore: async (s) => {},
+    mergeTags: () => {},
+    mergeTopics: () => {},
+  };
+  const scanner = createScanner({ store, storePath, papersDir: dir, deps });
+  await scanner.chatPaper('a', '普通问题');
+  const userMsg = store.papers.a.chat.find((m) => m.role === 'user');
+  assert.ok(userMsg.extraIds === undefined, '无引用时不挂 extraIds 字段');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+/** 建一个最小可用的 manager（两空间，各带一个占位 PDF） */
+async function makeMultiSpaceSetup() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pwms-'));
+  const dataDir = path.join(root, 'data');
+  const { createSpaceManager } = require('../lib/spaces');
+  const manager = createSpaceManager(dataDir, root, {
+    scanIntervalMinutes: 5,
+    papersDir: 'papers',
+    ai: { model: 'm' },
+    arxiv: { enabled: false },
+  });
+  await manager.ensureRegistry();
+  // 在 default 空间放一个 PDF
+  const defDir = manager.resolveSpacePapersDir('default');
+  fs.writeFileSync(path.join(defDir, 'a.pdf'), Buffer.from('%PDF-1.4\n%A\n'));
+  // 第二个空间
+  const sp2 = await manager.createSpace({ name: 'B', papersDir: 'papers-b' });
+  const bDir = manager.resolveSpacePapersDir(sp2.id);
+  fs.writeFileSync(path.join(bDir, 'b.pdf'), Buffer.from('%PDF-1.4\n%B\n'));
+  return { manager, root, sp2, cleanup: () => fs.rmSync(root, { recursive: true, force: true }) };
+}
+
+function multiSpaceDeps() {
+  return {
+    parser: { extractText: async () => ({ text: '全文', charCount: 2, numPages: 1 }) },
+    arxiv: {
+      cleanFilenameToTitle: (f) => f,
+      searchArxiv: async () => ({ entries: [] }),
+      pickBest: () => ({ best: null, confidence: 0, source: 'none' }),
+      extractArxivId: () => null,
+    },
+    ai: {
+      summarize: async ({ title }) => `## TL;DR\n${title || 'x'}`,
+      extractTagsTopics: async ({ title }) => ({
+        tags: [String(title || 'x').toLowerCase()],
+        topics: [],
+        metadata: { title: title || 'X' },
+      }),
+      extractConcepts: async () => [{ term: '概念A', definition: '定义' }],
+      chatPaper: async () => '回复内容',
+      buildSummaryMarkdown: (md) => md,
+      applySettingsOverride: (c) => c,
+    },
+    config: { ai: { model: 'm' }, arxiv: { enabled: false } },
+    rateLimitArxiv: async () => {},
+    mergeTags: (s, tags) => {
+      s.tags = Array.from(new Set([...(s.tags || []), ...tags]));
+    },
+    mergeTopics: () => {},
+    mergeConcepts: () => [],
+  };
+}
+
+test('createMultiSpaceScanner.scan 扫描所有空间，各空间论文隔离', async () => {
+  const { manager, sp2, cleanup } = await makeMultiSpaceSetup();
+  try {
+    const scanner = createMultiSpaceScanner({ manager, deps: multiSpaceDeps() });
+    const results = await scanner.scan({ dueOnly: false });
+    // 等流水线处理完
+    await scanner.drain(1000);
+    assert.ok(results.length >= 2, '应扫两个空间');
+    const storeA = await manager.getSpaceStore('default');
+    const storeB = await manager.getSpaceStore(sp2.id);
+    assert.ok(Object.keys(storeA.papers).length >= 1, 'default 有论文');
+    assert.ok(Object.keys(storeB.papers).length >= 1, 'B 空间有论文');
+    // 各自处理为 ready
+    for (const p of Object.values(storeA.papers)) assert.strictEqual(p.status, 'ready');
+    for (const p of Object.values(storeB.papers)) assert.strictEqual(p.status, 'ready');
+    scanner.stop();
+  } finally {
+    cleanup();
+  }
+});
+
+test('createMultiSpaceScanner 共享单一串行队列（不会并发处理两空间）', async () => {
+  const { manager, sp2, cleanup } = await makeMultiSpaceSetup();
+  try {
+    let concurrent = 0;
+    let maxConcurrent = 0;
+    const deps = multiSpaceDeps();
+    // 包一层 extractText 计数并发
+    const origParser = deps.parser;
+    deps.parser = {
+      extractText: async (...args) => {
+        concurrent++;
+        maxConcurrent = Math.max(maxConcurrent, concurrent);
+        await new Promise((r) => setTimeout(r, 30));
+        concurrent--;
+        return origParser.extractText(...args);
+      },
+    };
+    const scanner = createMultiSpaceScanner({ manager, deps });
+    await scanner.scan({ dueOnly: false });
+    await scanner.drain(2000);
+    assert.strictEqual(maxConcurrent, 1, '应严格串行，最大并发=1');
+    scanner.stop();
+  } finally {
+    cleanup();
+  }
+});
+
+test('createMultiSpaceScanner.reschedule(spaceId,minutes) per-space 改间隔并重算定时器', async () => {
+  const { manager, sp2, cleanup } = await makeMultiSpaceSetup();
+  try {
+    const scanner = createMultiSpaceScanner({ manager, deps: multiSpaceDeps() });
+    await scanner.reschedule('default', 10);
+    await scanner.reschedule(sp2.id, 2);
+    // 最小间隔 = 2 分钟
+    assert.strictEqual(manager.minScheduledIntervalMs(), 2 * 60 * 1000);
+    // 持久化到注册表
+    assert.strictEqual(manager.getSpace(sp2.id).scanIntervalMinutes, 2);
+    scanner.stop();
+  } finally {
+    cleanup();
+  }
+});
+
+test('createMultiSpaceScanner.scanSpace 手动扫单个空间', async () => {
+  const { manager, cleanup } = await makeMultiSpaceSetup();
+  try {
+    const scanner = createMultiSpaceScanner({ manager, deps: multiSpaceDeps() });
+    const r = await scanner.scanSpace('default');
+    await scanner.drain(1000);
+    assert.ok(r.added >= 1);
+    const store = await manager.getSpaceStore('default');
+    assert.ok(Object.keys(store.papers).length >= 1);
+    scanner.stop();
+  } finally {
+    cleanup();
+  }
+});
+
+test('createMultiSpaceScanner.extractConcepts/retagPapers/chatPaper 带 spaceId 首参', async () => {
+  const { manager, sp2, cleanup } = await makeMultiSpaceSetup();
+  try {
+    const scanner = createMultiSpaceScanner({ manager, deps: multiSpaceDeps() });
+    await scanner.scan({ dueOnly: false });
+    await scanner.drain(1000);
+    const storeA = await manager.getSpaceStore('default');
+    const idA = Object.keys(storeA.papers)[0];
+    // retagPapers(spaceId, ids)
+    const r = await scanner.retagPapers('default', [idA]);
+    assert.ok(r.processed >= 1);
+    // extractConcepts(spaceId, ids)
+    const c = await scanner.extractConcepts('default', [idA]);
+    assert.ok(Object.keys(c).includes('processed'));
+    // chatPaper(spaceId, id, message)
+    const ch = await scanner.chatPaper('default', idA, '你好');
+    assert.ok(typeof ch.reply === 'string');
+    scanner.stop();
+  } finally {
+    cleanup();
+  }
 });

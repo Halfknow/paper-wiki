@@ -2,6 +2,92 @@
 
 本文件记录 PaperWiki 每个版本的显著变更。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/)，版本号语义化。
 
+## [2.7.0] — 2026-07-17
+
+> **AI 聊天界面现代化重构（对标 ChatGPT / Claude / LobeChat）：气泡式消息布局 / 一体化 Composer（morphing 发送键）/ 模型切换器 / PDF 图表视觉问答。** 两个聊天入口（详情页「AI 聊天」tab + PDF 阅读器 AI 抽屉）再次统一升级，共用同一套现代设计语言。
+
+### Added — 现代气泡布局（Phase 1）
+- **气泡式消息**：user 右对齐（accent-soft 气泡）/ assistant 左对齐（白底卡片气泡 + Indigo 渐变圆形头像）。告别旧版"扁平全宽行"，转向 ChatGPT/Claude 式视觉层级。`.chat-msg` flex + `row-reverse` + `.chat-bubble` 圆角卡片。
+- **消息 meta 行**：时间戳 + **模型徽章**（`assistant.model`，胶囊样式带小圆点），气泡下方内联显示。
+- **流式 skeleton shimmer**：流式占位从"思考中…"文字 + 三点动画，升级为 3 行灰条 shimmer（`@keyframes chat-shimmer`），首 token 后切换为发光气泡 + 末尾光标。
+- **气泡外发光**：流式时 `.chat-bubble.streaming` 用 `box-shadow` 微光替代旧竖线光标。
+- **内联操作工具条**：消息操作从右上浮窗改为**气泡底部内联**（hover 显示），与 ChatGPT 同款。
+- **现代空状态**：大渐变圆图标 + 标题"开始与 AI 探讨这篇论文" + 副标题 + 2×2 建议卡片网格 + 快捷键提示（`@` 引用）。
+
+### Added — 一体化 Composer（Phase 1）
+- **单一圆角容器 `.chat-composer`**：上下文 chips 行 → textarea（无边框）→ 底部工具栏，取代旧的"chips+textarea+预置行+footer"散件。
+- **morphing 发送键**：发送/停止合并为**单一圆形按钮**，非 busy 时 Indigo 渐变 + 上箭头，流式时变红方块停止图标（`@keyframes chat-send-pulse` 脉冲）。
+- **底部工具栏**：左 = 快捷提问（折叠浮层）/ 模型参数 / 大纲 / 清空；右 = 模型切换 + 发送。
+- **模型参数徽章通用化**：`.cp-badge` 选择器从 `.chat-params-btn` 扩展到 `.chat-tool-btn`，新版 composer 复用。
+
+### Added — @ 引用论文选择浮层现代化（v2.7）
+- **输入即筛 + 上方弹出清单**：textarea 打 `@` → 上方弹出 `.chat-mention-pop.fixed` 浮层（body 级 `position:fixed`，锚定到 textarea 上方，避开所有滚动容器），随输入**实时筛选**。
+- **多字段 + token AND 匹配**（`searchPapersForMention`）：标题（最高分）/ 作者 / 年份 / 标签 / 主题；多词查询要求每个 token 都命中（更精准）。空 `@` 显示最近添加的 10 篇（`addedAt` 倒序），让用户开 @ 就有候选。
+- **键盘导航**：↑↓ 移动高亮 / Enter 选中 / Esc 取消（共享 `handleMentionKeydown`），鼠标 hover 也能切高亮。
+- **富信息列表项**：状态点（ready/error/busy/missing 配色）+ 标题（匹配 token `<mark>` 高亮）+ 作者·年份 meta + 标签 chip；底栏显示总数 + 筛选提示。
+- **两处聊天共用单例**：`openChatMentionPicker`/`closeChatMentionPicker`/`handleMentionKeydown` 经 `window.*` 桥给 reader.js，避免重复实现。
+- **关键 bug 修复**：`confirmMention` 先捕获 `onPick` 回调到本地变量再 `dispatchEvent('input')`——后者会触发 `handleMentionTrigger → closeChatMentionPicker()` 把 `_mentionCtx` 置 null，旧顺序导致选了论文但 chip 不出现。
+
+### Added — 模型切换器（Phase 2）
+- **`GET /api/ai/models`**（lib/api.js + ai.js `listModels`）：优先调上游 `/v1/models`（带 apiKey），失败回退 `config.ai.model` + `config.ai.extraModels`。**永不抛错**——上游不可达返回静态候选，前端切换器总能渲染。
+- **`config.ai.extraModels`**（config.example.json）：静态模型候选列表（如 `["gpt-4o", "glm-4.5v", "claude-sonnet-4"]`），避免依赖上游 `/v1/models` 可用性。`applySettingsOverride` 支持数组覆盖。
+- **`?model=` 透传 + 白名单**：chat GET/POST 路由收 `?model=`，必须属于可用模型集合（`config.ai.model` + `extraModels` + 上游 `/v1/models`），校验失败静默回退默认（防注入）。
+- **前端模型下拉**：composer 工具栏 `.chat-model-btn` 点开 `.chat-model-pop` 浮层（body 级，JS 定位到按钮上方），列出所有可用模型，选中后写 `localStorage('pw-chat-model')` 持久化（跨刷新/跨空间保留），随请求透传。
+- **reader 抽屉同步**：头部 `.rcd-model-pill` 徽章 + composer 模型按钮，复用 `window.toggleModelSwitcher`。
+- **`assistant.model` 持久化**：scanner 在有显式覆盖时把所用模型记入 assistant 消息，meta 行回显。
+
+### Added — PDF 图表视觉问答（Phase 3）
+- **多模态消息**（ai.js `callChat`/`callChatStream`/`chatPaper`）：`messages[i].content` 支持数组（OpenAI 格式 `[{type:'text'},{type:'image_url'}]`）原样透传；`chatPaper` 接受 `images` 选项把附图追加到末尾 user 消息。
+- **`POST /api/papers/:id/chat/vision`**（lib/api.js）：带图片 body 的流式端点（EventSource 无法带 body），SSE 协议与 GET /chat 一致（token/done/fail）。图片白名单：`data:image/*;base64,` 前缀，限 4 张。
+- **框选提问工具**（reader.js `wireAttachButton` + `startVisionSelect`）：composer「图表」按钮进入框选模式，在 canvas-wrap 上叠加半透明遮罩 + 拖拽矩形选区，松开后从对应 `page.canvas` 截取该区域为 PNG dataURL（CSS→canvas 内部像素按 dpr 换算，长边限 1568px）。
+- **附图 chip + 回显**：截图作为可移除 chip 塞进 composer context 行；发送后 user 消息气泡内回显缩略图（`m.images` 持久化，限 4 张）。
+- **视觉流式 `streamVisionFetch`**（reader.js）：fetch + ReadableStream 手动解析 SSE（按 `\n\n` 分块），AbortController 中止；模型不支持图片（4xx）时 toast 提示切换视觉模型。
+
+### Fixed — 测试基建
+- **e2e-bootstrap 多空间适配**（scripts/e2e-bootstrap.js）：v2.5 多空间后 app 从 `data/spaces/<active>/papers.json` 读，但 bootstrap 只写 legacy `data/papers.json` → 已初始化多空间的本地环境 e2e 找不到 Sample Paper。新增 step 3b 把 sample 记录 + PDF 同步写入 active 空间 store，幂等。
+
+### Fixed — 问答大纲浮窗两大 bug
+- **大纲按钮点不开**（根因）：浮窗原 `position:absolute` 挂 `.chat-tab`（随消息撑高 + 随 detail-pane 滚），消息多/滚到底时浮窗定位到 `top:-2984px` 完全不可见。改 `position:fixed` 挂 body、锚定视口右上（顶栏下 `top:60 right:16`），**不随任何滚动容器移动**。
+- **toggle 逻辑误开**：`toggleChatOutline(false)`（切论文时关闭用）因原 `shouldClose = existing && open===false` 逻辑——existing 为 false 时 `open===false` 反而走「开」分支 → 切论文瞬间误开浮窗。重构为三态语义：`open===false` 无条件关、`open===true` 无条件开、`open==null` 才 toggle。详情 tab + reader 抽屉两处同修。
+- **切论文时关浮窗**：renderChatTab 切论文归零 chatState 时调 `toggleChatOutline(false)`，避免大纲条目指向已失效的旧论文 chat。
+
+### Changed — 文件
+- `public/styles.css`：重写 AI 聊天样式段（气泡/composer/空状态/思考徽章/模型下拉/框选遮罩）。
+- `public/app.js`：`chatMsgHtml`/`chatEmptyHtml`/`renderChatTab`/`doSend`/`setBusyUI` 重构；新增 `loadAiModels`/`getSelectedModel`/`toggleModelSwitcher`；`streamChatFetch` 透传 model。
+- `public/reader.js`：composer 重构 + morphing 键 + `wireModelSwitcher`/`wireAttachButton`/`startVisionSelect`/`cropRegionToImage`/`streamVisionFetch`。
+- `public/index.html`：reader 抽屉头部加模型徽章 + composer 改新结构（含图表按钮/模型按钮）。
+- `lib/ai.js`：`callChat`/`callChatStream` 支持 `chatParams.model` + 多模态 content；新增 `listModels`；`applySettingsOverride` 加 `extraModels` 数组覆盖。
+- `lib/api.js`：新增 `GET /api/ai/models` + `POST /api/papers/:id/chat/vision`；chat 路由加 `?model=` 白名单。
+- `lib/scanner.js`：`chatPaper` 透传 `images` + 持久化 `assistant.model` / `user.images`。
+- `config.example.json`：`ai.extraModels` 示例。
+- `tests/ai.test.js`：+7 例（模型覆盖 / 多模态 / extraModels / listModels 上游+回退）。
+
+### Tested
+- 单元：`npm test` 207 例全过（200 + 7 新增）。
+- e2e：`npm run test:e2e` 2 例（reader 渲染 + 高亮往返）全过。
+- 手动：详情聊天 + reader 抽屉两处气泡/composer/流式 skeleton/思考徽章/@引用/模型切换（8 模型 + 持久化）全链路验证无 JS 错误。
+
+## [2.6.0] — 2026-07-15
+
+> **AI 聊天大幅升级（参照 NewAPI 新版 Playground）：代码块强化 / 消息操作工具栏 / Reasoning 自动折叠+时长 / 参数浮层+开关徽章 / 独立停止键 / 预置快捷提问 / @ 引用多论文联合问答。** 两个聊天入口（详情页「AI 聊天」tab + PDF 阅读器 AI 抽屉）统一升级，共用同一套渲染/交互组件（沿用 `window.*` 桥）。
+
+### Added — 聊天输入区（NewAPI 风格外壳）
+- **@ 引用论文（多论文联合问答）**：输入框内打 `@` 弹论文选择器（基于 `state.papers` 客户端匹配 title/authors/year），选中后以可移除 chip 加入上下文；发送时把引用论文 id 经 `?extraIds=` 透传，后端读每篇全文注入独立 context 块（单篇摘要≤1500 / 全文≤6000，合计预算 `maxInputChars*0.6`），提示模型跨论文对比印证。引用 chip 在 user 消息回显（只读，`user.extraIds` 持久化）。
+- **预置快捷提问按钮**：输入框上方一排 pill 按钮（核心方法 / 创新点 / 实验结果 / 一句话总结），点击填入并发送。`store.settings.chatPresets` 可自定义（`PUT /api/settings/chat-presets`，规整去空/截断/限 20 条）；内置默认 4 条，`GET /api/settings` 回显。
+- **参数浮层 + 开关徽章**：模型参数（思考强度 / 温度 / Top-P / 最大 token）从 `<details>` 网格改为浮层按钮（滑块图标），每参数独立**启用开关**（仅启用的随请求发送），按钮上显示已启用数量的**小圆徽章**。localStorage 存储结构升级为 `{key:{enabled,val}}`（向后兼容旧扁平结构）。
+- **独立停止按钮**：流式生成时发送键旁出现独立红色「停止」按钮（不再复用发送键变红），更符合 NewAPI/ChatGPT 习惯。
+
+### Added — 消息渲染与操作
+- **代码块强化**：Markdown 代码块升级为卡片（语言标签 + 独立复制按钮 + 超长折叠 >20 行 + 点击展开）。`renderChatMd(md,{final})` 在 `renderMd` 之上做 DOMParser 后处理；流式中 `final=false` 不折叠（避免半截 fence 抖动），完成时 `final=true` 应用折叠。
+- **消息操作工具栏（hover/触屏常驻）**：assistant = 复制 / 重新生成（末条）/ **显示原文切换** / 删除；user = **编辑并重发** / 删除。编辑 user 消息截断其后历史重新回答（NewAPI edit-and-resubmit 语义）；显示原文在渲染 Markdown ⇄ 原始文本间切换。
+- **Reasoning 自动折叠 + 时长**：思考过程流式时展开 + shimmer 微光，完成后**自动收起并显示「思考了 X 秒」**（`chatState.reasoningStart` 计时），比旧常驻 `<details>` 更优雅。
+
+### Changed — 后端多论文上下文（协议兼容）
+- `buildChatMessages`（lib/ai.js）新增可选 `extraPapers`，按 budget 拼独立 context 块 + 跨论文提示。
+- `chatPaper`（lib/scanner.js）新增 `opts.extraIds`，读每篇额外论文全文，`user.extraIds` 持久化；regenerate 回退取末尾 user 的 extraIds 保持引用一致。
+- chat 路由（lib/api.js）GET/POST 收 `extraIds`（query 逗号分隔 / body 数组），白名单校验（必须存在于 store）；SSE 协议（token/done/fail）不变。
+- 新增 `PUT /api/settings/chat-presets` + `GET /api/settings` 回显 `chatPresets`。
+
 ## [2.4.0] — 2026-06-23
 
 > **设置中心（全配置接管 + 概览仪表盘 + 状态增强）+ 总结/标签提示词解耦。**

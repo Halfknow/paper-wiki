@@ -76,4 +76,61 @@ if (!store.papers.sample) {
   fs.writeFileSync(storePath, JSON.stringify(store, null, 2));
   console.log('[e2e-bootstrap] preset sample record in papers.json');
 }
+
+// 3b) 多空间架构（v2.5+）：app 实际从 data/spaces/<active>/papers.json 读取，
+//     旧的 data/papers.json 只在首次启动迁移时被读一次。已初始化多空间的本地环境里
+//     上面 3) 写的 legacy 路径不会被读到 → e2e 找不到 Sample Paper。
+//     这里把 sample 记录同步写入 active 空间的 store（幂等：已含 sample 则跳过），
+//     并确保 sample.pdf 复制到该空间绑定的 papersDir。
+const spacesRegPath = path.join(dataDir, 'spaces.json');
+if (fs.existsSync(spacesRegPath)) {
+  try {
+    const reg = JSON.parse(fs.readFileSync(spacesRegPath, 'utf8'));
+    const activeId = reg.activeSpaceId || (reg.spaces && reg.spaces[0] && reg.spaces[0].id);
+    const active = reg.spaces && reg.spaces.find((s) => s.id === activeId);
+    if (active) {
+      // 把 sample.pdf 复制到 active 空间的 papersDir（解析相对 projectRoot）
+      const spacePapersDir = path.isAbsolute(active.papersDir)
+        ? active.papersDir
+        : path.resolve(root, active.papersDir);
+      fs.mkdirSync(spacePapersDir, { recursive: true });
+      const spaceDest = path.join(spacePapersDir, 'sample.pdf');
+      if (fs.existsSync(fixturePdf) && !fs.existsSync(spaceDest)) {
+        fs.copyFileSync(fixturePdf, spaceDest);
+      }
+      // 写 sample 记录到 active 空间的 store
+      const spaceStoreDir = path.join(dataDir, 'spaces', active.id);
+      fs.mkdirSync(spaceStoreDir, { recursive: true });
+      const spaceStorePath = path.join(spaceStoreDir, 'papers.json');
+      let spaceStore = { version: 2, papers: {}, tags: [], topics: [], folders: [], concepts: [], settings: {} };
+      if (fs.existsSync(spaceStorePath)) {
+        try { spaceStore = JSON.parse(fs.readFileSync(spaceStorePath, 'utf8')); } catch { /* 用空 store */ }
+      }
+      if (!spaceStore.papers || !spaceStore.papers.sample) {
+        spaceStore.papers = spaceStore.papers || {};
+        spaceStore.papers.sample = {
+          id: 'sample',
+          filename: 'sample.pdf',
+          filepath: path.relative(root, spaceDest).replace(/\\/g, '/'),
+          title: 'Sample Paper for E2E Testing',
+          authors: ['E2E Test'],
+          year: '2026',
+          status: 'ready',
+          readStatus: 'unread',
+          tags: ['transformer'],
+          topics: ['测试'],
+          folders: [],
+          conceptIds: [],
+          annotations: null,
+          addedAt: Date.now(),
+          updatedAt: Date.now(),
+        };
+        fs.writeFileSync(spaceStorePath, JSON.stringify(spaceStore, null, 2));
+        console.log('[e2e-bootstrap] preset sample record in active space (' + active.id + ') store');
+      }
+    }
+  } catch {
+    /* 无 spaces.json：旧单库环境，上面 3) 已覆盖 */
+  }
+}
 console.log('[e2e-bootstrap] done');
