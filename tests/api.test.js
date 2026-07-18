@@ -1467,3 +1467,69 @@ test('GET /api/settings system 段含当前空间 papersDir', async () => {
     fs.rmSync(ctx._root, { recursive: true, force: true });
   }
 });
+
+// ---- papersDir 改绑路由（v3 绑定语义重设计）----
+
+test('POST /api/spaces/:id/dir/preview + /dir(rebind) 完整链路', async () => {
+  const ctx = realCtx();
+  try {
+    await ctx.manager._dbMigrate();
+    await ctx.manager.ensureRegistry();
+    const { sha1OfFile } = require('../lib/util');
+    // 库内一篇 a.pdf；新目录放同内容改名副本
+    const oldDir = ctx.manager.resolveSpacePapersDir('default');
+    fs.writeFileSync(pathm.join(oldDir, 'a.pdf'), '%PDF-1.4 API-A');
+    const id1 = (await sha1OfFile(pathm.join(oldDir, 'a.pdf'))).slice(0, 16);
+    const store = await ctx.manager.getSpaceStore('default');
+    store.papers[id1] = { id: id1, filename: 'a.pdf', title: 'A', status: 'ready' };
+    await ctx.manager.saveSpaceStore('default', store);
+    const newDirAbs = pathm.join(ctx.manager._papersRoot, 'newdir');
+    fs.mkdirSync(newDirAbs, { recursive: true });
+    fs.writeFileSync(pathm.join(newDirAbs, 'a2.pdf'), '%PDF-1.4 API-A');
+
+    const server = await startServer(createApiRouter(ctx).handle);
+    const port = server.address().port;
+    // 预检
+    const pr = await call(port, 'POST', '/api/spaces/default/dir/preview', { newDir: 'newdir' });
+    assert.strictEqual(pr.status, 200);
+    assert.strictEqual(pr.json.data.matched, 1);
+    assert.strictEqual(pr.json.data.willMissing, 0);
+    // 执行 rebind
+    const ap = await call(port, 'POST', '/api/spaces/default/dir', { newDir: 'newdir', mode: 'rebind' });
+    assert.strictEqual(ap.status, 200);
+    assert.strictEqual(ap.json.data.papersDir, 'newdir');
+    assert.strictEqual(ap.json.data.missing, 0);
+    const reload = await ctx.manager.getSpaceStore('default');
+    assert.strictEqual(reload.papers[id1].filename, 'a2.pdf');
+    server.close();
+  } finally {
+    fs.rmSync(ctx._root, { recursive: true, force: true });
+  }
+});
+
+test('POST /api/spaces/:id/dir 校验失败回 400（越界/非法 mode）', async () => {
+  const ctx = realCtx();
+  try {
+    await ctx.manager._dbMigrate();
+    await ctx.manager.ensureRegistry();
+    const server = await startServer(createApiRouter(ctx).handle);
+    const port = server.address().port;
+    const r1 = await call(port, 'POST', '/api/spaces/default/dir', { newDir: '../evil', mode: 'move' });
+    assert.strictEqual(r1.status, 400);
+    const r2 = await call(port, 'POST', '/api/spaces/default/dir', { newDir: 'okdir', mode: 'wat' });
+    assert.strictEqual(r2.status, 400);
+    server.close();
+  } finally {
+    fs.rmSync(ctx._root, { recursive: true, force: true });
+  }
+});
+
+test('GET /api/health 暴露 missingFuse（mock scanner 无 getFuseState 时回空对象）', async () => {
+  const store = { papers: {}, tags: [], topics: [], folders: [], concepts: [], settings: {} };
+  const router = createApiRouter(baseCtx(store));
+  const server = await startServer(router.handle);
+  const port = server.address().port;
+  const r = await call(port, 'GET', '/api/health');
+  assert.deepStrictEqual(r.json.data.missingFuse, {});
+  server.close();
+});

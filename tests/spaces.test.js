@@ -286,3 +286,117 @@ test('spacesView 返回 activeSpaceId + 精简列表（含 paperCount）', async
     await cleanup();
   }
 });
+
+// ---- papersDir 改绑：预检 → move/rebind（v3 绑定语义重设计）----
+
+const { sha1OfFile } = require('../lib/util');
+
+/** 在目录写一个内容确定的假 PDF，返回其 paper id（sha1 前 16） */
+async function writePdf(dir, name, content) {
+  fs.mkdirSync(dir, { recursive: true });
+  const fp = path.join(dir, name);
+  fs.writeFileSync(fp, content);
+  return (await sha1OfFile(fp)).slice(0, 16);
+}
+
+test('previewPapersDirChange：sha1 对账报告（匹配/将缺失/新文件）', async () => {
+  const { manager, papersRoot, cleanup } = await makeManager();
+  try {
+    await manager.ensureRegistry();
+    const oldDir = manager.resolveSpacePapersDir(DEFAULT_SPACE_ID);
+    // 库内两篇：p1 会出现在新目录（同内容），p2 不会
+    const id1 = await writePdf(oldDir, 'a.pdf', '%PDF-1.4 AAA');
+    const id2 = await writePdf(oldDir, 'b.pdf', '%PDF-1.4 BBB');
+    const store = await manager.getSpaceStore(DEFAULT_SPACE_ID);
+    store.papers[id1] = { id: id1, filename: 'a.pdf', title: 'A', status: 'ready' };
+    store.papers[id2] = { id: id2, filename: 'b.pdf', title: 'B', status: 'ready' };
+    await manager.saveSpaceStore(DEFAULT_SPACE_ID, store);
+    // 新目录：a 的同内容副本（可改名）+ 一个全新文件
+    await writePdf(path.join(papersRoot, 'newdir'), 'renamed-a.pdf', '%PDF-1.4 AAA');
+    await writePdf(path.join(papersRoot, 'newdir'), 'fresh.pdf', '%PDF-1.4 FRESH');
+    const r = await manager.previewPapersDirChange(DEFAULT_SPACE_ID, 'newdir');
+    assert.strictEqual(r.pdfCount, 2);
+    assert.strictEqual(r.matched, 1);
+    assert.strictEqual(r.willMissing, 1);
+    assert.strictEqual(r.newFiles, 1);
+    assert.strictEqual(r.missingList[0].id, id2);
+    // 预检不产生任何修改
+    assert.strictEqual(manager.getSpace(DEFAULT_SPACE_ID).papersDir, 'default');
+  } finally {
+    await cleanup();
+  }
+});
+
+test('applyPapersDirChange(move)：物理搬移 + filename/filepath 同步 + 撞名加 id 后缀', async () => {
+  const { manager, papersRoot, cleanup } = await makeManager();
+  try {
+    await manager.ensureRegistry();
+    const oldDir = manager.resolveSpacePapersDir(DEFAULT_SPACE_ID);
+    const id1 = await writePdf(oldDir, 'a.pdf', '%PDF-1.4 AAA');
+    const id2 = await writePdf(oldDir, 'b.pdf', '%PDF-1.4 BBB');
+    const store = await manager.getSpaceStore(DEFAULT_SPACE_ID);
+    store.papers[id1] = { id: id1, filename: 'a.pdf', title: 'A', status: 'ready' };
+    store.papers[id2] = { id: id2, filename: 'b.pdf', title: 'B', status: 'ready' };
+    await manager.saveSpaceStore(DEFAULT_SPACE_ID, store);
+    await manager._reloadFromDisk(); // 让 filepath 派生生效
+    // 新目录预置一个同名不同内容的 b.pdf（制造撞名）
+    await writePdf(path.join(papersRoot, 'moved'), 'b.pdf', '%PDF-1.4 OTHER');
+    const r = await manager.applyPapersDirChange(DEFAULT_SPACE_ID, 'moved', 'move');
+    assert.strictEqual(r.errors.length, 0);
+    assert.strictEqual(r.papersDir, 'moved');
+    const newDir = path.join(papersRoot, 'moved');
+    const reload = await manager.getSpaceStore(DEFAULT_SPACE_ID);
+    // a 直接搬过去
+    assert.ok(fs.existsSync(path.join(newDir, 'a.pdf')), 'a.pdf 应已物理搬移');
+    assert.ok(!fs.existsSync(path.join(oldDir, 'a.pdf')), '旧目录不应残留');
+    assert.strictEqual(reload.papers[id1].filepath, path.join(newDir, 'a.pdf'));
+    // b 撞名 → 加 (id) 后缀
+    const bName = 'b (' + id2 + ').pdf';
+    assert.strictEqual(reload.papers[id2].filename, bName, '撞名应加 id 后缀');
+    assert.ok(fs.existsSync(path.join(newDir, bName)));
+    assert.strictEqual(reload.papers[id2].status, 'ready');
+  } finally {
+    await cleanup();
+  }
+});
+
+test('applyPapersDirChange(rebind)：按 sha1 对账，匹配复活/无匹配标 missing', async () => {
+  const { manager, papersRoot, cleanup } = await makeManager();
+  try {
+    await manager.ensureRegistry();
+    const oldDir = manager.resolveSpacePapersDir(DEFAULT_SPACE_ID);
+    const id1 = await writePdf(oldDir, 'a.pdf', '%PDF-1.4 AAA');
+    const id2 = await writePdf(oldDir, 'b.pdf', '%PDF-1.4 BBB');
+    const store = await manager.getSpaceStore(DEFAULT_SPACE_ID);
+    store.papers[id1] = { id: id1, filename: 'a.pdf', title: 'A', status: 'missing' }; // 曾标缺失
+    store.papers[id2] = { id: id2, filename: 'b.pdf', title: 'B', status: 'ready' };
+    await manager.saveSpaceStore(DEFAULT_SPACE_ID, store);
+    // 用户自己把 a 挪去了新目录（改了名），b 没挪
+    await writePdf(path.join(papersRoot, 'rebound'), 'a-moved.pdf', '%PDF-1.4 AAA');
+    const r = await manager.applyPapersDirChange(DEFAULT_SPACE_ID, 'rebound', 'rebind');
+    assert.strictEqual(r.papersDir, 'rebound');
+    assert.strictEqual(r.missing, 1);
+    const reload = await manager.getSpaceStore(DEFAULT_SPACE_ID);
+    assert.strictEqual(reload.papers[id1].filename, 'a-moved.pdf', '匹配上的更新 filename');
+    assert.strictEqual(reload.papers[id1].status, 'ready', 'missing 被复活');
+    assert.strictEqual(reload.papers[id1].filepath, path.join(papersRoot, 'rebound', 'a-moved.pdf'));
+    assert.strictEqual(reload.papers[id2].status, 'missing', '无匹配标 missing');
+  } finally {
+    await cleanup();
+  }
+});
+
+test('applyPapersDirChange 校验：越界 / 与其他空间冲突 / 非法 mode', async () => {
+  const { manager, cleanup } = await makeManager();
+  try {
+    await manager.ensureRegistry();
+    const sp = await manager.createSpace({ name: 'B', papersDir: 'space-b' });
+    await assert.rejects(() => manager.applyPapersDirChange(DEFAULT_SPACE_ID, '../out', 'move'), /挂载根内/);
+    await assert.rejects(() => manager.applyPapersDirChange(DEFAULT_SPACE_ID, 'space-b', 'move'), /相同或互相嵌套/);
+    await assert.rejects(() => manager.applyPapersDirChange(DEFAULT_SPACE_ID, 'space-b/sub', 'move'), /嵌套/);
+    await assert.rejects(() => manager.applyPapersDirChange(DEFAULT_SPACE_ID, 'ok-dir', 'wat'), /mode/);
+    assert.ok(sp);
+  } finally {
+    await cleanup();
+  }
+});

@@ -763,3 +763,65 @@ test('createMultiSpaceScanner.extractConcepts/retagPapers/chatPaper 带 spaceId 
     cleanup();
   }
 });
+
+test('scan missing 熔断：大面积缺失（>5 且 >50%）不翻转状态', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pwfuse-'));
+  const store = { version: 2, tags: [], papers: {} };
+  // 库内 8 篇，目录为空（模拟挂载失效/目录被清空）
+  for (let i = 0; i < 8; i++) {
+    const id = 'p' + i;
+    store.papers[id] = { id, filename: id + '.pdf', filepath: path.join(dir, id + '.pdf'), status: 'ready', tags: [] };
+  }
+  const deps = {
+    parser: { extractText: async () => ({ text: '', charCount: 0, numPages: 0 }) },
+    arxiv: { cleanFilenameToTitle: (f) => f },
+    ai: { applySettingsOverride: (c) => c },
+    saveStore: async () => {},
+    mergeTags: () => {},
+    config: { ai: {}, arxiv: { enabled: false } },
+    rateLimitArxiv: async () => {},
+  };
+  const scanner = createScanner({ store, textStore: memTextStore(), papersDir: dir, deps, scanIntervalMs: 0 });
+  const r = await scanner.scan();
+  assert.strictEqual(r.missingFuse, true, '应触发熔断');
+  for (const p of Object.values(store.papers)) {
+    assert.strictEqual(p.status, 'ready', '熔断时不应翻转任何状态');
+  }
+  assert.ok(scanner.getFuseState(), '熔断状态可查询');
+  scanner.stop();
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('scan missing 少量缺失（≤5 或 ≤50%）正常标 missing，无熔断', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pwfuse2-'));
+  const store = { version: 2, tags: [], papers: {} };
+  // 8 篇，其中 6 篇文件真实存在、2 篇缺失 → 正常标记
+  const { sha1OfFile } = require('../lib/util');
+  for (let i = 0; i < 6; i++) {
+    fs.writeFileSync(path.join(dir, 'f' + i + '.pdf'), Buffer.from('%PDF-1.4 file' + i));
+  }
+  for (let i = 0; i < 6; i++) {
+    const fp = path.join(dir, 'f' + i + '.pdf');
+    const id = (await sha1OfFile(fp)).slice(0, 16);
+    store.papers[id] = { id, filename: 'f' + i + '.pdf', filepath: fp, fileSize: fs.statSync(fp).size, status: 'ready', tags: [] };
+  }
+  store.papers.gone1 = { id: 'gone1', filename: 'g1.pdf', filepath: path.join(dir, 'g1.pdf'), status: 'ready', tags: [] };
+  store.papers.gone2 = { id: 'gone2', filename: 'g2.pdf', filepath: path.join(dir, 'g2.pdf'), status: 'ready', tags: [] };
+  const deps = {
+    parser: { extractText: async () => ({ text: '', charCount: 0, numPages: 0 }) },
+    arxiv: { cleanFilenameToTitle: (f) => f },
+    ai: { applySettingsOverride: (c) => c },
+    saveStore: async () => {},
+    mergeTags: () => {},
+    config: { ai: {}, arxiv: { enabled: false } },
+    rateLimitArxiv: async () => {},
+  };
+  const scanner = createScanner({ store, textStore: memTextStore(), papersDir: dir, deps, scanIntervalMs: 0 });
+  const r = await scanner.scan();
+  assert.strictEqual(r.missingFuse, false);
+  assert.strictEqual(store.papers.gone1.status, 'missing');
+  assert.strictEqual(store.papers.gone2.status, 'missing');
+  assert.strictEqual(scanner.getFuseState(), null);
+  scanner.stop();
+  fs.rmSync(dir, { recursive: true, force: true });
+});
