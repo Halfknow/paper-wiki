@@ -29,7 +29,9 @@ lib/
                         **filepath 运行时派生**（papersDir+filename，load 时合成）；
                         textStoreBinder(id) 提供全文 {load,save,remove}；saveStoreBinder 单参闭包；
                         改绑三步语义 previewPapersDirChange / applyPapersDirChange(move|rebind)
-                        + assertNoDirConflict（禁止空间目录相同/互相嵌套）
+                        + assertNoDirConflict（禁止空间目录相同/互相嵌套）；
+                        **名↔文件夹联动**：createSpace 默认目录=空间名（净化），renameSpace 物理
+                        rename 目录同步（仅大小写差异视为同一目录放行；冲突整体拒绝）
   scanner.js ★         增量扫描 + 串行流水线（parse→arxiv→ai）+ extractConcepts + drain
                         createScanner({store, papersDir, textStore, deps, ...})：全文经 textStore 读写 PG；
                         createMultiSpaceScanner：多空间共享单一串行队列（遵守陷阱：串行防限速），

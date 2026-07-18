@@ -70,8 +70,8 @@ test('createSpace 建新空间（默认根内子目录 <id>）并可取空 store
     const store = await manager.getSpaceStore(sp.id);
     assert.deepStrictEqual(store.papers, {});
     const sp2 = await manager.createSpace({ name: '无目录' });
-    assert.strictEqual(sp2.papersDir, sp2.id); // 默认 <id> 子目录
-    assert.ok(fs.existsSync(path.join(papersRoot, sp2.id)));
+    assert.strictEqual(sp2.papersDir, '无目录'); // 默认用空间名做子目录（名↔文件夹联动）
+    assert.ok(fs.existsSync(path.join(papersRoot, '无目录')));
   } finally {
     await cleanup();
   }
@@ -89,14 +89,84 @@ test('createSpace 拒绝越界目录与嵌套冲突', async () => {
   }
 });
 
-test('renameSpace 改名并持久化', async () => {
+test('renameSpace 改名并持久化 + 文件夹同步改名（名↔文件夹联动）', async () => {
+  const { manager, papersRoot, cleanup } = await makeManager();
+  try {
+    await manager.ensureRegistry();
+    // default 初始目录 'default'，放一个文件验证物理迁移
+    const oldDir = manager.resolveSpacePapersDir(DEFAULT_SPACE_ID);
+    fs.writeFileSync(path.join(oldDir, 'keep.pdf'), 'x');
+    const store = await manager.getSpaceStore(DEFAULT_SPACE_ID);
+    store.papers.p1 = { id: 'p1', filename: 'keep.pdf', status: 'ready' };
+    await manager.saveSpaceStore(DEFAULT_SPACE_ID, store);
+
+    const sp = await manager.renameSpace(DEFAULT_SPACE_ID, '我的库');
+    assert.strictEqual(sp.name, '我的库');
+    assert.strictEqual(sp.papersDir, '我的库', '文件夹名应同步为空间名');
+    assert.ok(fs.existsSync(path.join(papersRoot, '我的库', 'keep.pdf')), '文件应随目录改名');
+    assert.ok(!fs.existsSync(path.join(papersRoot, 'default')), '旧目录不再存在');
+    // 内存 store 的派生 filepath 已刷新
+    const cur = await manager.getSpaceStore(DEFAULT_SPACE_ID);
+    assert.strictEqual(cur.papers.p1.filepath, path.join(papersRoot, '我的库', 'keep.pdf'));
+    await manager._reloadFromDisk();
+    assert.strictEqual(manager.getSpace(DEFAULT_SPACE_ID).name, '我的库');
+    assert.strictEqual(manager.getSpace(DEFAULT_SPACE_ID).papersDir, '我的库');
+  } finally {
+    await cleanup();
+  }
+});
+
+test('renameSpace 名称含非法字符 → 目录名净化；净化后为空 → 回退空间 id', async () => {
+  const { manager, papersRoot, cleanup } = await makeManager();
+  try {
+    await manager.ensureRegistry();
+    const sp = await manager.createSpace({ name: '正常' });
+    await manager.renameSpace(sp.id, 'A/B:C*D?');
+    assert.strictEqual(manager.getSpace(sp.id).papersDir, 'A B C D', '非法字符净化为空格并折叠');
+    assert.ok(fs.existsSync(path.join(papersRoot, 'A B C D')));
+    await manager.renameSpace(sp.id, '///***');
+    assert.strictEqual(manager.getSpace(sp.id).papersDir, sp.id, '净化后为空 → 回退 id');
+  } finally {
+    await cleanup();
+  }
+});
+
+test('renameSpace 仅大小写差异改名（llm → LLM）在大小写不敏感文件系统上放行', async () => {
+  const { manager, papersRoot, cleanup } = await makeManager();
+  try {
+    await manager.ensureRegistry();
+    const sp = await manager.createSpace({ name: 'llm' });
+    fs.writeFileSync(path.join(papersRoot, 'llm', 'x.pdf'), 'x');
+    const r = await manager.renameSpace(sp.id, 'LLM');
+    assert.strictEqual(r.papersDir, 'LLM');
+    assert.ok(fs.existsSync(path.join(papersRoot, 'LLM', 'x.pdf')));
+    const names = fs.readdirSync(papersRoot);
+    assert.ok(names.includes('LLM') && !names.includes('llm'), '目录实际大小写应已更新');
+  } finally {
+    await cleanup();
+  }
+});
+
+test('renameSpace 目标目录冲突 → 拒绝且名称不变', async () => {
   const { manager, cleanup } = await makeManager();
   try {
     await manager.ensureRegistry();
-    const sp = await manager.renameSpace(DEFAULT_SPACE_ID, '我的库');
-    assert.strictEqual(sp.name, '我的库');
-    await manager._reloadFromDisk();
-    assert.strictEqual(manager.getSpace(DEFAULT_SPACE_ID).name, '我的库');
+    const a = await manager.createSpace({ name: 'AAA' });
+    await manager.createSpace({ name: 'BBB' });
+    await assert.rejects(() => manager.renameSpace(a.id, 'BBB'), /相同或互相嵌套|已存在/);
+    assert.strictEqual(manager.getSpace(a.id).name, 'AAA', '失败时名称保持不变');
+    assert.strictEqual(manager.getSpace(a.id).papersDir, 'AAA');
+  } finally {
+    await cleanup();
+  }
+});
+
+test('createSpace 同名空间 → 目录冲突拒绝（名↔文件夹联动的自然约束）', async () => {
+  const { manager, cleanup } = await makeManager();
+  try {
+    await manager.ensureRegistry();
+    await manager.createSpace({ name: '重名' });
+    await assert.rejects(() => manager.createSpace({ name: '重名' }), /相同或互相嵌套/);
   } finally {
     await cleanup();
   }

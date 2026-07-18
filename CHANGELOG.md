@@ -2,6 +2,16 @@
 
 本文件记录 PaperWiki 每个版本的显著变更。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/)，版本号语义化。
 
+## [3.0.1] — 2026-07-18
+
+### Added — 空间名↔文件夹名联动
+- **createSpace**：留空 papersDir 时默认用净化后的空间名做子目录（原为空间 id）；同名空间因目录冲突被自然拒绝。
+- **renameSpace**：改名同步物理 rename 绑定目录（filepath 派生自动对齐，扫描暂停保护）；目录被占用/冲突时整体拒绝（名称也不改）；仅大小写差异（llm→LLM）视为同一目录放行（Windows/NTFS 大小写不敏感，existsSync 会误报）。
+- 存量空间已执行同步：LLM / Quant / GP 三空间目录与空间名一致，0 缺失。
+
+### Fixed
+- 空间管理编辑态互斥：展开新卡片编辑时自动取消上一张（丢弃未保存改动）。
+
 ## [3.0.0] — 2026-07-18
 
 > **生产化重构：PostgreSQL 持久化 + Docker Compose 部署 + 空间绑定语义重设计。** pm2 + per-space papers.json 退役；前端与业务逻辑不变（改动严格收口在持久化层之下）。设计文档见 `docs/superpowers/specs/2026-07-18-postgres-docker-migration-design.md`。
