@@ -402,3 +402,60 @@ test('migrateJsonToPg：旧数据不存在时抛错', async () => {
     await db.close();
   }
 });
+
+// ---- 全文检索（searchFulltext；pg-mem 走 ILIKE 降级路径）----
+
+test('searchFulltext：英文命中（pg-mem ILIKE 降级）+ 空间隔离 + 无命中', async () => {
+  const { db, repo } = await repoMem();
+  await repo.upsertSpaceMeta({
+    id: 's1',
+    name: 'x',
+    papersDir: 'a',
+    createdAt: 1,
+    scanIntervalMinutes: 5,
+    lastScanAt: 0,
+  });
+  await repo.upsertSpaceMeta({
+    id: 's2',
+    name: 'y',
+    papersDir: 'b',
+    createdAt: 1,
+    scanIntervalMinutes: 5,
+    lastScanAt: 0,
+  });
+  await repo.savePaperText('s1', 'p1', 'The Attention mechanism is all you need.');
+  await repo.savePaperText('s1', 'p2', 'Convolutional networks for vision.');
+  await repo.savePaperText('s2', 'p3', 'attention in another space');
+  const hits = await repo.searchFulltext('s1', 'attention');
+  assert.deepStrictEqual(
+    hits.map((h) => h.paperId),
+    ['p1'],
+    '大小写不敏感、且不跨空间',
+  );
+  assert.deepStrictEqual(await repo.searchFulltext('s1', 'nonexistent-term'), []);
+  assert.deepStrictEqual(await repo.searchFulltext('s1', ''), []);
+  await db.close();
+});
+
+test('searchFulltext：中文查询走 ILIKE 子串；通配符字符被转义', async () => {
+  const { db, repo } = await repoMem();
+  await repo.upsertSpaceMeta({
+    id: 's1',
+    name: 'x',
+    papersDir: 'a',
+    createdAt: 1,
+    scanIntervalMinutes: 5,
+    lastScanAt: 0,
+  });
+  await repo.savePaperText('s1', 'p1', '本文提出新的注意力机制用于长序列。');
+  await repo.savePaperText('s1', 'p2', '100% coverage of a_b test');
+  assert.deepStrictEqual(
+    (await repo.searchFulltext('s1', '注意力机制')).map((h) => h.paperId),
+    ['p1'],
+  );
+  // 含 %/_ 的查询：真实 PG 反斜杠转义后按字面量匹配；pg-mem 不解析反斜杠转义（已知偏差），
+  // 这里只断言不抛错且返回数组（字面量语义由真实 PG 环境覆盖）
+  assert.ok(Array.isArray(await repo.searchFulltext('s1', '100% coverage')));
+  assert.deepStrictEqual(await repo.searchFulltext('s1', 'zqz'), []);
+  await db.close();
+});

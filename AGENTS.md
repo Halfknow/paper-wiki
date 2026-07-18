@@ -24,6 +24,8 @@ lib/
                         **filepath/fulltextPath 派生字段不落库不参与 diff**；papers.extra 兜底未知字段
   store.js   ★         数据模型 v2 纯逻辑（emptyStore/migrateStore/normalizePaper/merge*）+
                         文件版 loadStore/saveStore（仅迁移脚本用）+ backupStoreObject（PG→JSON 快照）
+  search.js  ★（v3.1）全文检索辅助：splitTerms（CJK 整串/英文分词）+ buildSnippets
+                        （命中片段提取+HTML 转义+<mark> 高亮，统一 tsquery/ILIKE 两路径）
   spaces.js  ★（v3）  空间管理器：注册表/store 全走 repo；papersDir 一律挂载根内相对路径
                         （resolvePapersDir 越界拒绝、default 绑 'default' 子目录）；
                         **filepath 运行时派生**（papersDir+filename，load 时合成）；
@@ -301,6 +303,13 @@ arXiv 导入 (POST /api/import { url, meta? }):
     `schema_migrations` 再建；migration SQL 逐条执行且先剥 `--` 注释行。单测全用 pg-mem（无需真实 PG）；
     e2e/pg-smoke 才用真实 postgres。
 
+27. **全文检索双路径（v3.1，GET /api/search）**：英文查询走 `to_tsvector('english')`（websearch_to_tsquery +
+    ts_rank，吃 002 的表达式 GIN 索引，词干化）；中文查询与 tsvector 不可用后端（pg-mem）走 ILIKE 子串降级。
+    **migration 002 是 `.optional.`**：pg-mem 建不了 GIN，migrate() 对 optional 失败跳过不记账（真实 PG 正常记账）。
+    snippet 在 Node 侧生成（lib/search.buildSnippets，只 load 命中篇全文），输出**已转义 HTML**（<mark> 高亮），
+    前端直接 innerHTML——改 snippet 逻辑勿在前端二次转义。前端入口：搜索框**回车**进全文模式（即时筛选不变），
+    输入变化/Esc/× 退出。已知偏差：含字面 %/_ 的查询在 pg-mem 中行为与真实 PG 不同（反斜杠转义解析差异）。
+
 ## 工程化
 
 - **测试**：`npm test`（node --test，225 例，覆盖全 lib；db/spaces/scanner/api 用 pg-mem 无需真实 PG）；
@@ -339,5 +348,5 @@ npm run format:check      # Prettier 检查
 - 概念清单去重为纯文本归一化，无语义合并提示。
 - 写锁是进程内的（repository writeChain），靠单容器单进程守护；多副本部署需改造（advisory lock 等）。
 - 批注已实现保存+回显；写回 PDF（XFDF）待办。
-- Postgres 已就位但未启用 tsvector 全文检索 / pgvector 向量检索（schema 可平滑演进）。
+- pgvector 向量检索（语义相似推荐）未启用（schema 可平滑演进）；tsvector 全文检索已于 v3.1 上线。
 - 旧 `data/` 目录已归档为 `data-legacy-20260718.zip`（gitignore）后删除；解压回 `data/` 即可重跑迁移脚本回滚。

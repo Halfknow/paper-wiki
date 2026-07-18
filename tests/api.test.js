@@ -1533,3 +1533,54 @@ test('GET /api/health 暴露 missingFuse（mock scanner 无 getFuseState 时回�
   assert.deepStrictEqual(r.json.data.missingFuse, {});
   server.close();
 });
+
+// ---- 全文检索路由（GET /api/search）----
+
+test('GET /api/search：命中 snippet 高亮 + 元数据 enrich + 空查询 400', async () => {
+  const ctx = realCtx();
+  try {
+    await ctx.manager._dbMigrate();
+    await ctx.manager.ensureRegistry();
+    const store = await ctx.manager.getSpaceStore('default');
+    store.papers.pA = {
+      id: 'pA',
+      filename: 'a.pdf',
+      title: 'Attention Paper',
+      authors: ['Alice'],
+      year: 2024,
+      status: 'ready',
+      tags: ['llm'],
+      topics: [],
+    };
+    store.papers.pB = {
+      id: 'pB',
+      filename: 'b.pdf',
+      title: 'CNN Paper',
+      authors: ['Bob'],
+      year: 2020,
+      status: 'ready',
+      tags: [],
+      topics: [],
+    };
+    await ctx.manager.saveSpaceStore('default', store);
+    const ts = ctx.manager.textStoreBinder('default');
+    await ts.save('pA', 'We study the attention mechanism in transformers. Attention scales quadratically.');
+    await ts.save('pB', 'Convolutions are local operators.');
+
+    const server = await startServer(createApiRouter(ctx).handle);
+    const port = server.address().port;
+    const r = await call(port, 'GET', '/api/search?q=attention');
+    assert.strictEqual(r.status, 200);
+    assert.strictEqual(r.json.data.total, 1);
+    const hit = r.json.data.results[0];
+    assert.strictEqual(hit.id, 'pA');
+    assert.strictEqual(hit.title, 'Attention Paper');
+    assert.strictEqual(hit.matches, 2);
+    assert.ok(hit.snippets[0].includes('<mark>attention</mark>') || hit.snippets[0].includes('<mark>Attention</mark>'));
+    const r400 = await call(port, 'GET', '/api/search?q=');
+    assert.strictEqual(r400.status, 400);
+    server.close();
+  } finally {
+    fs.rmSync(ctx._root, { recursive: true, force: true });
+  }
+});

@@ -2,6 +2,14 @@
 
 本文件记录 PaperWiki 每个版本的显著变更。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/)，版本号语义化。
 
+## [3.1.0] — 2026-07-18
+
+### Added — 论文正文全文检索（tsvector）
+- **入口**：顶栏搜索框**回车**进入全文检索（输入时的元数据即时筛选保持不变）；结果视图含 banner（查询词/命中数/退出）+ 每篇最多 3 条**高亮命中片段**（黄色 <mark>）+ 命中次数徽标；点击结果联动详情页；输入变化 / Esc / × 退出。
+- **后端 `GET /api/search`**：英文查询走 `to_tsvector('english')` websearch 语法 + `ts_rank` 排序（词干化：mechanisms 命中 mechanism），吃 `002-fulltext-gin.optional.sql` 的表达式 GIN 索引；中文查询自动降级 ILIKE 子串匹配（按命中次数排序）。
+- **`lib/search.js`**：查询分词（CJK 整串）+ snippet 提取（窗口合并、HTML 转义 + <mark>，服务端出安全 HTML）。
+- migrate() 支持 `.optional.` 迁移（pg-mem 不支持 tsvector 时跳过不记账，查询侧自带 ILIKE 降级）。
+
 ## [3.0.1] — 2026-07-18
 
 ### Added — 空间名↔文件夹名联动

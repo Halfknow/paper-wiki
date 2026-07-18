@@ -45,6 +45,7 @@ const state = {
   stats: null, // 全局统计（total/starred/unread 等），不随筛选变，供侧栏徽标
   globalCounts: null, // 兜底：旧后端 stats 无 starred/unread 时，前端独立算的全局计数
   current: null, detail: null, tab: 'summary',
+  ft: null, // 全文检索模式：{ query, results:[{id,title,snippets,matches,...}] }；null=普通列表
   aiModels: null, // Phase 2 模型切换器：{ models, default, current, source }（GET /api/ai/models 缓存）
   // 当前空间：localStorage 持久化用户选择；启动时从 /api/spaces 拉 active 校验
   space: localStorage.getItem('pw-space') || '',
@@ -534,10 +535,59 @@ function setView(patch) {
 }
 
 // ---- 列表 ----
+/** 全文检索（搜索框回车触发）：GET /api/search 命中论文 + 高亮片段，列表切到结果视图。 */
+async function runFulltextSearch(query) {
+  state.ft = { query, results: null }; // results=null → loading 态
+  renderList();
+  try {
+    const r = await jget('/api/search?q=' + encodeURIComponent(query));
+    if (!state.ft || state.ft.query !== query) return; // 已被新查询/退出覆盖
+    state.ft.results = (r && r.data && r.data.results) || [];
+  } catch (e) {
+    if (state.ft) state.ft.results = [];
+    toast(e.message || '全文检索失败', 'error');
+  }
+  renderList();
+}
+
+/** 渲染全文检索结果视图（banner + 命中论文卡 + 高亮 snippet；snippet 由后端转义并 <mark>） */
+function renderFulltextResults(ul) {
+  const ft = state.ft;
+  const banner = document.createElement('li');
+  banner.className = 'paper-item ft-banner';
+  banner.innerHTML = `
+    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+    <span class="ft-banner-text">全文检索「${escapeHtml(ft.query)}」${ft.results == null ? '…' : ` · 命中 ${ft.results.length} 篇`}</span>
+    <button class="ft-banner-close" title="退出全文检索 (Esc)" aria-label="退出全文检索">×</button>`;
+  banner.querySelector('.ft-banner-close').onclick = () => { state.ft = null; renderList(); };
+  ul.appendChild(banner);
+  if (ft.results == null) {
+    ul.insertAdjacentHTML('beforeend', '<li class="paper-item empty-list">正在检索论文正文…</li>');
+    return;
+  }
+  if (!ft.results.length) {
+    ul.insertAdjacentHTML('beforeend', '<li class="paper-item empty-list">正文中未找到该关键词。英文词支持词形变化（mechanism/mechanisms），中文按子串匹配。</li>');
+    return;
+  }
+  for (const p of ft.results) {
+    const li = document.createElement('li');
+    li.className = 'paper-item ft-item' + (state.current === p.id ? ' active' : '');
+    const title = escapeHtml(p.title || '') + (p.rating > 0 ? starBadge(p.rating) : '');
+    const meta = escapeHtml(`${(p.authors || [])[0] || '未知作者'}${p.year ? ' · ' + p.year : ''}`);
+    li.innerHTML = `
+      <div class="pt"><span class="dot ${statusDot(p)}"></span>${title}</div>
+      <div class="pm"><span>${meta}</span><span class="mini-metric">${p.matches} 处命中</span></div>
+      <div class="ft-snips">${(p.snippets || []).map((sn) => `<div class="ft-snip">${sn}</div>`).join('')}</div>`;
+    li.onclick = () => select(p.id);
+    ul.appendChild(li);
+  }
+}
+
 function renderList() {
   const ul = $('paper-list');
   ul.innerHTML = '';
   ul.classList.toggle('compact', state.compact);
+  if (state.ft) return renderFulltextResults(ul);
   // 视图密度分段控件：两个按钮固定图标，按 state.compact 切 active 高亮（不再动态换 innerHTML）
   const vc = $('view-compact'), vf = $('view-comfort');
   if (vc && vf) {
@@ -3346,7 +3396,24 @@ function bindListSplitter() {
 // ---- 绑定事件 ----
 function bind() {
   let t;
-  $('search').oninput = (e) => { state.filter.q = e.target.value; clearTimeout(t); t = setTimeout(refresh, 250); };
+  $('search').oninput = (e) => {
+    if (state.ft) { state.ft = null; renderList(); } // 修改查询即退出全文检索模式，恢复即时筛选
+    state.filter.q = e.target.value; clearTimeout(t); t = setTimeout(refresh, 250);
+  };
+  // 回车 = 全文检索（正文级，PG tsvector/子串）；Esc = 清空并退出
+  $('search').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const q = $('search').value.trim();
+      if (q) runFulltextSearch(q);
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      $('search').value = '';
+      state.filter.q = '';
+      if (state.ft) { state.ft = null; renderList(); }
+      refresh();
+    }
+  });
   $('filter-status').onchange = (e) => {
     state.filter.status = e.target.value;
     state.filter.readStatus = '';
