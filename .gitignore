@@ -35,3 +35,6 @@ pg-backups/
 # agent 工作目录
 .zcode/
 .playwright-cli/
+
+# 旧 JSON 数据归档
+data-legacy-*.zip

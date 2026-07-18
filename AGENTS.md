@@ -66,7 +66,6 @@ tests/fixtures/        sample.pdf（2 页带文本层，e2e 用）
 config.json            实际配置（gitignore，含 key）；模板 config.example.json（作为各空间 applySettingsOverride 基底）
 Dockerfile / docker-compose.yml / .env(.example)  v3 部署（app+postgres；PAPERS_ROOT bind mount）
 papers/                本地开发时的挂载根（gitignore）；生产 = .env 的 PAPERS_ROOT，每空间一个子目录
-data/                  旧版 JSON 数据（仅供迁移脚本读取；运行时不再使用）
 .github/workflows/ci.yml  CI：lint+unit / pg-smoke / e2e 三 job（后两个带 postgres service）
 .prettierrc/.eslintrc.json  代码质量（仅格式化 lib/server/tests，public/ 排除）
 ```
@@ -341,4 +340,4 @@ npm run format:check      # Prettier 检查
 - 写锁是进程内的（repository writeChain），靠单容器单进程守护；多副本部署需改造（advisory lock 等）。
 - 批注已实现保存+回显；写回 PDF（XFDF）待办。
 - Postgres 已就位但未启用 tsvector 全文检索 / pgvector 向量检索（schema 可平滑演进）。
-- 旧 `data/` 目录保留只读（迁移脚本的数据源 + 回滚保险），确认稳定后可自行归档删除。
+- 旧 `data/` 目录已归档为 `data-legacy-20260718.zip`（gitignore）后删除；解压回 `data/` 即可重跑迁移脚本回滚。
