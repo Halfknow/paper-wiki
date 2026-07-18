@@ -1,0 +1,15 @@
+node_modules
+data
+papers
+backups
+docs
+tests
+.git
+.github
+.zcode
+.playwright-cli
+config.json
+.env
+*.md
+ecosystem.config.cjs
+playwright.config.*

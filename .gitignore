@@ -26,3 +26,12 @@ Thumbs.db
 playwright-report/
 test-results/
 
+
+# 部署（v3）
+.env
+backups/
+pg-backups/
+
+# agent 工作目录
+.zcode/
+.playwright-cli/

@@ -1,8 +1,8 @@
 {
   "host": "127.0.0.1",
   "port": 8888,
-  "papersDir": "papers",
   "scanIntervalMinutes": 5,
+  "databaseUrl": "",
   "ai": {
     "baseURL": "http://your-newapi-gateway/v1",
     "apiKey": "sk-xxx",
@@ -13,6 +13,7 @@
   },
   "arxiv": { "enabled": true, "titleSimilarityThreshold": 0.75, "minIntervalMs": 3000 },
   "discover": {
+    "queryEngine": "gateway",
     "claudeTimeoutMs": 60000,
     "maxResults": 40,
     "perAxis": 25,
