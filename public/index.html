@@ -726,6 +726,62 @@
     </div>
   </div>
 
+  <!-- 更改文件夹 三步向导：路径 → 预检报告+模式 → 结果（v3 绑定语义：预检→move/rebind→原子执行） -->
+  <div class="modal-mask" id="dir-wizard">
+    <div class="modal">
+      <h3 id="dw-title">更改文件夹</h3>
+      <!-- 步骤 1：输入新路径 -->
+      <div class="dw-step" id="dw-step-input">
+        <p class="modal-hint">路径相对论文挂载根（每个空间一个子目录）。更改前会先预检：按内容指纹对账新目录里的文件，你能看到全部后果再决定。</p>
+        <div class="dw-field">
+          <span class="lbl">新文件夹</span>
+          <input type="text" id="dw-dir-input" placeholder="如：my-papers" autocomplete="off" />
+        </div>
+        <p class="dw-error" id="dw-input-error" hidden></p>
+        <div class="actions">
+          <span class="spacer"></span>
+          <button class="btn ghost sm" id="dw-cancel-1">取消</button>
+          <button class="btn sm" id="dw-preview-btn">预检</button>
+        </div>
+      </div>
+      <!-- 步骤 2：预检报告 + 模式选择 -->
+      <div class="dw-step" id="dw-step-report" hidden>
+        <div class="dw-report" id="dw-report"></div>
+        <div class="dw-modes">
+          <label class="dw-mode">
+            <input type="radio" name="dw-mode" value="move" checked />
+            <span class="dw-mode-main">
+              <span class="dw-mode-title">移动文件到新文件夹</span>
+              <span class="dw-mode-desc">把本空间已入库的 PDF 从旧目录物理搬到新目录（重名自动加后缀）</span>
+            </span>
+          </label>
+          <label class="dw-mode">
+            <input type="radio" name="dw-mode" value="rebind" />
+            <span class="dw-mode-main">
+              <span class="dw-mode-title">仅重新绑定（文件已在新位置）</span>
+              <span class="dw-mode-desc">不动文件，按内容指纹对账：匹配的自动接上，其余标为缺失</span>
+            </span>
+          </label>
+        </div>
+        <p class="dw-error" id="dw-report-error" hidden></p>
+        <div class="actions">
+          <button class="btn ghost sm" id="dw-back">上一步</button>
+          <span class="spacer"></span>
+          <button class="btn ghost sm" id="dw-cancel-2">取消</button>
+          <button class="btn sm" id="dw-apply-btn">执行</button>
+        </div>
+      </div>
+      <!-- 步骤 3：结果 -->
+      <div class="dw-step" id="dw-step-result" hidden>
+        <div class="dw-report" id="dw-result"></div>
+        <div class="actions">
+          <span class="spacer"></span>
+          <button class="btn sm" id="dw-done">完成</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- 依赖 -->
   <script src="/vendor/marked.js"></script>
   <script src="/vendor/dompurify.js"></script>

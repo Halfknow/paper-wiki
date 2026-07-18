@@ -4078,7 +4078,9 @@ function renderSpaceAdmin() {
   }
 }
 
-/** 把某张展示卡片就地替换为编辑态输入框（名称 + 文件夹 + 保存/取消/删除）。 */
+/** 把某张展示卡片就地替换为编辑态（名称可改；文件夹只读展示 + 「更改文件夹…」进向导）。
+ *  v3：文件夹改绑不再是「改字符串即生效」——必须走 预检→选模式（移动/重绑）→原子执行 的向导，
+ *  否则会出现「绑定改了但文件和库数据不同步」的历史 bug。 */
 function renderSpaceAdminEdit(card, s, isDefault) {
   card.className = 'sa-edit';
   card.innerHTML = `
@@ -4088,7 +4090,8 @@ function renderSpaceAdminEdit(card, s, isDefault) {
     </div>
     <div class="sa-edit-field dir">
       <span class="lbl">文件夹</span>
-      <input type="text" data-k="dir" value="${escapeHtml(s.papersDir || 'papers')}" title="绑定的论文文件夹（相对项目根或绝对路径）" />
+      <span class="sa-dir-ro" title="${escapeHtml(s.papersDir || '')}">${escapeHtml(s.papersDir || '')}</span>
+      <button class="sa-btn" data-act="chdir" title="预检 → 移动文件或仅重新绑定 → 原子执行">更改文件夹…</button>
     </div>
     <div class="sa-edit-actions">
       ${isDefault ? '' : '<button class="sa-btn danger" data-act="del">删除</button>'}
@@ -4096,19 +4099,17 @@ function renderSpaceAdminEdit(card, s, isDefault) {
       <button class="sa-btn" data-act="save">保存</button>
     </div>`;
   const nameInput = card.querySelector('[data-k="name"]');
-  const dirInput = card.querySelector('[data-k="dir"]');
   const saveBtn = card.querySelector('[data-act="save"]');
   const cancelBtn = card.querySelector('[data-act="cancel"]');
   const delBtn = card.querySelector('[data-act="del"]');
+  card.querySelector('[data-act="chdir"]').onclick = () => openDirWizard(s);
 
   saveBtn.onclick = async () => {
     const name = nameInput.value.trim();
-    const dir = dirInput.value.trim();
     if (!name) { toast('空间名不能为空', 'error'); return; }
-    if (!dir) { toast('文件夹路径不能为空', 'error'); return; }
     saveBtn.disabled = true;
     try {
-      const r = await PATCH('/api/spaces/' + encodeURIComponent(s.id), { name, papersDir: dir });
+      const r = await PATCH('/api/spaces/' + encodeURIComponent(s.id), { name });
       if (r && r.ok) {
         toast('已保存', 'success');
         await loadSpaces();
@@ -4144,7 +4145,131 @@ function renderSpaceAdminEdit(card, s, isDefault) {
     else if (e.key === 'Escape') { e.preventDefault(); cancelBtn.click(); }
   };
   nameInput.addEventListener('keydown', onKey);
-  dirInput.addEventListener('keydown', onKey);
+}
+
+// ---------------------------------------------------------------------------
+// 更改文件夹 三步向导（v3 绑定语义：预检 → move/rebind → 原子执行）
+// ---------------------------------------------------------------------------
+
+let dirWizardSpace = null; // 当前向导操作的空间对象
+
+function dwShow(step) {
+  for (const id of ['dw-step-input', 'dw-step-report', 'dw-step-result']) $(id).hidden = id !== step;
+}
+
+function dwError(id, msg) {
+  const el = $(id);
+  el.textContent = msg || '';
+  el.hidden = !msg;
+}
+
+function openDirWizard(s) {
+  dirWizardSpace = s;
+  $('dw-title').textContent = `更改文件夹 — ${s.name}`;
+  $('dw-dir-input').value = s.papersDir || '';
+  dwError('dw-input-error', '');
+  dwError('dw-report-error', '');
+  dwShow('dw-step-input');
+  $('dir-wizard').classList.add('active');
+  setTimeout(() => { $('dw-dir-input').focus(); $('dw-dir-input').select(); }, 20);
+}
+
+function closeDirWizard() {
+  $('dir-wizard').classList.remove('active');
+  dirWizardSpace = null;
+}
+
+/** 步骤 1 → 2：调预检接口并渲染对账报告。 */
+async function dwPreview() {
+  const s = dirWizardSpace;
+  const newDir = $('dw-dir-input').value.trim();
+  if (!newDir) { dwError('dw-input-error', '文件夹路径不能为空'); return; }
+  if (newDir === s.papersDir) { dwError('dw-input-error', '与当前绑定相同，无需更改'); return; }
+  const btn = $('dw-preview-btn');
+  btn.disabled = true;
+  dwError('dw-input-error', '');
+  try {
+    const r = await POST(`/api/spaces/${encodeURIComponent(s.id)}/dir/preview`, { newDir });
+    if (!r || !r.ok) { dwError('dw-input-error', (r && r.error) || '预检失败'); return; }
+    const d = r.data;
+    const rows = [
+      ['新目录中的 PDF', `${d.pdfCount} 个`],
+      ['与本库匹配（内容指纹）', `${d.matched} 篇`],
+      ['将标记缺失', `${d.willMissing} 篇`, d.willMissing > 0 ? 'warn' : ''],
+      ['新文件（将入库处理）', `${d.newFiles} 个`],
+    ];
+    let html = `<div class="dw-report-grid">${rows
+      .map(([k, v, cls]) => `<span class="dw-rk">${k}</span><span class="dw-rv ${cls || ''}">${v}</span>`)
+      .join('')}</div>`;
+    if (d.willMissing > 0) {
+      const items = d.missingList
+        .slice(0, 10)
+        .map((m) => `<li>${escapeHtml(m.title || m.filename || m.id)}</li>`)
+        .join('');
+      html += `<details class="dw-missing"><summary>将缺失的论文（前 ${Math.min(10, d.missingList.length)} 篇）</summary><ul>${items}</ul></details>`;
+      html += `<p class="dw-note">缺失只是标记，数据（总结/批注/笔记）都还在；选「移动文件」可把旧目录里仍存在的文件一并搬过去。</p>`;
+    }
+    $('dw-report').innerHTML = html;
+    $('dw-report').dataset.newDir = newDir;
+    dwShow('dw-step-report');
+  } catch (e) {
+    dwError('dw-input-error', e.message || '预检失败');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+/** 步骤 2 → 3：执行 move / rebind，渲染结果。执行期间后端会暂停扫描并在完成后补扫一轮。 */
+async function dwApply() {
+  const s = dirWizardSpace;
+  const newDir = $('dw-report').dataset.newDir;
+  const mode = document.querySelector('input[name="dw-mode"]:checked').value;
+  const btn = $('dw-apply-btn');
+  btn.disabled = true;
+  btn.textContent = '执行中…';
+  dwError('dw-report-error', '');
+  try {
+    const r = await POST(`/api/spaces/${encodeURIComponent(s.id)}/dir`, { newDir, mode });
+    if (!r || !r.ok) { dwError('dw-report-error', (r && r.error) || '执行失败'); return; }
+    const d = r.data;
+    let html = `<p class="dw-ok">已${mode === 'move' ? '移动文件并' : ''}重新绑定到 <b>${escapeHtml(d.papersDir)}</b></p>`;
+    html += `<div class="dw-report-grid">`;
+    html += `<span class="dw-rk">当前缺失</span><span class="dw-rv ${d.missing > 0 ? 'warn' : ''}">${d.missing} 篇</span>`;
+    if (d.errors && d.errors.length) {
+      html += `<span class="dw-rk">搬移失败</span><span class="dw-rv warn">${d.errors.length} 篇</span>`;
+    }
+    html += `</div>`;
+    if (d.errors && d.errors.length) {
+      html += `<details class="dw-missing"><summary>失败明细</summary><ul>${d.errors
+        .map((e2) => `<li>${escapeHtml(e2.id)}: ${escapeHtml(e2.error)}</li>`)
+        .join('')}</ul></details>`;
+    }
+    html += `<p class="dw-note">已触发一轮扫描收尾；新文件会自动入库处理。</p>`;
+    $('dw-result').innerHTML = html;
+    dwShow('dw-step-result');
+    await loadSpaces();
+    renderSpaceAdmin();
+    if (state.space === s.id) await refresh();
+  } catch (e) {
+    dwError('dw-report-error', e.message || '执行失败');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '执行';
+  }
+}
+
+function bindDirWizard() {
+  $('dw-preview-btn').onclick = dwPreview;
+  $('dw-apply-btn').onclick = dwApply;
+  $('dw-back').onclick = () => dwShow('dw-step-input');
+  $('dw-cancel-1').onclick = closeDirWizard;
+  $('dw-cancel-2').onclick = closeDirWizard;
+  $('dw-done').onclick = closeDirWizard;
+  $('dw-dir-input').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); dwPreview(); }
+    else if (e.key === 'Escape') { e.preventDefault(); closeDirWizard(); }
+  });
+  $('dir-wizard').onclick = (e) => { if (e.target === $('dir-wizard')) closeDirWizard(); };
 }
 
 /** 折叠新建表单（回到「+ 新建空间」按钮态）。 */
@@ -4210,6 +4335,7 @@ function bindSpaceSwitcher() {
 }
 
 bindSpaceSwitcher();
+bindDirWizard();
 
 bind();
 applyListWidth(state.listWidth);

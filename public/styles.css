@@ -180,6 +180,52 @@ input,select,textarea { font:inherit; color:var(--text); }
 }
 .sa-edit-actions { display:flex; gap:6px; align-items:flex-end; margin-left:auto; }
 
+/* 编辑态里的文件夹只读展示（改绑走向导，不再自由编辑字符串） */
+.sa-dir-ro {
+  display:inline-block; padding:5px 9px; font-size:12px; color:var(--muted);
+  font-family:ui-monospace,"SFMono-Regular",Consolas,monospace;
+  background:rgba(241,245,249,.7); border:1px dashed var(--border2); border-radius:5px;
+  max-width:220px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+}
+.sa-edit-field.dir { flex-direction:row; align-items:center; gap:8px; }
+.sa-edit-field.dir .lbl { align-self:center; }
+
+/* 更改文件夹 三步向导 */
+.dw-field { display:flex; align-items:center; gap:10px; margin:6px 0 12px; }
+.dw-field .lbl { font-size:12px; color:var(--muted); font-weight:500; white-space:nowrap; }
+.dw-field input {
+  flex:1; padding:7px 10px; font-size:13px;
+  font-family:ui-monospace,"SFMono-Regular",Consolas,monospace;
+  border:1px solid var(--border2); border-radius:var(--radius-sm); background:var(--panel);
+}
+.dw-field input:focus { outline:none; border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft); }
+.dw-error { font-size:12px; color:var(--red); margin:4px 0 8px; }
+.dw-report-grid {
+  display:grid; grid-template-columns:auto 1fr; gap:6px 14px; margin:4px 0 12px;
+  padding:12px 14px; background:rgba(241,245,249,.6); border:1px solid var(--border);
+  border-radius:var(--radius); font-size:13px;
+}
+.dw-rk { color:var(--muted); }
+.dw-rv { font-weight:600; }
+.dw-rv.warn { color:var(--red); }
+.dw-missing { margin:0 0 10px; font-size:12px; }
+.dw-missing summary { cursor:pointer; color:var(--muted); }
+.dw-missing ul { margin:6px 0 0 18px; padding:0; color:var(--text); line-height:1.6; }
+.dw-note { font-size:12px; color:var(--muted); line-height:1.5; margin:2px 0 10px; }
+.dw-ok { font-size:13px; margin:2px 0 10px; }
+.dw-modes { display:flex; flex-direction:column; gap:8px; margin:2px 0 12px; }
+.dw-mode {
+  display:flex; gap:10px; align-items:flex-start; padding:10px 12px; cursor:pointer;
+  border:1px solid var(--border2); border-radius:var(--radius); background:var(--panel);
+  transition:border-color .12s, background-color .12s;
+}
+.dw-mode:hover { border-color:#94a3b8; }
+.dw-mode:has(input:checked) { border-color:var(--accent); background:var(--accent-soft); box-shadow:0 0 0 1px var(--accent) inset; }
+.dw-mode input { margin-top:3px; accent-color:var(--accent); }
+.dw-mode-main { display:flex; flex-direction:column; gap:2px; }
+.dw-mode-title { font-size:13px; font-weight:600; }
+.dw-mode-desc { font-size:12px; color:var(--muted); line-height:1.45; }
+
 /* 新建空间：折叠按钮 + 展开表单 */
 .sa-create { margin:12px 0 0; }
 .sa-create-btn { width:100%; justify-content:center; }

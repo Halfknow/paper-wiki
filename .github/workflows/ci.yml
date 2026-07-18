@@ -24,9 +24,57 @@ jobs:
       - name: Unit tests
         run: npm test
 
+  pg-smoke:
+    name: PG Integration Smoke
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: paperwiki
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: paperwiki
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U paperwiki" --health-interval 5s
+          --health-timeout 3s --health-retries 20
+    env:
+      DATABASE_URL: postgres://paperwiki:ci@127.0.0.1:5432/paperwiki
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - run: npm ci
+      - name: Bootstrap data (migrate + seed)
+        run: node scripts/e2e-bootstrap.js
+      - name: Boot server & smoke CRUD
+        run: |
+          PORT=9977 node server.js &
+          SERVER_PID=$!
+          sleep 3
+          set -e
+          curl -sf http://127.0.0.1:9977/api/health | grep '"status":"ok"'
+          curl -sf http://127.0.0.1:9977/api/papers | grep 'Sample Paper for E2E Testing'
+          curl -sf -X POST http://127.0.0.1:9977/api/spaces -H 'Content-Type: application/json' -d '{"name":"冒烟","papersDir":"smoke"}' | grep '"ok":true'
+          curl -sf http://127.0.0.1:9977/api/spaces | grep '冒烟'
+          kill $SERVER_PID
+
   e2e:
     name: E2E Tests (Playwright)
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: paperwiki
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: paperwiki
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U paperwiki" --health-interval 5s
+          --health-timeout 3s --health-retries 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -40,6 +88,7 @@ jobs:
         run: npx playwright test
         env:
           CI: 'true'
+          DATABASE_URL: postgres://paperwiki:ci@127.0.0.1:5432/paperwiki
       - name: Upload Playwright report
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4

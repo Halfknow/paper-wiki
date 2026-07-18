@@ -23,7 +23,13 @@ module.exports = defineConfig({
     cwd: __dirname,
     reuseExistingServer: !process.env.CI,
     timeout: 30000,
-    env: { PORT: '9999', NODE_ENV: 'test' },
+    env: {
+      PORT: '9999',
+      NODE_ENV: 'test',
+      // v3：需要 PostgreSQL（本地默认连 5433 的开发实例，CI 由 services.postgres 提供并覆盖此值）
+      DATABASE_URL:
+        process.env.E2E_DATABASE_URL || process.env.DATABASE_URL || 'postgres://paperwiki:dev@127.0.0.1:5433/paperwiki',
+    },
   },
   projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'], channel: undefined } }],
 });
