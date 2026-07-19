@@ -11,7 +11,7 @@
 const fs = require('fs');
 const fsp = require('fs/promises');
 const path = require('path');
-const { loadStore } = require('../lib/store');
+const { loadStore } = require('../src/core/store');
 
 /**
  * 执行迁移（核心逻辑，供 CLI 与测试复用）。
@@ -113,7 +113,7 @@ async function migrateJsonToPg(legacyDataDir, repo, opts = {}) {
 
 async function main() {
   const legacyDataDir = path.resolve(process.argv[2] || path.join(__dirname, '..', 'data'));
-  const { createDb, createRepository } = require('../lib/db');
+  const { createDb, createRepository } = require('../src/db');
   const db = createDb({ connectionString: process.env.DATABASE_URL });
   await db.migrate();
   const repo = createRepository(db);

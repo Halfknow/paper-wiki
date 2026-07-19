@@ -2,15 +2,15 @@ const http = require('http');
 const fs = require('fs');
 const fsp = require('fs/promises');
 const path = require('path');
-const { mergeTags, mergeTopics, mergeConcepts, backupStoreObject } = require('./lib/store');
-const { createMultiSpaceScanner } = require('./lib/scanner');
-const { createSpaceManager } = require('./lib/spaces');
-const { createDb, createRepository } = require('./lib/db');
-const parser = require('./lib/parser');
-const arxiv = require('./lib/arxiv');
-const ai = require('./lib/ai');
-const { cleanFilenameToTitle, createRateLimiter, log } = require('./lib/util');
-const { createApiRouter } = require('./lib/api');
+const { mergeTags, mergeTopics, mergeConcepts, backupStoreObject } = require('./core/store');
+const { createMultiSpaceScanner } = require('./services/scanner');
+const { createSpaceManager } = require('./services/spaces');
+const { createDb, createRepository } = require('./db');
+const parser = require('./services/parser');
+const arxiv = require('./services/arxiv');
+const ai = require('./services/ai');
+const { cleanFilenameToTitle, createRateLimiter, log } = require('./core/util');
+const { createApiRouter } = require('./api/router');
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -41,7 +41,7 @@ const VENDOR_MAP = {
 };
 
 function loadConfig() {
-  const p = path.join(__dirname, 'config.json');
+  const p = path.join(__dirname, '..', 'config.json'); // config.json 在项目根（compose 挂载点）
   if (!fs.existsSync(p)) {
     throw new Error('缺少 config.json，请复制 config.example.json 为 config.json 并填写 AI 配置');
   }
@@ -86,7 +86,7 @@ async function readBody(req) {
 
 async function main() {
   const config = loadConfig();
-  const projectRoot = __dirname;
+  const projectRoot = path.join(__dirname, '..'); // src/ 的上一级 = 项目根
 
   // v3：PostgreSQL 持久化。PG 不可用时 fail-fast（Docker restart 策略负责重试）。
   const db = createDb({ connectionString: process.env.DATABASE_URL || config.databaseUrl });
@@ -131,8 +131,8 @@ async function main() {
   const scanner = createMultiSpaceScanner({ manager, deps });
   const router = createApiRouter({ manager, scanner, globalConfig: config });
 
-  const PUBLIC_DIR = path.join(__dirname, 'public');
-  const NM = path.join(__dirname, 'node_modules');
+  const PUBLIC_DIR = path.join(projectRoot, 'public');
+  const NM = path.join(projectRoot, 'node_modules');
 
   const server = http.createServer(async (req, res) => {
     try {

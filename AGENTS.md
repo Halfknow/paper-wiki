@@ -8,7 +8,7 @@
 一个**薄**的 Web 服务：扫描论文目录 `*.pdf` → 提取全文 → 查 arXiv 补元数据 → 用 OpenAI 兼容接口生成总结/标签/主题/概念，并提供一个 Indigo 主题 SPA（列表 + 详情 tab + 独立 PDF 阅读器 + 批注 + 概念清单 + 提示词编辑）。另有**按主题发现**：输入主题 → LLM 生成 arXiv 检索式 → 多轴召回 + 引用量复合排序 → 勾选导入（SSE 流式进度）。
 
 - **零构建前端**：原生 ESM，浏览器直接加载 `public/`。
-- **PostgreSQL 持久化（v3）**：全部结构化数据 + 论文全文入 PG（`lib/db.js` repository，hash-diff 事务保存）；内存 store 形状仍是 v2 结构，上层逻辑无感知。PDF 文件本身仍在文件系统（Docker bind mount）。
+- **PostgreSQL 持久化（v3）**：全部结构化数据 + 论文全文入 PG（`src/db/index.js` repository，hash-diff 事务保存）；内存 store 形状仍是 v2 结构，上层逻辑无感知。PDF 文件本身仍在文件系统（Docker bind mount）。
 - **Docker Compose 部署（v3）**：app + postgres:16 两容器；pm2 退役，守护交给 `restart: unless-stopped`。
 - **串行流水线**：避免压垮本地 AI / 触发 arXiv 限速。
 - **Node ≥ 20**：pdfjs-dist 4.10 的实际要求。
@@ -16,70 +16,60 @@
 ## 目录结构
 
 ```
-server.js              HTTP 入口：createDb→migrate（fail-fast）→ repo → manager → scanner + 每日 JSON 快照备份
-lib/
-  db.js      ★（v3）  PG 持久化层：createDb（pg Pool + migrations/*.sql 幂等执行）+
-                        createRepository（registry CRUD / loadSpaceStore 组装 / saveSpaceStore
-                        hash-diff 事务只写变化行 / paper_texts 全文存取，NUL 剥离）。
-                        **filepath/fulltextPath 派生字段不落库不参与 diff**；papers.extra 兜底未知字段
-  store.js   ★         数据模型 v2 纯逻辑（emptyStore/migrateStore/normalizePaper/merge*）+
+src/                   后端源码（v3.2 分层：core 纯逻辑 / db 持久化 / services 业务 / api 路由）
+  server.js            HTTP 入口/装配：createDb→migrate（fail-fast）→ repo → manager → scanner
+                        + 静态/PDF/vendor 路由 + 每日 JSON 快照备份 + 优雅关停
+  api/
+    router.js  ★       REST 路由（原 lib/api.js）：spaces/health/papers/search/tags/topics/folders/
+                        concepts/settings/stats/import/discover；ctx={manager,scanner,globalConfig}；
+                        每路由 resolveSpace(q)；?space= 隔离；papersDir 改绑 preview/apply
+  core/                纯逻辑，零 IO 依赖（可独立单测）
+    store.js   ★       数据模型 v2 纯逻辑（emptyStore/migrateStore/normalizePaper/merge*）+
                         文件版 loadStore/saveStore（仅迁移脚本用）+ backupStoreObject（PG→JSON 快照）
-  search.js  ★（v3.1）全文检索辅助：splitTerms（CJK 整串/英文分词）+ buildSnippets
-                        （命中片段提取+HTML 转义+<mark> 高亮，统一 tsquery/ILIKE 两路径）
-  spaces.js  ★（v3）  空间管理器：注册表/store 全走 repo；papersDir 一律挂载根内相对路径
-                        （resolvePapersDir 越界拒绝、default 绑 'default' 子目录）；
-                        **filepath 运行时派生**（papersDir+filename，load 时合成）；
-                        textStoreBinder(id) 提供全文 {load,save,remove}；saveStoreBinder 单参闭包；
-                        改绑三步语义 previewPapersDirChange / applyPapersDirChange(move|rebind)
-                        + assertNoDirConflict（禁止空间目录相同/互相嵌套）；
-                        **名↔文件夹联动**：createSpace 默认目录=空间名（净化），renameSpace 物理
-                        rename 目录同步（仅大小写差异视为同一目录放行；冲突整体拒绝）
-  scanner.js ★         增量扫描 + 串行流水线（parse→arxiv→ai）+ extractConcepts + drain
-                        createScanner({store, papersDir, textStore, deps, ...})：全文经 textStore 读写 PG；
-                        createMultiSpaceScanner：多空间共享单一串行队列（遵守陷阱：串行防限速），
-                        单一定时器取 min 间隔；**missing 熔断**（>5 且 >50% 同时缺失不翻转状态，
-                        getFuseState 供 /api/health 暴露）；changed 分支同步 filename（rebind 自愈）
-  ai.js      ★         OpenAI 兼容 chat 调用：summarize(自由Markdown) / extractTagsTopics(JSON) / extractConcepts / chatPaper(多轮+流式+多模态)
-                        含 429/5xx 指数退避重试、JSON 容错解析、applySettingsOverride（store.settings 覆盖 config 的 ai/scan/arxiv/discover）
-                        **v2.7**：callChat/callChatStream 支持 chatParams.model 覆盖 + 多模态 content 数组；新增 listModels（上游 /v1/models + extraModels 回退）
-  api.js     ★         REST 路由：spaces/health/papers(支持搜索DSL)/search(全文+元数据交集)/search/suggest(补全)/tags/topics/folders/concepts/settings(含savedSearches)/stats/import/discover；paper DELETE
-                        **ctx = {manager, scanner, globalConfig}**；每路由 resolveSpace(q) 取 {spaceId,store,save}；
-                        ?space= 路由隔离（无参回 active）；settings 读写 space.store.settings
-  discover.js ★        按主题发现：检索计划(claude→网关→原始)/多轴召回/S2+OpenAlex 引用量/复合排序/去重
-  claude.js  ★         spawn `claude -p --output-format json` 子进程（永不抛错，失败回退网关）
-  annotations.js       批注归一化层：pdf.js TypedArray(quadPoints) 经 JSON 退化的双向修复
-  parser.js            pdfjs-dist 全文提取（Node 端，无 DOM worker）
-  arxiv.js   ★         Atom 解析、标题相似度匹配、PDF 链接抽取、下载；searchArxiv 支持 sort/分页 + searchArxivMulti
-  util.js    ★         sha1、限速器、sleep、标题归一化/相似度、文件名清洗、parseArxivUrl、safeFilename/buildPaperFilename
-  search-query.js ★（新）搜索 DSL 解析器：tokenizer + parseSearchQuery（GitHub 式字段前缀 title:/tag:/year:/-排除/"phrase" body:）
-                        applyMetadataQuery（应用到论文列表）；buildDslFromPanel/parseToPanel（高级面板双向同步）。前后端共用（前端镜像 public/search-dsl.js）
-  search.js            全文检索辅助：hasCjk（CJK 检测）、splitTerms（CJK 整串/英文分词）、buildSnippets（命中片段 <mark> 高亮，输出已转义 HTML）
-public/
-  index.html           三栏布局 + 顶栏空间切换器 + 阅读器 + 概念/提示词视图 + 收藏夹/导入/空间管理模态
-  app.js     ★         主逻辑：路由/列表/详情/收藏夹/主题/概念/多选/导入/键盘导航/**空间切换(sp helper/teardown)**
-                        sp(url) 注入器：所有 /api/ /papers/ 请求自动带 ?space=<active>
-  reader.js  ★         pdf.js PDFViewer 阅读器：双页/批注/缩放/续读（PDF URL + chat 经 sp() 带空间）
-  styles.css ★         Indigo 主题（grid + flex 列布局，列表独立滚动，reader 深灰底白页，space-switcher 下拉）
-migrations/*.sql       PG schema（编号 migration，启动时幂等执行；schema_migrations 记账）
-scripts/scan-once.js   不启 HTTP，扫一次处理完队列后退出；多空间版（--space <id> 或扫全部；需 DATABASE_URL）
-scripts/migrate-json-to-pg.js  一次性迁移：旧 data/ JSON（多空间或扁平）→ PG，幂等；打印文件搬移指引
-scripts/e2e-bootstrap.js  e2e 数据准备（migrate + 经 repo 向 PG upsert sample；需 PG）
-scripts/backup-pg.sh   pg_dump 备份（宿主定时任务用）
-tests/*.test.js        node --test，覆盖全部 lib 模块（225 例；db/spaces/scanner/api 用 pg-mem，无需真实 PG）
-tests/e2e/             Playwright e2e（reader 渲染 + 高亮往返；需 dev PG，见 playwright.config.js）
-tests/fixtures/        sample.pdf（2 页带文本层，e2e 用）
-config.json            实际配置（gitignore，含 key）；模板 config.example.json（作为各空间 applySettingsOverride 基底）
-Dockerfile / docker-compose.yml / .env(.example)  v3 部署（app+postgres；PAPERS_ROOT bind mount）
-papers/                本地开发时的挂载根（gitignore）；生产 = .env 的 PAPERS_ROOT，每空间一个子目录
+    search.js  ★       全文检索辅助：splitTerms（CJK 整串/英文分词）+ buildSnippets（转义+<mark>）
+    search-query.js ★  搜索 DSL 解析器（field:value/布尔/year 区间）→ /api/papers?q= 元数据筛选
+    annotations.js     批注归一化层：pdf.js TypedArray(quadPoints) 经 JSON 退化的双向修复
+    util.js    ★       sha1、限速器、标题归一化/相似度、文件名清洗、parseArxivUrl、safeFilename
+  db/
+    index.js   ★       PG 持久化层：createDb（pg Pool + migrations 幂等执行）+ createRepository
+                        （registry CRUD / loadSpaceStore 组装 / saveSpaceStore hash-diff 事务 /
+                        paper_texts 全文存取 NUL 剥离 / searchFulltext tsvector→ILIKE 降级）。
+                        **filepath/fulltextPath 派生字段不落库不参与 diff**；papers.extra 兜底
+    migrations/*.sql   编号 migration（002 为 .optional.：pg-mem 跳过不记账）
+  services/            业务服务（依赖 core/db，被 api/server 装配）
+    spaces.js  ★       空间管理器：注册表/store 走 repo；papersDir 挂载根内相对路径；
+                        filepath 运行时派生；textStoreBinder；改绑三步语义 preview/apply(move|rebind)
+                        + assertNoDirConflict；名↔文件夹联动（createSpace 默认同名/renameSpace 物理同步）
+    scanner.js ★       增量扫描 + 串行流水线（parse→arxiv→ai）+ extractConcepts/retag/chatPaper
+                        + createMultiSpaceScanner（共享串行队列/单定时器/missing 熔断/getFuseState）
+    ai.js      ★       OpenAI 兼容调用：summarize/extractTagsTopics/extractConcepts/chatPaper
+                        （流式+多模态）+ applySettingsOverride + listModels
+    arxiv.js   ★       Atom 解析、标题相似度匹配、PDF 下载；searchArxiv(Multi)
+    discover.js ★      按主题发现：检索计划(claude→网关→原始)/多轴召回/引用量/复合排序/去重
+    claude.js  ★       spawn `claude -p` 子进程（永不抛错，失败回退网关）
+    parser.js          pdfjs-dist 全文提取（Node 端，无 DOM worker）
+public/                零构建前端（原生 ESM，浏览器直接加载）
+  index.html           三栏布局 + 空间切换器 + 阅读器 + 概念/提示词视图 + 各模态
+  app.js     ★         主逻辑：路由/列表/详情/收藏夹/概念/多选/导入/空间切换/全文检索/高级搜索
+  reader.js  ★         pdf.js PDFViewer 阅读器（双页/批注/缩放/续读/AI 抽屉）
+  search-dsl.js ★      高级搜索面板（DSL 双向同步）
+  styles.css ★         Indigo 主题
+scripts/               运维脚本：scan-once（CLI 扫描）/ migrate-json-to-pg（旧数据迁移，幂等）/
+                        e2e-bootstrap（e2e 种子）/ backup-pg.sh（pg_dump）
+tests/                 node --test 单测（261 例，pg-mem 无需真实 PG）+ e2e（Playwright，需 dev PG）
+docs/                  设计文档（superpowers/specs+plans）+ TODO + 调研报告
+Dockerfile / docker-compose.yml / .env(.example)   部署（app+postgres；PAPERS_ROOT bind mount）
+config.json(.example)  业务配置（AI 网关等；根目录，compose 只读挂载）
+papers/                本地开发挂载根；生产 = .env 的 PAPERS_ROOT（每空间一个同名子目录）
+backups/ logs/         运行时产物（gitignore）：JSON 快照与归档 / 历史日志
 .github/workflows/ci.yml  CI：lint+unit / pg-smoke / e2e 三 job（后两个带 postgres service）
-.prettierrc/.eslintrc.json  代码质量（仅格式化 lib/server/tests，public/ 排除）
 ```
 
 ★ = v2.2 / v2.3 / v2.4 / v2.5 / v2.7 重点改动文件（v2.7：聊天 UI 现代化重构——气泡布局/composer/模型切换器/视觉问答，改 public/{app,reader,index,styles} + lib/{ai,api,scanner}；v2.5：spaces/scanner(createMultiSpaceScanner)/api/server + 前端空间切换器；v2.4：ai/api/scanner + 前端设置中心；v2.3：discover/claude/util/arxiv/api/scanner）。
 
 ## 数据模型（内存 store 仍是 v2 形状；持久化在 PostgreSQL）
 
-> v3 起持久化迁 PG（`lib/db.js`），但**内存 store 形状 100% 不变**（仍是下面的 v2 结构）——
+> v3 起持久化迁 PG（`src/db/index.js`），但**内存 store 形状 100% 不变**（仍是下面的 v2 结构）——
 > repository 负责 组装（loadSpaceStore）与 hash-diff 保存（saveSpaceStore）。表结构：
 > `spaces`（meta + tags/topics/settings JSONB）、`papers`（PK=(space_id,id)，标量列 + JSONB 列 + extra 兜底）、
 > `paper_texts`（全文独立表）、`concepts`、`folders`、`app_state`（activeSpaceId）、`schema_migrations`。
@@ -139,7 +129,7 @@ PostgreSQL（compose 内 postgres 服务，pgdata volume）
 backups volume   每日 JSON 快照（PG→JSON 逃生通道，格式兼容旧 papers.json）
 ```
 
-**核心抽象**（`lib/spaces.js` `createSpaceManager({repo, papersRoot, globalConfig})`）：
+**核心抽象**（`src/services/spaces.js` `createSpaceManager({repo, papersRoot, globalConfig})`）：
 - 注册表内存态源于 `repo.loadRegistry()`；空库自动建 default（papersDir='default'）
 - `getSpaceStore(id)` / `saveSpaceStore(id, store)`：repo 组装/hash-diff 保存，**内存缓存**（manager 持有 store 引用，与 scanner/api 共享）；load 时**派生 filepath**（papersDir+filename）
 - `saveStoreBinder(id)`：单参闭包注入 scanner deps.saveStore（**遵守陷阱 1**）
@@ -152,14 +142,14 @@ backups volume   每日 JSON 快照（PG→JSON 逃生通道，格式兼容旧 p
 
 **隔离语义**：paper id = `sha1(内容)`，**同 PDF 跨空间是各自 store 里的独立条目**（符合隔离，非 bug）。tags/topics/folders/concepts/settings 全部 per-space（各空间 store 独立）。
 
-**多空间扫描器**（`lib/scanner.js` `createMultiSpaceScanner({manager, deps})`）：
+**多空间扫描器**（`src/services/scanner.js` `createMultiSpaceScanner({manager, deps})`）：
 - 每空间建一个子扫描器（复用 `createScanner` 的完整流水线闭包），子扫描器的 store/papersDir/textStore 各自指向该空间
 - **共享单一串行队列**（queue 项 = `{spaceId, id}`，pump 串行 await 子扫描器 processOne）——遵守陷阱：串行防压垮本地 AI / 触发 arXiv 限速
 - 子扫描器的内部 enqueue 被 `onEnqueue` 钩子转交到共享队列（子扫描器自身不被 start，内部 queue 无人 pump）
 - 单一定时器：间隔 = `min(所有 scheduled 空间 scanInterval)`，每次 tick `scan({dueOnly:true})` 内部按 per-space lastScanAt 判定哪些到点
 - `reschedule(spaceId, minutes)`：改某空间间隔 + 重算定时器（遵守陷阱 20）
 
-**后端路由**（`lib/api.js` `createApiRouter({manager, scanner, globalConfig})`）：
+**后端路由**（`src/api/router.js` `createApiRouter({manager, scanner, globalConfig})`）：
 - ctx 从 `{store, save, scanner, config}` 变为 `{manager, scanner, globalConfig}`
 - 每路由顶部 `const {spaceId, space, store, save} = await resolveSpace(q)`：`?space=<id>` 指定空间，无参回 active
 - **SSE 路由（chat/discover）**：EventSource 无法设 header，spaceId 走 URL query `?space=`（后端回退 active 保证无参仍工作）
@@ -207,7 +197,7 @@ arXiv 导入 (POST /api/import { url, meta? }):
 
 按主题发现 (GET /api/discover/stream?topic= ，SSE):
   discover.discoverPapers:
-    buildDiscoveryQuery  claude -p（lib/claude.js）→ 失败回退 GLM 网关(planViaGateway) → 原始主题
+    buildDiscoveryQuery  claude -p（src/services/claude.js）→ 失败回退 GLM 网关(planViaGateway) → 原始主题
                          产出 {queries[], categories[], keyterms[]}
     多轴召回             每 query × {relevance, submittedDate} → searchArxivMulti → 合并去重
     enrichWithCitations  Semantic Scholar 批量(+apiKey/429 重试) → 缺失项 enrichWithOpenAlex(arXiv DOI)
@@ -230,7 +220,7 @@ arXiv 导入 (POST /api/import { url, meta? }):
    scanner 必须调 `deps.saveStore(store)`（**一个参数**）。历史上曾误写成两参把 storePath 字符串当 store 写坏全库。已加单测防回归。
 
 2. **提示词优先级（各自独立三级）**：
-   - 总结：`store.settings.summaryPrompt` > `config.summaryPrompt` > `DEFAULT_SUMMARY_PROMPT`（lib/ai.js）。
+   - 总结：`store.settings.summaryPrompt` > `config.summaryPrompt` > `DEFAULT_SUMMARY_PROMPT`（src/services/ai.js）。
    - 标签/主题：`store.settings.tagsPrompt` > `config.tagsPrompt` > `DEFAULT_TAGS_PROMPT`。
    - （`DEFAULT_PROMPT` 是 `DEFAULT_SUMMARY_PROMPT` 的别名，向后兼容保留。）
 
@@ -249,13 +239,13 @@ arXiv 导入 (POST /api/import { url, meta? }):
 
 8. **annotationEditorMode 必须是单一枚举值**：构造时传 `NONE`（不是 `FREETEXT|HIGHLIGHT|INK` 组合位掩码）。`isValidAnnotationEditorMode` 要求 `Object.values().includes(mode)`，组合值(27)会被拒 → UIManager 不创建 → 批注全失效。运行时 `viewer.annotationEditorMode = {mode: HIGHLIGHT}`（**注意是对象 `{mode}` 不是裸整数**）切工具。
 
-9. **批注 quadPoints 经 JSON 退化**：pdf.js `serialize()` 输出 `Float32Array`，JSON.stringify 后变 `{"0":x}` 稠密键对象，`deserialize` 时 `.length` 为 undefined 循环 0 次 → 高亮消失。**必须经 `lib/annotations.js` 的 `normalizeAnnotations` 双向归一化**（PATCH 写入 + detailView 读取）+ reader.js 前端 `repairAnnotationValue`。
+9. **批注 quadPoints 经 JSON 退化**：pdf.js `serialize()` 输出 `Float32Array`，JSON.stringify 后变 `{"0":x}` 稠密键对象，`deserialize` 时 `.length` 为 undefined 循环 0 次 → 高亮消失。**必须经 `src/core/annotations.js` 的 `normalizeAnnotations` 双向归一化**（PATCH 写入 + detailView 读取）+ reader.js 前端 `repairAnnotationValue`。
 
 10. **双页空白页坑**：别用 `removePageBorders:true` + spread，`getVisibleElements` 水平裁剪会误判右页不可见导致不渲染。改用 CSS 覆盖默认边框 + `afterReady` 主动 `_ensureRender` + `pagerendered` 兜底推进单线程渲染链。
 
 11. **光标模式无法选中批注**：NONE 模式下 `.annotationEditorLayer.disabled { pointer-events:none }` 封死整层，点击到不了 editor。删除批注必须先切到对应工具（高亮/便签/手写）使层 enable。
 
-12. **改代码要重建容器**：v3 生产跑在 Docker 里，`lib/`、`server.js`、`public/` 都打进镜像——任何代码改动须
+12. **改代码要重建容器**：v3 生产跑在 Docker 里，`src/`、`public/` 都打进镜像——任何代码改动须
     `docker compose up -d --build app` 重建生效（前端也一样，镜像内 public/ 不是宿主目录）。`config.json`
     是挂载文件，改后 `docker compose restart app` 即可。本地 `node server.js` 开发时前端仍是即时读盘。
 
@@ -263,7 +253,7 @@ arXiv 导入 (POST /api/import { url, meta? }):
 
 14. **裸 ID 文件名查不到元数据（历史 bug）**：`cleanFilenameToTitle("2012.12556")` 会把 `2012` 当孤立年份删掉 → `ti:".12556"` 搜不到 → 元数据全空 → 空标题→空总结。`processOne` 现在 `p.arxivId` 为空时先 `parseArxivUrl(文件名)` 识别裸 ID 走 `id:` 精确查。改元数据逻辑勿回退此分支。
 
-15. **发现的查询理解必须有兜底**：`claude -p`（lib/claude.js）在无头/pm2 环境常因鉴权 **401**（进程 exit≠0 或 `is_error:true`）；且新版 CLI `--output-format json` 输出**消息数组**（取末个 `type:'result'`）而非 `{result}` 单对象。`buildDiscoveryQuery` 三级兜底 `claude → planViaGateway(GLM) → 原始主题`，`config.discover.queryEngine` 可强制。改 prompt/解析要保持兜底链。
+15. **发现的查询理解必须有兜底**：`claude -p`（src/services/claude.js）在无头/pm2 环境常因鉴权 **401**（进程 exit≠0 或 `is_error:true`）；且新版 CLI `--output-format json` 输出**消息数组**（取末个 `type:'result'`）而非 `{result}` 单对象。`buildDiscoveryQuery` 三级兜底 `claude → planViaGateway(GLM) → 原始主题`，`config.discover.queryEngine` 可强制。改 prompt/解析要保持兜底链。
 
 16. **发现排序是复合分，不是单引用量**：旧实现「取最新 N 篇再按引用量排」自相矛盾（最新论文≈0 引用）。现按 `relevance + submittedDate` 两轴召回进池，再 `相关×0.45 + 权威×0.35 + 新近×0.20` 排序。引用量经 S2 + OpenAlex 兜底，`citationsAvailable=false` 时前端要提示「按相关+新近排」。
 
@@ -276,7 +266,7 @@ arXiv 导入 (POST /api/import { url, meta? }):
 20. **扫描间隔热改 + arxiv 必须读 effConfig**：scanner 定时器在 `createScanner` 按 `scanIntervalMs` 建一次，改 `store.settings.scanIntervalMinutes` 后必须调 `scanner.reschedule(minutes)`（`PUT /api/settings/scan` 已接线）重置定时器（0=停表），否则间隔改动不生效。另：`processOne` 的 arxiv 补全段读 **`effConfig.arxiv` 而非 `deps.config.arxiv`**（历史上读死 config → 设置面板关 arxiv / 改阈值不生效）；effConfig 在 processOne 顶部算一次，ai/arxiv/discover 共用。
 
 21. **聊天模型切换 + 视觉问答两套流式通道（v2.7）**：
-   - **模型切换**：`GET /api/ai/models` 调上游 `/v1/models`（带 apiKey）+ 合并 `config.ai.extraModels`；前端 `localStorage('pw-chat-model')` 持久化选择，经 `?model=` 透传。**白名单校验**（lib/api.js chat 路由）：必须 ∈ {config.ai.model} ∪ extraModels ∪ 上游 models，否则静默回退默认——**勿跳过白名单直接透传用户输入**（注入风险）。`callChat/callChatStream` 用 `chatParams.model || config.ai.model`；scanner 在有显式覆盖时持久化 `assistant.model`。
+   - **模型切换**：`GET /api/ai/models` 调上游 `/v1/models`（带 apiKey）+ 合并 `config.ai.extraModels`；前端 `localStorage('pw-chat-model')` 持久化选择，经 `?model=` 透传。**白名单校验**（src/api/router.js chat 路由）：必须 ∈ {config.ai.model} ∪ extraModels ∪ 上游 models，否则静默回退默认——**勿跳过白名单直接透传用户输入**（注入风险）。`callChat/callChatStream` 用 `chatParams.model || config.ai.model`；scanner 在有显式覆盖时持久化 `assistant.model`。
    - **视觉问答走 POST `/api/papers/:id/chat/vision`**（不是 EventSource）：EventSource 无法携带 body（图片 base64），故视觉问答用 fetch + ReadableStream 手动解析 SSE（reader.js `streamVisionFetch`）；纯文本仍走 EventSource（GET /chat）保持兼容。**改流式协议勿合并回单通道**。
    - **多模态 content**：`chatPaper` 的 `images` 选项把末尾 user 消息 `content` 从字符串升级为数组 `[{type:'text'},{type:'image_url'}]`（OpenAI 格式原样透传）。图片白名单：`data:image/*;base64,` 前缀，限 4 张（防 papers.json 膨胀）。
    - **框选截图坐标换算**（reader.js `cropRegionToImage`）：pdf.js canvas 按 devicePixelRatio 过采样，canvas.width ≫ CSS 宽度。框选用屏幕坐标（相对 canvas-wrap），裁剪须按 `canvas.width / pageRect.width` 比例换算到 canvas 内部像素，否则截错区域。长边限 1568px（OpenAI 视觉建议）。
@@ -286,7 +276,7 @@ arXiv 导入 (POST /api/import { url, meta? }):
 22. **filepath 是运行时派生字段，绝不落库**（v3 绑定 desync 根因修复）：PG 只存 `filename`（相对空间目录），
     `manager.getSpaceStore` 在 load 时合成 `p.filepath = papersDir + filename`；repo 保存时剥除
     filepath/fulltextPath 且不参与 hash-diff。**改 papersDir 后 store 重载即全库路径一致**。
-    新代码要新增持久字段时记得加进 lib/db.js 的 PAPER_COLS（否则会进 extra JSONB 兜底列——数据不丢但不可 SQL 查询）。
+    新代码要新增持久字段时记得加进 src/db/index.js 的 PAPER_COLS（否则会进 extra JSONB 兜底列——数据不丢但不可 SQL 查询）。
 
 23. **papersDir 改绑必须走 preview/apply 三步语义**：`changePapersDir` 旧语义（只改字符串）已废除（现等价 rebind）。
     正确入口：`POST /api/spaces/:id/dir/preview` 预检（sha1 对账报告）→ `POST /api/spaces/:id/dir {newDir, mode}`
@@ -295,7 +285,7 @@ arXiv 导入 (POST /api/import { url, meta? }):
     不得与其他空间目录相同或互相嵌套（双扫描器会 rename 竞争）。前端只能走向导，不再提供自由文本改绑。
 
 24. **jsonb 参数必须 JSON.stringify；PG TEXT 不收 NUL**：node-pg 会把 JS 数组序列化成 PG 数组字面量
-    （`{a,b}`）而非 JSON——jsonb 列直接传数组必写坏，lib/db.js 内一律 `jstr()`。全文可能含 ` `
+    （`{a,b}`）而非 JSON——jsonb 列直接传数组必写坏，src/db/index.js 内一律 `jstr()`。全文可能含 ` `
     （pdfjs 偶发），`savePaperText` 已剥离；绕过 repo 直写 paper_texts 会踩 `invalid byte sequence`。
 
 25. **missing 熔断**：单轮 scan 中 `missing > 5 且 > 库内 50%` 视为目录挂载失效（Docker bind mount 掉了/目录清空），
@@ -309,7 +299,7 @@ arXiv 导入 (POST /api/import { url, meta? }):
 27. **全文检索双路径（v3.1，GET /api/search）**：英文查询走 `to_tsvector('english')`（websearch_to_tsquery +
     ts_rank，吃 002 的表达式 GIN 索引，词干化）；中文查询与 tsvector 不可用后端（pg-mem）走 ILIKE 子串降级。
     **migration 002 是 `.optional.`**：pg-mem 建不了 GIN，migrate() 对 optional 失败跳过不记账（真实 PG 正常记账）。
-    snippet 在 Node 侧生成（lib/search.buildSnippets，只 load 命中篇全文），输出**已转义 HTML**（<mark> 高亮），
+    snippet 在 Node 侧生成（src/core/search buildSnippets，只 load 命中篇全文），输出**已转义 HTML**（<mark> 高亮），
     前端直接 innerHTML——改 snippet 逻辑勿在前端二次转义。前端入口：搜索框**回车**进全文模式（即时筛选不变），
     输入变化/Esc/× 退出。已知偏差：含字面 %/_ 的查询在 pg-mem 中行为与真实 PG 不同（反斜杠转义解析差异）。
 

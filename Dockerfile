@@ -7,10 +7,8 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 
-COPY server.js ./
-COPY lib ./lib
+COPY src ./src
 COPY public ./public
-COPY migrations ./migrations
 COPY scripts ./scripts
 
 ENV NODE_ENV=production \
@@ -25,4 +23,4 @@ RUN mkdir -p /app/backups && chown node:node /app/backups
 EXPOSE 8888
 USER node
 
-CMD ["node", "server.js"]
+CMD ["node", "src/server.js"]

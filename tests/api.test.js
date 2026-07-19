@@ -4,8 +4,8 @@ const http = require('node:http');
 const fs = require('node:fs');
 const os = require('node:os');
 const pathm = require('node:path');
-const { createApiRouter } = require('../lib/api');
-const arxivMod = require('../lib/arxiv');
+const { createApiRouter } = require('../src/api/router');
+const arxivMod = require('../src/services/arxiv');
 
 function startServer(handler) {
   return new Promise((resolve) => {
@@ -1248,8 +1248,8 @@ test('POST /api/papers/:id/summarize 文件存在时正常入队（不误伤）'
 function realCtx(globalConfig) {
   const root = fs.mkdtempSync(pathm.join(os.tmpdir(), 'pwrealsp-'));
   const { newDb } = require('pg-mem');
-  const { createDb, createRepository } = require('../lib/db');
-  const { createSpaceManager } = require('../lib/spaces');
+  const { createDb, createRepository } = require('../src/db');
+  const { createSpaceManager } = require('../src/services/spaces');
   const mem = newDb();
   const { Pool } = mem.adapters.createPg();
   const db = createDb({ createPool: () => new Pool() });
@@ -1475,7 +1475,7 @@ test('POST /api/spaces/:id/dir/preview + /dir(rebind) 完整链路', async () =>
   try {
     await ctx.manager._dbMigrate();
     await ctx.manager.ensureRegistry();
-    const { sha1OfFile } = require('../lib/util');
+    const { sha1OfFile } = require('../src/core/util');
     // 库内一篇 a.pdf；新目录放同内容改名副本
     const oldDir = ctx.manager.resolveSpacePapersDir('default');
     fs.writeFileSync(pathm.join(oldDir, 'a.pdf'), '%PDF-1.4 API-A');

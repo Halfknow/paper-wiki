@@ -7,7 +7,7 @@
 ## 最重要的几条（详见 AGENTS.md「关键约定 / 陷阱」）
 
 - **v3 跑在 Docker 里**：任何代码改动（含前端 public/，都打进镜像）须 `docker compose up -d --build app` 重建生效；只改 `config.json`（挂载文件）`docker compose restart app` 即可。本地 `node server.js` 开发需 `DATABASE_URL` 指向一个 PG（dev 实例见 AGENTS.md「运行/测试」）。
-- **持久化在 PostgreSQL**（lib/db.js repository，hash-diff 事务保存）：内存 store 仍是 v2 形状；**filepath 运行时派生不落库**（papersDir+filename）；jsonb 参数必须 JSON.stringify；全文 NUL 剥离。
+- **持久化在 PostgreSQL**（src/db repository，hash-diff 事务保存）：内存 store 仍是 v2 形状；**filepath 运行时派生不落库**（papersDir+filename）；jsonb 参数必须 JSON.stringify；全文 NUL 剥离。
 - **`deps.saveStore(store)` 单参**：误写两参历史上写坏过全库。
 - **papersDir 改绑必须走 preview→move/rebind 三步语义**（POST /api/spaces/:id/dir[/preview]），不许直接改字符串；空间目录不得相同/互相嵌套。
 - **paper id = 文件内容 sha1 前 16 位**，与文件名无关：改名 / 删除文件不影响 id、全文、概念、批注。

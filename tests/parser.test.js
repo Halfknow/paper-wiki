@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
-const { joinTextContent, extractText } = require('../lib/parser');
+const { joinTextContent, extractText } = require('../src/services/parser');
 
 test('joinTextContent 拼接多页 items 为文本，页间空行', () => {
   const pages = [{ items: [{ str: 'Hello ' }, { str: 'World' }] }, { items: [{ str: 'Page 2' }] }];

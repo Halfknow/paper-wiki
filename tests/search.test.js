@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert');
-const { hasCjk, splitTerms, buildSnippets } = require('../lib/search');
+const { hasCjk, splitTerms, buildSnippets } = require('../src/core/search');
 
 test('hasCjk 判定中日韩字符', () => {
   assert.strictEqual(hasCjk('attention'), false);

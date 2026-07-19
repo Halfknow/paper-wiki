@@ -3,8 +3,8 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
-const { diffPapers, createScanner, createMultiSpaceScanner } = require('../lib/scanner');
-const { cleanFilenameToTitle } = require('../lib/util');
+const { diffPapers, createScanner, createMultiSpaceScanner } = require('../src/services/scanner');
+const { cleanFilenameToTitle } = require('../src/core/util');
 
 /** 内存版全文存取（v3：替代 data/text/<id>.txt 的 textStore 注入） */
 function memTextStore(seed) {
@@ -48,13 +48,13 @@ test('diffPapers 计算 added/changed/missing', () => {
 });
 
 test('fingerprintAll 对内容相同的重复文件去重（同 id 只保留一条，防 scan 覆盖丢数据）', async () => {
-  const { fingerprintAll } = require('../lib/scanner');
+  const { fingerprintAll } = require('../src/services/scanner');
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pwfp-'));
   // 两个内容完全相同的 PDF（不同文件名）→ 同 sha1 → 同 id
   const content = Buffer.from('%PDF-1.4\n%duplicate-content\n');
   fs.writeFileSync(path.join(dir, 'paper-A.pdf'), content);
   fs.writeFileSync(path.join(dir, '2402.06196.pdf'), content);
-  const items = (await require('../lib/scanner').scanDir(dir)).map((it) => ({
+  const items = (await require('../src/services/scanner').scanDir(dir)).map((it) => ({
     filepath: it.filepath,
     filename: it.filename,
     size: it.size,
@@ -74,7 +74,7 @@ test('scan 不用空记录覆盖已 enrich 的论文（防 id 冲突丢数据）
   const content = Buffer.from('%PDF-1.4\n%same\n');
   fs.writeFileSync(path.join(dir, 'real.pdf'), content);
   // store 里已有同 id 的已处理记录（title/summary/tags 齐全，模拟被重复文件覆盖前的状态）
-  const { sha1OfFile } = require('../lib/util');
+  const { sha1OfFile } = require('../src/core/util');
   const id = (await sha1OfFile(path.join(dir, 'real.pdf'))).slice(0, 16);
   const store = {
     version: 2,
@@ -608,8 +608,8 @@ test('chatPaper 无 extraIds 时不挂 extraIds 字段（向后兼容）', async
 async function makeMultiSpaceSetup() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pwms-'));
   const { newDb } = require('pg-mem');
-  const { createDb, createRepository } = require('../lib/db');
-  const { createSpaceManager } = require('../lib/spaces');
+  const { createDb, createRepository } = require('../src/db');
+  const { createSpaceManager } = require('../src/services/spaces');
   const mem = newDb();
   const { Pool } = mem.adapters.createPg();
   const db = createDb({ createPool: () => new Pool() });
@@ -796,7 +796,7 @@ test('scan missing 少量缺失（≤5 或 ≤50%）正常标 missing，无熔�
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pwfuse2-'));
   const store = { version: 2, tags: [], papers: {} };
   // 8 篇，其中 6 篇文件真实存在、2 篇缺失 → 正常标记
-  const { sha1OfFile } = require('../lib/util');
+  const { sha1OfFile } = require('../src/core/util');
   for (let i = 0; i < 6; i++) {
     fs.writeFileSync(path.join(dir, 'f' + i + '.pdf'), Buffer.from('%PDF-1.4 file' + i));
   }

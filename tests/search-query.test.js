@@ -7,7 +7,7 @@ const {
   applyMetadataQuery,
   buildDslFromPanel,
   parseToPanel,
-} = require('../lib/search-query');
+} = require('../src/core/search-query');
 
 // 造论文样本（字段与 store.papers 一致）
 const P = (over) =>

@@ -1,6 +1,6 @@
 const fsp = require('fs/promises');
 const path = require('path');
-const { sha1OfFile, log, sleep, parseArxivUrl, buildPaperFilename } = require('./util');
+const { sha1OfFile, log, sleep, parseArxivUrl, buildPaperFilename } = require('../core/util');
 
 /** 扫描目录下所有 PDF 文件信息 */
 async function scanDir(dir) {

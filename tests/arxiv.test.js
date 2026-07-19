@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert');
-const { parseAtom, extractArxivId, pickBest, searchArxiv, searchArxivMulti } = require('../lib/arxiv');
+const { parseAtom, extractArxivId, pickBest, searchArxiv, searchArxivMulti } = require('../src/services/arxiv');
 
 const SAMPLE = `<?xml version="1.0" encoding="UTF-8"?>
 <feed xmlns="http://www.w3.org/2005/Atom">

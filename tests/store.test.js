@@ -17,7 +17,7 @@ const {
   conceptIdFor,
   conceptsToMarkdown,
   migrateStore,
-} = require('../lib/store');
+} = require('../src/core/store');
 
 function tmpStorePath() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pw-'));
@@ -238,7 +238,7 @@ test('migrateStore 补星级 rating（starred:true→5、缺省→0、clamp 0-5�
 
 test('backupStoreObject：写 JSON 快照、同日幂等、保留 7 份', async () => {
   const os = require('node:os');
-  const { backupStoreObject } = require('../lib/store');
+  const { backupStoreObject } = require('../src/core/store');
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pwbak-'));
   try {
     // 预置 8 份旧备份（触发裁剪）

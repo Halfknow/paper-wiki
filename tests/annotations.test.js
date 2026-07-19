@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert');
-const { normalizeAnnotations, repairArrayLike, isDenseArrayLike } = require('../lib/annotations');
+const { normalizeAnnotations, repairArrayLike, isDenseArrayLike } = require('../src/core/annotations');
 
 // 复刻 pdf.js HighlightEditor.deserialize 的关键循环：for (i=0;i<quadPoints.length;i+=8)
 // 用它来证明"修复前循环 0 次 → 高亮消失"，"修复后循环正常 → 高亮重建"。

@@ -1,6 +1,6 @@
 const { XMLParser } = require('fast-xml-parser');
 const fsp = require('fs').promises;
-const { titleSimilarity, sleep } = require('./util');
+const { titleSimilarity, sleep } = require('../core/util');
 
 const ARXIV_API = 'http://export.arxiv.org/api/query';
 

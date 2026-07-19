@@ -30,7 +30,7 @@
 - 📊 **处理可见化**：顶栏 stats 显示当前处理阶段（解析中/补元数据/总结中 各几篇），列表项 busy 状态实时刷新
 - ⌨️ **键盘导航**：列表 ↑↓ 选择 / Enter 打开 PDF / S 收藏
 - 🔗 **arXiv 元数据**：按文件名清洗标题查 arXiv API 补全（匹配失败则 AI 兜底并标注）
-- ♻️ **可替换模块**：换 MinerU 解析只改 `lib/parser.js`，换模型只改 `config.json`
+- ♻️ **可替换模块**：换 MinerU 解析只改 `src/parser.js`，换模型只改 `config.json`
 
 ## 安装
 
@@ -145,7 +145,7 @@ npm run scan        # 扫描并处理完队列后退出
 papers/        你的 PDF（只读扫描，gitignore）
 data/          papers.json + text/ + backups/（运行时数据，gitignore）
 config.json    实际配置（gitignore，含 key）；模板见 config.example.json
-lib/           后端模块：util/store/parser/arxiv/ai/scanner/api/annotations/discover/claude
+src/           后端模块：util/store/parser/arxiv/ai/scanner/api/annotations/discover/claude
 public/        前端静态页（无构建，原生 ESM）
   ├─ index.html   三栏布局（侧栏/列表/详情）+ 阅读器 + 概念视图 + 设置中心（AI接口/提示词/主题标签管理/关于）
   ├─ app.js       主逻辑：路由/列表/详情/收藏夹/主题/概念/多选/导入/设置中心/键盘导航
@@ -153,7 +153,7 @@ public/        前端静态页（无构建，原生 ESM）
   └─ styles.css   Indigo 主题
 scripts/       scan-once.js（CLI 扫描）+ e2e-bootstrap.js（e2e 数据准备）
 tests/         单测（*.test.js）+ e2e（tests/e2e/）+ fixtures（sample.pdf）
-server.js      HTTP 入口
+src/server.js  HTTP 入口（分层结构见 AGENTS.md）
 migrations/    PG schema（编号 migration）
 Dockerfile / docker-compose.yml / .env   Docker Compose 部署（v3）
 logs/          运行日志（gitignore）
@@ -206,7 +206,7 @@ CI（GitHub Actions）在每次 push/PR 自动跑 lint + 单测 + e2e。
 
 ## 后续可扩展（v3）
 
-- 接 MinerU 做高质量结构化解析（替换 `lib/parser.js`）
+- 接 MinerU 做高质量结构化解析（替换 `src/parser.js`）
 - 论文关系链 / 引用对比
 - SQLite 替换 JSON（论文量 > 500 时）
 - 向量检索（语义相似论文推荐）

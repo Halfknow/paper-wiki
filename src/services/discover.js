@@ -1,5 +1,5 @@
 const { extractArxivId } = require('./arxiv');
-const { normalizeTitle, titleSimilarity, sleep } = require('./util');
+const { normalizeTitle, titleSimilarity, sleep } = require('../core/util');
 
 const UA = 'PaperWiki/1.0 (local research tool)';
 const SEMANTIC_SCHOLAR_BATCH = 'https://api.semanticscholar.org/graph/v1/paper/batch';

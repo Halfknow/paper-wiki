@@ -2,6 +2,14 @@
 
 本文件记录 PaperWiki 每个版本的显著变更。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/)，版本号语义化。
 
+## [3.3.0] — 2026-07-18
+
+### Changed — 项目结构分层重组（标准化布局）
+- 扁平 `lib/`（14 个文件混放）→ 分层 `src/`：**core**（纯逻辑零 IO：store/util/search/search-query/annotations）/ **db**（持久化 + migrations 收编为 `src/db/migrations`）/ **services**（业务：spaces/scanner/ai/arxiv/discover/claude/parser）/ **api**（router.js）；入口 `server.js` → `src/server.js`。
+- 依赖方向清晰化：core ← db/services ← api ← server（纯逻辑可独立测试，业务不反向依赖路由）。
+- 根目录只保留配置与文档；日志入 `logs/`、pm2 遗留（ecosystem.config.cjs）删除、TODO/调研报告入 `docs/`。
+- 全部 require/Dockerfile/CI/playwright 路径同步；261 例测试 + e2e + 容器冒烟全绿，纯结构移动零逻辑变更（git mv 保留文件历史）。
+
 ## [3.2.0] — 2026-07-18
 
 > **搜索 DSL + 高级搜索 GUI：GitHub 式字段查询语法（title:/tag:/year:/-排除/"phrase" body:）+ 统一解析器（元数据筛选 + 正文全文检索合并）+ 高级面板双向同步 + 输入框内联补全 + 语法帮助 + 保存的搜索。** 把原来「单子串 `.includes()` + 回车全文检索二选一」升级为一套可组合、可结构化编辑的查询系统。

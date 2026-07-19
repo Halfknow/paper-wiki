@@ -3,14 +3,14 @@
 // 用法：npm run scan   或   node scripts/scan-once.js [--space <id>]
 const path = require('path');
 const fs = require('fs');
-const { mergeTags, mergeTopics, mergeConcepts } = require('../lib/store');
-const { createMultiSpaceScanner } = require('../lib/scanner');
-const { createSpaceManager } = require('../lib/spaces');
-const { createDb, createRepository } = require('../lib/db');
-const parser = require('../lib/parser');
-const arxiv = require('../lib/arxiv');
-const ai = require('../lib/ai');
-const { cleanFilenameToTitle, createRateLimiter, log } = require('../lib/util');
+const { mergeTags, mergeTopics, mergeConcepts } = require('../src/core/store');
+const { createMultiSpaceScanner } = require('../src/services/scanner');
+const { createSpaceManager } = require('../src/services/spaces');
+const { createDb, createRepository } = require('../src/db');
+const parser = require('../src/services/parser');
+const arxiv = require('../src/services/arxiv');
+const ai = require('../src/services/ai');
+const { cleanFilenameToTitle, createRateLimiter, log } = require('../src/core/util');
 
 (async () => {
   const root = path.join(__dirname, '..');

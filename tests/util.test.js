@@ -9,7 +9,7 @@ const {
   parseArxivUrl,
   safeFilename,
   buildPaperFilename,
-} = require('../lib/util');
+} = require('../src/core/util');
 
 test('normalizeTitle 小写化、去标点、折叠空白、去 LaTeX', () => {
   assert.strictEqual(normalizeTitle('A Survey of $L^2$ Losses!'), 'a survey of losses');

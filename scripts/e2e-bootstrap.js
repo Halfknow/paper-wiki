@@ -51,7 +51,7 @@ async function main() {
   }
 
   // 3) PG 预置：migrate → default 空间 → sample 记录（upsert 幂等）
-  const { createDb, createRepository } = require('../lib/db');
+  const { createDb, createRepository } = require('../src/db');
   const db = createDb({ connectionString: DB_URL });
   await db.migrate();
   const repo = createRepository(db);

@@ -4,8 +4,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const { newDb } = require('pg-mem');
-const { createDb, createRepository } = require('../lib/db');
-const { createSpaceManager, resolvePapersDir, DEFAULT_SPACE_ID } = require('../lib/spaces');
+const { createDb, createRepository } = require('../src/db');
+const { createSpaceManager, resolvePapersDir, DEFAULT_SPACE_ID } = require('../src/services/spaces');
 
 /** pg-mem repo + 临时 papersRoot 的 manager（每个 test 独立） */
 async function makeManager(globalConfig) {
@@ -359,7 +359,7 @@ test('spacesView 返回 activeSpaceId + 精简列表（含 paperCount）', async
 
 // ---- papersDir 改绑：预检 → move/rebind（v3 绑定语义重设计）----
 
-const { sha1OfFile } = require('../lib/util');
+const { sha1OfFile } = require('../src/core/util');
 
 /** 在目录写一个内容确定的假 PDF，返回其 paper id（sha1 前 16） */
 async function writePdf(dir, name, content) {

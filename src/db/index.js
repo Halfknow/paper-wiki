@@ -1,8 +1,8 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { migrateStore, emptyStore } = require('./store');
-const { hasCjk } = require('./search');
+const { migrateStore, emptyStore } = require('../core/store');
+const { hasCjk } = require('../core/search');
 
 /**
  * PostgreSQL 持久化层：createDb（连接池 + 编号 migration）+ createRepository（registry/store/texts）。
@@ -36,7 +36,7 @@ function createDb({ connectionString, createPool } = {}) {
     if (!hasMigrations) {
       await query('CREATE TABLE schema_migrations (name TEXT PRIMARY KEY, applied_at DOUBLE PRECISION)');
     }
-    const dir = path.join(__dirname, '..', 'migrations');
+    const dir = path.join(__dirname, 'migrations');
     const files = fs
       .readdirSync(dir)
       .filter((f) => /\.sql$/.test(f))

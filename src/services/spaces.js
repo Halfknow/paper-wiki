@@ -1,7 +1,7 @@
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
-const { log, safeFilename } = require('./util');
+const { log, safeFilename } = require('../core/util');
 
 /**
  * 空间管理器（v3：PostgreSQL 持久化）：每个空间是一个完全隔离的库

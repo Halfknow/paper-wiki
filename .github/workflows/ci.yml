@@ -51,7 +51,7 @@ jobs:
         run: node scripts/e2e-bootstrap.js
       - name: Boot server & smoke CRUD
         run: |
-          PORT=9977 node server.js &
+          PORT=9977 node src/server.js &
           SERVER_PID=$!
           sleep 3
           set -e

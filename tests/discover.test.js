@@ -8,7 +8,7 @@ const {
   parseClaudeOutput,
   computeRelevance,
   planViaGateway,
-} = require('../lib/discover');
+} = require('../src/services/discover');
 
 // 两条假 arXiv entry，第一条已在库里（用来验证去重）
 const ENTRY_A = {

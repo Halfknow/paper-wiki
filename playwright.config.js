@@ -18,7 +18,7 @@ module.exports = defineConfig({
     actionTimeout: 15000,
   },
   webServer: {
-    command: 'node scripts/e2e-bootstrap.js && node server.js',
+    command: 'node scripts/e2e-bootstrap.js && node src/server.js',
     port: 9999,
     cwd: __dirname,
     reuseExistingServer: !process.env.CI,

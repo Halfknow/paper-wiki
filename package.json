@@ -3,9 +3,9 @@
   "version": "2.7.0",
   "private": true,
   "description": "Thin local web service to manage arXiv PDFs with AI summaries, tags, notes and preview.",
-  "main": "server.js",
+  "main": "src/server.js",
   "scripts": {
-    "start": "node server.js",
+    "start": "node src/server.js",
     "test": "node --test",
     "scan": "node scripts/scan-once.js",
     "lint": "eslint .",

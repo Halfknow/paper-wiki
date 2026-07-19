@@ -1,6 +1,6 @@
 const path = require('path');
 const fs = require('fs');
-const { mergeTopics, deleteConcept, conceptsToMarkdown, addFolder, deleteFolder } = require('./store');
+const { mergeTopics, deleteConcept, conceptsToMarkdown, addFolder, deleteFolder } = require('../core/store');
 const {
   DEFAULT_SUMMARY_PROMPT,
   DEFAULT_TAGS_PROMPT,
@@ -9,12 +9,12 @@ const {
   callChatStream,
   listModels,
   TRANSLATE_SYSTEM_PROMPT,
-} = require('./ai');
-const { sha1OfFile, parseArxivUrl, buildPaperFilename, proxyFetchJson } = require('./util');
-const { normalizeAnnotations } = require('./annotations');
-const { parseSearchQuery, applyMetadataQuery } = require('./search-query');
-const arxiv = require('./arxiv');
-const pkg = require('../package.json');
+} = require('../services/ai');
+const { sha1OfFile, parseArxivUrl, buildPaperFilename, proxyFetchJson } = require('../core/util');
+const { normalizeAnnotations } = require('../core/annotations');
+const { parseSearchQuery, applyMetadataQuery } = require('../core/search-query');
+const arxiv = require('../services/arxiv');
+const pkg = require('../../package.json');
 
 /** 掩码 apiKey 用于回显：只露前 3 / 后 4 位。空 key 返回空串。 */
 function maskKey(key) {
@@ -367,7 +367,7 @@ function createApiRouter(ctx) {
       if (bodyWord === null) bodyWord = parsedQ.bodyQuery !== null ? parsedQ.bodyQuery : rawQ;
       if (!bodyWord) return fail(res, 400, '缺少正文检索词');
       const limit = Math.max(1, Math.min(50, parseInt(q.limit, 10) || 30));
-      const { splitTerms, buildSnippets } = require('./search');
+      const { splitTerms, buildSnippets } = require('../core/search');
       // 元数据候选子集：若 q 含字段前缀（非 body），先筛论文 id
       let idSubset = null;
       const qHasFields =
@@ -931,7 +931,7 @@ function createApiRouter(ctx) {
     function discoverOpts(topic) {
       const cfg = config.discover || {};
       const arx = config.arxiv || {};
-      const { planViaGateway } = require('./discover');
+      const { planViaGateway } = require('../services/discover');
       // discover 的「网关规划」走 AI 调用，需用生效配置（store.settings.ai 覆盖 config.ai）
       const effConfig = applySettingsOverride(config, store.settings);
       return {
@@ -959,7 +959,7 @@ function createApiRouter(ctx) {
       const op = JSON.parse(body || '{}');
       const topic = typeof op.topic === 'string' ? op.topic.trim() : '';
       if (!topic) return fail(res, 400, '请输入主题');
-      const { discoverPapers } = require('./discover');
+      const { discoverPapers } = require('../services/discover');
       try {
         const data = await discoverPapers(discoverOpts(topic));
         return ok(res, data);
@@ -973,7 +973,7 @@ function createApiRouter(ctx) {
     if (pathname === '/api/discover/stream' && method === 'GET') {
       const topic = typeof q.topic === 'string' ? q.topic.trim() : '';
       if (!topic) return fail(res, 400, '请输入主题');
-      const { discoverPapers } = require('./discover');
+      const { discoverPapers } = require('../services/discover');
       res.writeHead(200, {
         'Content-Type': 'text/event-stream; charset=utf-8',
         'Cache-Control': 'no-cache, no-transform',

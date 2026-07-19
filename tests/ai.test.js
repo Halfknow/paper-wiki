@@ -15,7 +15,7 @@ const {
   applySettingsOverride,
   callChat,
   listModels,
-} = require('../lib/ai');
+} = require('../src/services/ai');
 
 const CFG = { ai: { baseURL: 'http://gw/v1', apiKey: 'k', model: 'm', maxInputChars: 100, timeoutMs: 1000 } };
 

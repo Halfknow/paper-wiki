@@ -1,7 +1,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const { newDb } = require('pg-mem');
-const { createDb, createRepository } = require('../lib/db');
+const { createDb, createRepository } = require('../src/db');
 
 /** pg-mem 内存库：无需真实 PostgreSQL 即可测 repository 全逻辑 */
 function memDb() {
