@@ -2,6 +2,50 @@
 
 本文件记录 PaperWiki 每个版本的显著变更。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/)，版本号语义化。
 
+## [3.2.0] — 2026-07-18
+
+> **搜索 DSL + 高级搜索 GUI：GitHub 式字段查询语法（title:/tag:/year:/-排除/"phrase" body:）+ 统一解析器（元数据筛选 + 正文全文检索合并）+ 高级面板双向同步 + 输入框内联补全 + 语法帮助 + 保存的搜索。** 把原来「单子串 `.includes()` + 回车全文检索二选一」升级为一套可组合、可结构化编辑的查询系统。
+
+### Added — 搜索 DSL 解析器（lib/search-query.js，新文件）
+- **GitHub 式字段前缀**：`title:` `abstract:` `summary:` `notes:` `author:` `tag:` `topic:` `year:` `status:` `read:` `star:1` `body:`。冒号无空格，值原样匹配。
+- **裸词分词 AND**（修旧 bug）：`transformer attention` 旧版只能匹配连续短语；现在两词都命中（英文词边界匹配，`cat` 不命中 `category`）。`"exact phrase"` 引号精确匹配。
+- **操作符**：`-field:value` / `-word`（排除 NOT）、`AND` `OR` `NOT` 大写关键字、`( )` 分组、多 `tag:` 默认 OR 可显式 `tag:a AND tag:b`。
+- **year 多格式**：`2024` / `>=2020` / `<=2024` / `>2020` / `<2024` / `2020-2024`（范围）。
+- **body:/in:body**：切到正文全文检索（tsvector/ILIKE），与元数据筛选组合成统一查询。
+- **中文支持**：CJK 裸词整串匹配（沿用 hasCjk 语义，不做分词）。
+- 解析器纯函数、零副作用、前后端共用（前端镜像 `public/search-dsl.js`）。
+- **22 例单测**：tokenizer / parser / 各字段 / AND-OR-NOT / year 范围 / body: / 中文 / 词边界。
+
+### Added — 后端统一搜索
+- **`GET /api/papers?q=<DSL>`**：`q` 现在走 `parseSearchQuery` + `applyMetadataQuery`，替代旧单子串 `.includes()`。保留旧 query params（`tag=`/`topic=`/`status=`/`starred=`/`folder=`/`readStatus=`）作为 GUI 面板并行入口，与 DSL **AND 合并**。
+- **`GET /api/search?q=<DSL>`**：q 含 `body:phrase` 时 phrase 作为正文词，其余字段作为元数据候选 id 子集先过滤，再在该子集做正文检索 → **「正文词 + 元数据筛选」统一查询**。向后兼容：纯文本 q 仍当正文词。
+- **`GET /api/search/suggest?field=tag&prefix=mo`**（新）：返回该字段在当前空间论文里的候选值（去重 + 按使用频次倒序），供输入框内联补全。支持 tag/topic/author/title/status/read。
+- **`lib/db.js searchFulltext`**：新增可选 `opts.ids` 子集参数（`AND paper_id = ANY($4)`），实现正文检索限定在元数据筛选后的候选集内。
+- **`PUT /api/settings/saved-searches`**（新）：保存命名搜索预设（per-space，规整去空/限 30 条/截断）。`GET /api/settings` 回显 `savedSearches`。
+
+### Added — 前端高级搜索 GUI
+- **搜索框重构**：左侧搜索图标 + 右侧「? 帮助」「⚙ 高级」按钮 + Ctrl K 快捷键。placeholder 提示语法（`title: tag: year: body:`）。
+- **统一触发**：oninput 250ms 防抖；DSL 含 `body:` → 走 `/api/search`（正文检索视图 + 高亮 snippet），否则 → `/api/papers`（元数据即时筛选）。Enter = 立即应用（不等防抖）。`body:` 模式下输入框加 Indigo 竖条提示。
+- **高级搜索面板**（`#advanced-search`，折叠）：标题/作者/摘要/总结/年份(起-止)/处理状态/阅读状态/标签(chip 多选)/主题(chip 多选)/关键词/搜索范围(元数据|含正文)/仅星标/仅含笔记。**双向同步**：面板改字段 → 实时生成 DSL 填回搜索框 + 触发搜索；搜索框输入 DSL → 解析回填面板（`parseToPanel`）。底栏显示 DSL 预览 + 搜索/清空/保存按钮。
+- **输入框内联补全**：检测光标前最近的 `field:` 前缀，调 `/api/search/suggest` 弹候选浮层（body 级 fixed 定位），↑↓ 导航、Enter/Tab 插入、Esc 关。`tag:`/`topic:`/`author:`/`title:`/`status:`/`read:` 都补全。
+- **语法帮助 popover**（`?` 按钮）：列出全部字段前缀 + year 格式 + 操作符 + 示例（静态内容）。
+- **保存的搜索**：「保存为预设」命名后存 `store.settings.savedSearches`（per-space）；搜索框下方 chip 行展示，点击即应用 DSL，× 删除。
+
+### Changed — 文件
+- `lib/search-query.js`（新）：DSL tokenizer + parser + `parseSearchQuery`/`applyMetadataQuery`/`buildDslFromPanel`/`parseToPanel`。
+- `lib/api.js`：`/api/papers` 接 DSL；`/api/search` 加 DSL 解析（body + 元数据交集）；新增 `/api/search/suggest` + `PUT /api/settings/saved-searches`；`GET /api/settings` 回显 savedSearches。
+- `lib/db.js`：`searchFulltext` 支持 `opts.ids` 子集。
+- `public/search-dsl.js`（新）：浏览器镜像解析器（`window.PaperWikiSearch`）。
+- `public/app.js`：`triggerSearch`/`updateSearchModeIndicator` 统一触发；`ensureAdvancedPanel`/`syncAdvancedPanelFromDsl`/`syncSearchBoxFromPanel` 双向同步；`openSuggest`/`handleSuggestKeydown`/`checkSuggestOnInput` 补全；`toggleSearchHelp` 帮助；`saveCurrentSearch`/`renderSavedSearches` 保存。
+- `public/index.html`：搜索框加图标/帮助/高级按钮 + 高级面板 + 保存 chip 行容器；加载 search-dsl.js。
+- `public/styles.css`：搜索框图标/按钮、高级面板网格、chip、补全浮层、帮助 popover、保存 chip 样式。
+- `tests/search-query.test.js`（新）：22 例解析器测试。
+
+### Tested
+- 单元：`npm test` 260 例全过（+22 解析器 + settings 路由）。
+- e2e：`npm run test:e2e` 2 例（reader 渲染 + 高亮往返）全过。
+- 手动：DSL 各字段 / AND-OR-NOT / year 范围 / body: 正文+元数据交集 / 高级面板双向同步 / 内联补全(键盘+鼠标) / 语法帮助 / 保存搜索全链路验证无 JS 错误。
+
 ## [3.1.0] — 2026-07-18
 
 ### Added — 论文正文全文检索（tsvector）

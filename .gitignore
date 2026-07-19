@@ -38,3 +38,6 @@ pg-backups/
 
 # 旧 JSON 数据归档
 data-legacy-*.zip
+
+# 运行日志
+logs/

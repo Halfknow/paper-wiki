@@ -154,7 +154,9 @@ public/        前端静态页（无构建，原生 ESM）
 scripts/       scan-once.js（CLI 扫描）+ e2e-bootstrap.js（e2e 数据准备）
 tests/         单测（*.test.js）+ e2e（tests/e2e/）+ fixtures（sample.pdf）
 server.js      HTTP 入口
-ecosystem.config.cjs   pm2 配置
+migrations/    PG schema（编号 migration）
+Dockerfile / docker-compose.yml / .env   Docker Compose 部署（v3）
+logs/          运行日志（gitignore）
 ```
 
 ## REST API（节选）

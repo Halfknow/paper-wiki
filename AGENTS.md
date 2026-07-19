@@ -42,7 +42,7 @@ lib/
   ai.js      ★         OpenAI 兼容 chat 调用：summarize(自由Markdown) / extractTagsTopics(JSON) / extractConcepts / chatPaper(多轮+流式+多模态)
                         含 429/5xx 指数退避重试、JSON 容错解析、applySettingsOverride（store.settings 覆盖 config 的 ai/scan/arxiv/discover）
                         **v2.7**：callChat/callChatStream 支持 chatParams.model 覆盖 + 多模态 content 数组；新增 listModels（上游 /v1/models + extraModels 回退）
-  api.js     ★         REST 路由：spaces（新）/health/papers/tags/topics/folders/concepts/settings/stats/import/discover；paper DELETE
+  api.js     ★         REST 路由：spaces/health/papers(支持搜索DSL)/search(全文+元数据交集)/search/suggest(补全)/tags/topics/folders/concepts/settings(含savedSearches)/stats/import/discover；paper DELETE
                         **ctx = {manager, scanner, globalConfig}**；每路由 resolveSpace(q) 取 {spaceId,store,save}；
                         ?space= 路由隔离（无参回 active）；settings 读写 space.store.settings
   discover.js ★        按主题发现：检索计划(claude→网关→原始)/多轴召回/S2+OpenAlex 引用量/复合排序/去重
@@ -51,6 +51,9 @@ lib/
   parser.js            pdfjs-dist 全文提取（Node 端，无 DOM worker）
   arxiv.js   ★         Atom 解析、标题相似度匹配、PDF 链接抽取、下载；searchArxiv 支持 sort/分页 + searchArxivMulti
   util.js    ★         sha1、限速器、sleep、标题归一化/相似度、文件名清洗、parseArxivUrl、safeFilename/buildPaperFilename
+  search-query.js ★（新）搜索 DSL 解析器：tokenizer + parseSearchQuery（GitHub 式字段前缀 title:/tag:/year:/-排除/"phrase" body:）
+                        applyMetadataQuery（应用到论文列表）；buildDslFromPanel/parseToPanel（高级面板双向同步）。前后端共用（前端镜像 public/search-dsl.js）
+  search.js            全文检索辅助：hasCjk（CJK 检测）、splitTerms（CJK 整串/英文分词）、buildSnippets（命中片段 <mark> 高亮，输出已转义 HTML）
 public/
   index.html           三栏布局 + 顶栏空间切换器 + 阅读器 + 概念/提示词视图 + 收藏夹/导入/空间管理模态
   app.js     ★         主逻辑：路由/列表/详情/收藏夹/主题/概念/多选/导入/键盘导航/**空间切换(sp helper/teardown)**
@@ -309,6 +312,13 @@ arXiv 导入 (POST /api/import { url, meta? }):
     snippet 在 Node 侧生成（lib/search.buildSnippets，只 load 命中篇全文），输出**已转义 HTML**（<mark> 高亮），
     前端直接 innerHTML——改 snippet 逻辑勿在前端二次转义。前端入口：搜索框**回车**进全文模式（即时筛选不变），
     输入变化/Esc/× 退出。已知偏差：含字面 %/_ 的查询在 pg-mem 中行为与真实 PG 不同（反斜杠转义解析差异）。
+
+28. **搜索 DSL + 高级搜索 GUI（v3.2，lib/search-query.js）**：
+   - **统一解析器**：`/api/papers?q=` 与 `/api/search?q=` 都走 `parseSearchQuery`（GitHub 式字段前缀 `title:/tag:/year:/-排除/"phrase" body:`）。裸词分词 AND（修旧单子串 bug）；英文词边界匹配（`cat` 不命中 `category`）；CJK 整串。`body:` 词走正文检索，其余字段作为元数据候选 id 子集先过滤再正文检索（交集）。
+   - **前后端共用解析器**：`lib/search-query.js`（Node）+ `public/search-dsl.js`（浏览器镜像，`window.PaperWikiSearch`）。改语法要同步两份。前端用它做：① 检测 `body:` 分流（triggerSearch）② 高级面板双向同步（buildDslFromPanel/parseToPanel）③ 内联补全（detectFieldAtCursor）。
+   - **双向同步陷阱**：高级面板改字段 → `syncSearchBoxFromPanel` 生成 DSL 填回搜索框 + 触发搜索；搜索框输入 → `syncAdvancedPanelFromDsl` 回填面板。用 `_advSyncing` 标志防循环。
+   - **`searchFulltext` 的 `opts.ids` 子集**：`/api/search` 含元数据字段时，先 `applyMetadataQuery` 得候选 id，传给 `searchFulltext` 的 `opts.ids`，SQL 加 `AND paper_id = ANY($4)` 限定。**改交集逻辑勿在 Node 侧二次过滤**（SQL 已做）。
+   - **保存的搜索**：`PUT /api/settings/saved-searches`（规整去空/限 30 条），per-space。前端 chip 行点击应用 DSL。
 
 ## 工程化
 

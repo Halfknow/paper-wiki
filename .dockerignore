@@ -11,5 +11,5 @@ tests
 config.json
 .env
 *.md
-ecosystem.config.cjs
+logs
 playwright.config.*

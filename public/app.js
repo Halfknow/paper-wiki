@@ -535,7 +535,7 @@ function setView(patch) {
 }
 
 // ---- 列表 ----
-/** 全文检索（搜索框回车触发）：GET /api/search 命中论文 + 高亮片段，列表切到结果视图。 */
+/** 全文检索（搜索框 body: 触发）：GET /api/search 命中论文 + 高亮片段，列表切到结果视图。 */
 async function runFulltextSearch(query) {
   state.ft = { query, results: null }; // results=null → loading 态
   renderList();
@@ -548,6 +548,29 @@ async function runFulltextSearch(query) {
     toast(e.message || '全文检索失败', 'error');
   }
   renderList();
+}
+
+/** v3.2 统一搜索触发：根据 DSL 是否含 body:/in:body 分流。
+ *  - body: → /api/search（正文检索 + 元数据 id 子集交集）
+ *  - 否则 → /api/papers?q=DSL（元数据即时筛选，后端解析字段前缀）
+ *  immediate=true 时跳过防抖（Enter 触发）。 */
+function triggerSearch(value) {
+  const v = String(value != null ? value : ($('search') && $('search').value) || '').trim();
+  const isBody = window.PaperWikiSearch && window.PaperWikiSearch.isBodySearch(v);
+  if (isBody) {
+    runFulltextSearch(v);
+  } else {
+    if (state.ft) { state.ft = null; renderList(); }
+    refresh();
+  }
+}
+
+/** DSL 模式提示：含 body: 时给搜索框加 .body-mode 类（CSS 显示正文检索态）。 */
+function updateSearchModeIndicator(v) {
+  const inp = $('search');
+  if (!inp) return;
+  const isBody = window.PaperWikiSearch && window.PaperWikiSearch.isBodySearch(v);
+  inp.classList.toggle('body-mode', !!isBody);
 }
 
 /** 渲染全文检索结果视图（banner + 命中论文卡 + 高亮 snippet；snippet 由后端转义并 <mark>） */
@@ -2521,6 +2544,9 @@ async function loadSettingsData() {
     $('tags-prompt-default-pre').textContent = data.defaultTagsPrompt || '';
     // ---- 聊天预置 Prompt（输入框上方快捷提问按钮，store.settings.chatPresets 覆盖内置默认）----
     chatPresetsOverride = Array.isArray(data.chatPresets) ? data.chatPresets : null;
+    // ---- v3.2 保存的搜索预设（高级搜索命名预设）----
+    setSavedSearches(Array.isArray(data.savedSearches) ? data.savedSearches : []);
+    renderSavedSearches();
     // ---- 文件扫描 ----
     $('scan-interval').value = data.scan.scanIntervalMinutes ?? 5;
     $('scan-default-hint').textContent = `config.json 默认：${data.configScan.scanIntervalMinutes} 分钟 · 设为 0 关闭定时扫描，仅手动 / 导入触发`;
@@ -3396,24 +3422,39 @@ function bindListSplitter() {
 // ---- 绑定事件 ----
 function bind() {
   let t;
+  // v3.2 统一搜索：oninput 250ms 防抖。
+  //   - DSL 含 body:/in:body → 走正文检索（/api/search），后端把元数据部分作为候选 id 子集
+  //   - 否则 → 元数据即时筛选（/api/papers?q=DSL，后端解析字段前缀 + 分词 AND）
+  //   - 同时把 DSL 镜像回填高级面板（双向同步）
   $('search').oninput = (e) => {
-    if (state.ft) { state.ft = null; renderList(); } // 修改查询即退出全文检索模式，恢复即时筛选
-    state.filter.q = e.target.value; clearTimeout(t); t = setTimeout(refresh, 250);
+    const v = e.target.value;
+    state.filter.q = v;
+    syncAdvancedPanelFromDsl(v);          // DSL → 面板回填
+    updateSearchModeIndicator(v);         // body: 模式提示
+    clearTimeout(t);
+    t = setTimeout(() => triggerSearch(v), 250);
   };
-  // 回车 = 全文检索（正文级，PG tsvector/子串）；Esc = 清空并退出
+  // 回车 = 立即应用当前 DSL（不等防抖）；Esc = 清空退出
   $('search').addEventListener('keydown', (e) => {
+    // 内联补全浮层打开时：↑↓/Enter/Tab/Esc 走补全
+    if (handleSuggestKeydown(e)) { e.preventDefault(); return; }
     if (e.key === 'Enter') {
       e.preventDefault();
-      const q = $('search').value.trim();
-      if (q) runFulltextSearch(q);
+      const v = $('search').value.trim();
+      closeSuggest();
+      if (v) triggerSearch(v, { immediate: true });
     } else if (e.key === 'Escape') {
       e.preventDefault();
+      if (closeSuggest()) return;          // 先关补全浮层
       $('search').value = '';
       state.filter.q = '';
       if (state.ft) { state.ft = null; renderList(); }
+      syncAdvancedPanelFromDsl('');
       refresh();
     }
   });
+  // 输入框失焦时关补全（延迟，让点击事件先触发）
+  $('search').addEventListener('blur', () => { setTimeout(closeSuggest, 200); });
   $('filter-status').onchange = (e) => {
     state.filter.status = e.target.value;
     state.filter.readStatus = '';
@@ -4040,10 +4081,12 @@ async function loadSpaces() {
   renderSpaceSwitcher();
 }
 
-/** 渲染顶部空间切换器（当前名 + 下拉列表）。 */
+/** 渲染顶部空间切换器（当前名 + 下拉列表）。
+ *  当前空间名写入 localStorage：刷新时在 /api/spaces 返回前先回显缓存名，避免闪「默认」。 */
 function renderSpaceSwitcher() {
   const cur = state.spaces.find((s) => s.id === state.space) || state.spaces[0];
-  $('space-name').textContent = cur ? cur.name : '默认';
+  if (cur) localStorage.setItem('pw-space-name', cur.name);
+  $('space-name').textContent = cur ? cur.name : localStorage.getItem('pw-space-name') || '空间';
   const list = $('space-list');
   list.innerHTML = '';
   for (const s of state.spaces) {
@@ -4385,6 +4428,8 @@ function openSpaceCreateForm() {
 }
 
 function bindSpaceSwitcher() {
+  // 启动即回显上次空间名（loadSpaces 网络返回前），避免刷新时闪硬编码占位
+  $('space-name').textContent = localStorage.getItem('pw-space-name') || '空间';
   $('space-current').onclick = (e) => { e.stopPropagation(); toggleSpaceMenu(); };
   // 下拉菜单里的「+ 新建空间」：打开管理弹窗并聚焦新建表单
   $('space-new').onclick = () => { closeSpaceMenu(); openSpaceModal(); openSpaceCreateForm(); };
@@ -4408,6 +4453,422 @@ function bindSpaceSwitcher() {
 
 bindSpaceSwitcher();
 bindDirWizard();
+
+// ============================================================================
+// v3.2 高级搜索 GUI（面板 + 双向同步 + 内联补全 + 语法帮助 + 保存的搜索）
+// 依赖 public/search-dsl.js（window.PaperWikiSearch）+ /api/search/suggest
+// ============================================================================
+
+/** 高级面板状态（与 DSL 双向同步）。null = 未渲染。 */
+let _advPanel = null;
+/** 是否正在程序化同步（避免循环：面板改 → DSL → 面板回填）。 */
+let _advSyncing = false;
+
+/** 渲染高级搜索面板到 #advanced-search。仅渲染一次（hidden 切换显隐）。 */
+function ensureAdvancedPanel() {
+  const root = $('advanced-search');
+  if (!root || _advPanel) return root;
+  root.innerHTML = `
+    <div class="adv-grid">
+      <label class="adv-field"><span>标题</span><input type="text" id="adv-title" placeholder="title:"></label>
+      <label class="adv-field"><span>作者</span><input type="text" id="adv-author" placeholder="author:"></label>
+      <label class="adv-field"><span>摘要</span><input type="text" id="adv-abstract" placeholder="abstract:"></label>
+      <label class="adv-field"><span>总结</span><input type="text" id="adv-summary" placeholder="summary:"></label>
+      <label class="adv-field adv-year"><span>年份</span>
+        <input type="number" id="adv-year-from" placeholder="起" min="1900" max="2099">
+        <span class="adv-dash">–</span>
+        <input type="number" id="adv-year-to" placeholder="止" min="1900" max="2099">
+      </label>
+      <label class="adv-field"><span>处理状态</span>
+        <select id="adv-status"><option value="">不限</option><option value="ready">已就绪</option><option value="error">出错</option><option value="pending">处理中</option><option value="missing">缺失</option></select>
+      </label>
+      <label class="adv-field"><span>阅读状态</span>
+        <select id="adv-read"><option value="">不限</option><option value="unread">未读</option><option value="reading">在读</option><option value="done">已读</option></select>
+      </label>
+      <label class="adv-field adv-tags"><span>标签</span><div class="adv-chips" id="adv-tags-row"></div><input type="text" id="adv-tag-input" placeholder="+ 加标签（回车）"></label>
+      <label class="adv-field adv-tags"><span>主题</span><div class="adv-chips" id="adv-topics-row"></div><input type="text" id="adv-topic-input" placeholder="+ 加主题（回车）"></label>
+      <label class="adv-field adv-full"><span>关键词（标题/摘要/总结/笔记/标签/主题）</span><input type="text" id="adv-text" placeholder="transformer attention（分词 AND）"></label>
+      <label class="adv-field adv-full adv-scope"><span>搜索范围</span>
+        <label class="adv-radio"><input type="radio" name="adv-scope" value="metadata" checked> 仅元数据</label>
+        <label class="adv-radio"><input type="radio" name="adv-scope" value="body"> 含正文全文</label>
+        <input type="text" id="adv-body-text" placeholder="正文检索词（body:）" disabled>
+      </label>
+      <label class="adv-check"><input type="checkbox" id="adv-starred"> 仅星标</label>
+      <label class="adv-check"><input type="checkbox" id="adv-has-notes"> 仅含笔记</label>
+    </div>
+    <div class="adv-footer">
+      <button class="btn ghost sm" id="adv-clear" type="button">清空</button>
+      <button class="btn ghost sm" id="adv-save" type="button">保存为预设…</button>
+      <span class="adv-spacer"></span>
+      <span class="adv-dsl-preview" id="adv-dsl-preview"></span>
+      <button class="btn sm" id="adv-search" type="button">搜索</button>
+    </div>`;
+  _advPanel = {
+    title: $('adv-title'), author: $('adv-author'), abstract: $('adv-abstract'), summary: $('adv-summary'),
+    yearFrom: $('adv-year-from'), yearTo: $('adv-year-to'), status: $('adv-status'), read: $('adv-read'),
+    tagsRow: $('adv-tags-row'), tagInput: $('adv-tag-input'),
+    topicsRow: $('adv-topics-row'), topicInput: $('adv-topic-input'),
+    text: $('adv-text'), scopeBody: document.querySelector('input[name="adv-scope"][value="body"]'),
+    bodyText: $('adv-body-text'), starred: $('adv-starred'), hasNotes: $('adv-has-notes'),
+    preview: $('adv-dsl-preview'),
+  };
+  // 字段变化 → 生成 DSL → 回填搜索框 → 触发搜索
+  const onChange = () => {
+    if (_advSyncing) return;
+    const dsl = dslFromPanelInputs();
+    _advPanel.preview.textContent = dsl || '（无筛选）';
+    syncSearchBoxFromPanel(dsl);
+  };
+  [_advPanel.title, _advPanel.author, _advPanel.abstract, _advPanel.summary, _advPanel.yearFrom, _advPanel.yearTo, _advPanel.text, _advPanel.bodyText].forEach((el) => { if (el) el.addEventListener('input', onChange); });
+  [_advPanel.status, _advPanel.read].forEach((el) => { if (el) el.addEventListener('change', onChange); });
+  [_advPanel.starred, _advPanel.hasNotes].forEach((el) => { if (el) el.addEventListener('change', onChange); });
+  document.querySelectorAll('input[name="adv-scope"]').forEach((r) => r.addEventListener('change', () => { _advPanel.bodyText.disabled = !_advPanel.scopeBody.checked; onChange(); }));
+  // 标签/主题 chip 输入（回车添加）
+  const wireChipInput = (input, getArr, setArr, row) => {
+    if (!input) return;
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ',') {
+        e.preventDefault();
+        const v = input.value.trim();
+        if (!v) return;
+        const arr = getArr();
+        if (!arr.includes(v)) { arr.push(v); setArr(arr); renderAdvChips(row, arr, setArr); onChange(); }
+        input.value = '';
+      }
+    });
+  };
+  let _tags = [], _topics = [];
+  const getTags = () => _tags, setTags = (a) => { _tags = a; };
+  const getTopics = () => _topics, setTopics = (a) => { _topics = a; };
+  wireChipInput(_advPanel.tagInput, getTags, setTags, _advPanel.tagsRow);
+  wireChipInput(_advPanel.topicInput, getTopics, setTopics, _advPanel.topicsRow);
+  _advPanel._tags = () => _tags; _advPanel._setTags = (a) => { _tags = a.slice(); renderAdvChips(_advPanel.tagsRow, _tags, setTags); };
+  _advPanel._topics = () => _topics; _advPanel._setTopics = (a) => { _topics = a.slice(); renderAdvChips(_advPanel.topicsRow, _topics, setTopics); };
+  // 底部按钮
+  $('adv-clear').onclick = () => clearAdvancedPanel();
+  $('adv-search').onclick = () => { triggerSearch($('search').value, { immediate: true }); toggleAdvancedPanel(false); };
+  $('adv-save').onclick = () => saveCurrentSearch();
+  return root;
+}
+
+/** 渲染可移除 chip 行。 */
+function renderAdvChips(row, arr, setArr) {
+  if (!row) return;
+  row.innerHTML = arr.map((v, i) => `<span class="adv-chip">${escapeHtml(v)}<button class="adv-chip-x" data-i="${i}" type="button" aria-label="移除">×</button></span>`).join('');
+  row.querySelectorAll('.adv-chip-x').forEach((b) => {
+    b.onclick = () => { const i = Number(b.dataset.i); arr.splice(i, 1); setArr(arr); renderAdvChips(row, arr, setArr); syncSearchBoxFromPanel(dslFromPanelInputs()); };
+  });
+}
+
+/** 从面板输入读出 panelState（供 buildDslFromPanel）。 */
+function panelStateFromInputs() {
+  const p = _advPanel; if (!p) return {};
+  return {
+    title: p.title.value, author: p.author.value, abstract: p.abstract.value, summary: p.summary.value,
+    notes: p.hasNotes.checked ? '.' : '',
+    tags: p._tags(), excludeTags: [], topics: p._topics(), excludeTopics: [],
+    yearFrom: p.yearFrom.value, yearTo: p.yearTo.value,
+    status: p.status.value, readStatus: p.read.value,
+    starred: p.starred.checked, hasNotes: p.hasNotes.checked,
+    scope: p.scopeBody.checked ? 'body' : 'metadata', bodyText: p.bodyText.value,
+    text: p.text.value,
+  };
+}
+function dslFromPanelInputs() {
+  const S = window.PaperWikiSearch;
+  if (!S) return '';
+  return S.buildDslFromPanel(panelStateFromInputs());
+}
+
+/** 面板字段 → 搜索框（单向：面板改 → 搜索框 + 触发搜索）。 */
+function syncSearchBoxFromPanel(dsl) {
+  const inp = $('search'); if (!inp) return;
+  inp.value = dsl;
+  state.filter.q = dsl;
+  updateSearchModeIndicator(dsl);
+  // 防抖触发
+  if (inp._advTimer) clearTimeout(inp._advTimer);
+  inp._advTimer = setTimeout(() => triggerSearch(dsl), 200);
+}
+
+/** 搜索框 DSL → 面板回填（parseToPanel）。 */
+function syncAdvancedPanelFromDsl(dsl) {
+  const S = window.PaperWikiSearch;
+  if (!S || !_advPanel) return;
+  _advSyncing = true;
+  try {
+    const panel = S.parseToPanel(dsl);
+    _advPanel.title.value = panel.title || '';
+    _advPanel.author.value = panel.author || '';
+    _advPanel.abstract.value = panel.abstract || '';
+    _advPanel.summary.value = panel.summary || '';
+    _advPanel.yearFrom.value = panel.yearFrom || '';
+    _advPanel.yearTo.value = panel.yearTo || '';
+    _advPanel.status.value = panel.status || '';
+    _advPanel.read.value = panel.readStatus || '';
+    _advPanel._setTags(panel.tags || []);
+    _advPanel._setTopics(panel.topics || []);
+    _advPanel.text.value = panel.text || '';
+    _advPanel.starred.checked = !!panel.starred;
+    _advPanel.hasNotes.checked = !!panel.hasNotes;
+    const bodyRadio = document.querySelector('input[name="adv-scope"][value="' + panel.scope + '"]');
+    if (bodyRadio) bodyRadio.checked = true;
+    _advPanel.bodyText.value = panel.bodyText || '';
+    _advPanel.bodyText.disabled = panel.scope !== 'body';
+    _advPanel.preview.textContent = dsl || '（无筛选）';
+  } finally { _advSyncing = false; }
+}
+
+function clearAdvancedPanel() {
+  if (!_advPanel) return;
+  _advPanel.title.value = ''; _advPanel.author.value = ''; _advPanel.abstract.value = ''; _advPanel.summary.value = '';
+  _advPanel.yearFrom.value = ''; _advPanel.yearTo.value = ''; _advPanel.status.value = ''; _advPanel.read.value = '';
+  _advPanel._setTags([]); _advPanel._setTopics([]);
+  _advPanel.text.value = ''; _advPanel.starred.checked = false; _advPanel.hasNotes.checked = false;
+  _advPanel.bodyText.value = '';
+  const meta = document.querySelector('input[name="adv-scope"][value="metadata"]'); if (meta) meta.checked = true;
+  _advPanel.bodyText.disabled = true;
+  _advPanel.preview.textContent = '（无筛选）';
+  syncSearchBoxFromPanel('');
+}
+
+function toggleAdvancedPanel(open) {
+  const root = ensureAdvancedPanel();
+  if (!root) return;
+  const btn = $('search-advanced-toggle');
+  const shouldOpen = open == null ? root.hidden : open;
+  root.hidden = !shouldOpen;
+  if (btn) { btn.setAttribute('aria-expanded', String(shouldOpen)); btn.classList.toggle('active', shouldOpen); }
+  if (shouldOpen) syncAdvancedPanelFromDsl($('search').value);
+}
+
+// ---- 内联补全（tag:/topic:/author:/title: 等 field: 前缀触发）----
+let _suggestPop = null;
+let _suggestItems = [];
+let _suggestActive = 0;
+let _suggestField = '';
+let _suggestValueStart = 0;
+
+function openSuggest(field, prefix, valueStart) {
+  _suggestField = field; _suggestValueStart = valueStart;
+  fetch(sp('/api/search/suggest?field=' + encodeURIComponent(field) + '&prefix=' + encodeURIComponent(prefix) + '&limit=10'))
+    .then((r) => r.json())
+    .then((r) => {
+      const items = (r && r.data && r.data.results) || [];
+      _suggestItems = items; _suggestActive = 0;
+      if (!items.length) { closeSuggest(); return; }
+      renderSuggestPop(prefix);
+    })
+    .catch(() => closeSuggest());
+}
+function renderSuggestPop(prefix) {
+  if (!_suggestPop) {
+    _suggestPop = document.createElement('div');
+    _suggestPop.className = 'search-suggest-pop';
+    document.body.appendChild(_suggestPop);
+    _suggestPop.addEventListener('mousedown', (e) => {
+      const it = e.target.closest('.ss-item');
+      if (!it) return;
+      e.preventDefault(); // 防 blur
+      confirmSuggest(Number(it.dataset.idx));
+    });
+    _suggestPop.addEventListener('mouseover', (e) => {
+      const it = e.target.closest('.ss-item');
+      if (!it) return;
+      const idx = Number(it.dataset.idx);
+      if (idx !== _suggestActive) { _suggestActive = idx; renderSuggestItems(); }
+    });
+  }
+  _suggestPop.innerHTML = '<div class="ss-head">' + escapeHtml(_suggestField) + ': <span class="ss-prefix">' + escapeHtml(prefix || ' ') + '</span></div><div class="ss-list"></div>';
+  renderSuggestItems();
+  positionSuggestPop();
+  _suggestPop.style.display = 'block';
+}
+function renderSuggestItems() {
+  const list = _suggestPop.querySelector('.ss-list');
+  if (!list) return;
+  list.innerHTML = _suggestItems.map((it, i) => `<div class="ss-item${i === _suggestActive ? ' active' : ''}" data-idx="${i}"><span class="ss-val"></span><span class="ss-count">${it.count}</span></div>`).join('');
+  list.querySelectorAll('.ss-item').forEach((el, i) => { el.querySelector('.ss-val').textContent = _suggestItems[i].value; });
+  const active = list.children[_suggestActive];
+  if (active && active.scrollIntoView) active.scrollIntoView({ block: 'nearest' });
+}
+function positionSuggestPop() {
+  const inp = $('search'); if (!inp || !_suggestPop) return;
+  const r = inp.getBoundingClientRect();
+  const popH = _suggestPop.offsetHeight || 200;
+  let top = r.bottom + 4;
+  if (top + popH > window.innerHeight - 8) top = r.top - popH - 4;
+  if (top < 8) top = r.bottom + 4;
+  _suggestPop.style.top = top + 'px';
+  _suggestPop.style.left = Math.max(8, r.left) + 'px';
+  _suggestPop.style.width = Math.min(420, r.width) + 'px';
+}
+function confirmSuggest(idx) {
+  const it = _suggestItems[idx]; if (!it) return;
+  const inp = $('search'); if (!inp) return;
+  const v = inp.value;
+  // 替换 valueStart 到光标的内容为选中值
+  const cursor = inp.selectionStart != null ? inp.selectionStart : v.length;
+  const before = v.slice(0, _suggestValueStart) + it.value;
+  const after = v.slice(cursor);
+  inp.value = before + ' ' + after;
+  inp.selectionStart = inp.selectionEnd = before.length + 1;
+  state.filter.q = inp.value;
+  closeSuggest();
+  syncAdvancedPanelFromDsl(inp.value);
+  updateSearchModeIndicator(inp.value);
+  triggerSearch(inp.value, { immediate: true });
+  inp.focus();
+}
+function moveSuggestActive(delta) {
+  if (!_suggestItems.length) return;
+  _suggestActive = (_suggestActive + delta + _suggestItems.length) % _suggestItems.length;
+  renderSuggestItems();
+}
+function closeSuggest() {
+  if (_suggestPop) { _suggestPop.style.display = 'none'; }
+  _suggestItems = []; _suggestField = ''; return false;
+}
+/** 输入框 keydown 时：若补全浮层打开，路由 ↑↓/Enter/Tab/Esc。返回 true = 已消费。 */
+function handleSuggestKeydown(e) {
+  if (!_suggestPop || _suggestPop.style.display === 'none' || !_suggestItems.length) return false;
+  if (e.key === 'ArrowDown') { e.preventDefault(); moveSuggestActive(1); return true; }
+  if (e.key === 'ArrowUp') { e.preventDefault(); moveSuggestActive(-1); return true; }
+  if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); confirmSuggest(_suggestActive); return true; }
+  if (e.key === 'Escape') { e.preventDefault(); closeSuggest(); return true; }
+  return false;
+}
+/** oninput 时检测 field: 前缀，触发补全。 */
+function checkSuggestOnInput() {
+  const S = window.PaperWikiSearch;
+  const inp = $('search'); if (!inp || !S) return;
+  const det = S.detectFieldAtCursor(inp.value, inp.selectionStart != null ? inp.selectionStart : inp.value.length);
+  const knownFields = ['tag', 'topic', 'author', 'title', 'status', 'read'];
+  if (det && knownFields.includes(det.field)) {
+    // 防抖
+    clearTimeout(inp._suggestTimer);
+    inp._suggestTimer = setTimeout(() => openSuggest(det.field, det.prefix, det.valueStart), 180);
+  } else {
+    closeSuggest();
+  }
+}
+
+// ---- 语法帮助 popover ----
+function toggleSearchHelp() {
+  const existing = document.querySelector('.search-help-pop');
+  if (existing) { existing.remove(); return; }
+  const pop = document.createElement('div');
+  pop.className = 'search-help-pop';
+  pop.innerHTML = `
+    <div class="shp-head"><span>搜索语法</span><button class="shp-close" type="button" aria-label="关闭">×</button></div>
+    <div class="shp-body">
+      <div class="shp-section"><div class="shp-title">字段前缀</div>
+        <table class="shp-table">
+          <tr><td><code>title:</code></td><td>仅标题</td><td><code>tag:</code></td><td>含某标签</td></tr>
+          <tr><td><code>abstract:</code></td><td>仅摘要</td><td><code>topic:</code></td><td>含某主题</td></tr>
+          <tr><td><code>summary:</code></td><td>仅 AI 总结</td><td><code>author:</code></td><td>作者子串</td></tr>
+          <tr><td><code>notes:</code></td><td>仅笔记</td><td><code>year:</code></td><td>年份（见下）</td></tr>
+          <tr><td><code>status:</code></td><td>处理状态</td><td><code>read:</code></td><td>阅读状态</td></tr>
+          <tr><td><code>star:1</code></td><td>仅星标</td><td><code>body:</code></td><td>正文全文检索</td></tr>
+        </table>
+      </div>
+      <div class="shp-section"><div class="shp-title">年份格式</div>
+        <div class="shp-codes"><code>year:2024</code> <code>year:&gt;=2020</code> <code>year:2020-2024</code> <code>year:&lt;2023</code></div>
+      </div>
+      <div class="shp-section"><div class="shp-title">操作符</div>
+        <div class="shp-codes"><code>"exact phrase"</code> <code>-tag:draft</code>（排除） <code>AND</code> <code>OR</code> <code>NOT</code> <code>( ... )</code></div>
+        <div class="shp-note">裸词默认 AND：transformer attention = 两词都命中。</div>
+      </div>
+      <div class="shp-section"><div class="shp-title">示例</div>
+        <div class="shp-examples">
+          <div><code>title:diffusion year:&gt;=2023 tag:image</code></div>
+          <div><code>"vision transformer" author:dosovitskiy</code></div>
+          <div><code>body:in-context-learning topic:推理</code> <span class="shp-note">（正文 + 元数据交集）</span></div>
+          <div><code>(tag:moe OR tag:icl) -status:error</code></div>
+        </div>
+      </div>
+    </div>`;
+  document.body.appendChild(pop);
+  const btn = $('search-help');
+  const r = btn ? btn.getBoundingClientRect() : { left: 100, bottom: 100 };
+  const popH = pop.offsetHeight || 400;
+  let top = r.bottom + 6;
+  if (top + popH > window.innerHeight - 8) top = Math.max(8, r.top - popH - 6);
+  pop.style.top = top + 'px';
+  pop.style.left = Math.max(8, Math.min(window.innerWidth - pop.offsetWidth - 8, r.left)) + 'px';
+  pop.querySelector('.shp-close').onclick = () => pop.remove();
+  setTimeout(() => {
+    const onDoc = (e) => { if (!pop.contains(e.target) && e.target !== btn && !btn.contains(e.target)) { pop.remove(); document.removeEventListener('mousedown', onDoc); } };
+    document.addEventListener('mousedown', onDoc);
+  }, 0);
+}
+
+// ---- 保存的搜索（per-space，存 store.settings.savedSearches，经 PUT /api/settings/saved-searches）----
+let _savedSearches = null; // null=未拉取；数组=已拉取
+function getSavedSearches() {
+  if (Array.isArray(_savedSearches)) return _savedSearches;
+  return (_savedSearches = []);
+}
+function setSavedSearches(arr) { _savedSearches = Array.isArray(arr) ? arr : []; }
+async function saveCurrentSearch() {
+  const dsl = ($('search').value || '').trim();
+  if (!dsl) { toast('请先输入搜索条件', 'info'); return; }
+  const name = prompt('为这个搜索命名：', dsl.slice(0, 30));
+  if (!name) return;
+  const arr = getSavedSearches().slice();
+  arr.push({ name: name.trim() || dsl.slice(0, 20), dsl, createdAt: Date.now() });
+  try {
+    const r = await PUT('/api/settings/saved-searches', { value: arr });
+    setSavedSearches((r && r.savedSearches) || arr);
+    renderSavedSearches();
+    toast('已保存');
+  } catch (e) { toast(e.message || '保存失败', 'error'); }
+}
+async function deleteSavedSearch(idx) {
+  const arr = getSavedSearches().slice();
+  arr.splice(idx, 1);
+  try {
+    const r = await PUT('/api/settings/saved-searches', { value: arr });
+    setSavedSearches((r && r.savedSearches) || arr);
+    renderSavedSearches();
+  } catch (e) { toast(e.message || '删除失败', 'error'); }
+}
+function renderSavedSearches() {
+  const root = $('saved-searches'); if (!root) return;
+  const arr = getSavedSearches();
+  root.hidden = !arr.length;
+  if (!arr.length) { root.innerHTML = ''; return; }
+  root.innerHTML = arr.map((s, i) => `<button class="saved-chip" data-i="${i}" title="${escapeHtml(s.dsl)}">${escapeHtml(s.name)}<span class="saved-chip-x" data-i="${i}" role="button" aria-label="删除">×</span></button>`).join('');
+  root.querySelectorAll('.saved-chip').forEach((b) => {
+    b.onclick = (e) => {
+      // 点 × 删除（不触发应用）
+      if (e.target.classList.contains('saved-chip-x')) { e.stopPropagation(); deleteSavedSearch(Number(e.target.dataset.i)); return; }
+      const s = getSavedSearches()[Number(b.dataset.i)];
+      if (!s) return;
+      $('search').value = s.dsl;
+      state.filter.q = s.dsl;
+      syncAdvancedPanelFromDsl(s.dsl);
+      updateSearchModeIndicator(s.dsl);
+      triggerSearch(s.dsl, { immediate: true });
+    };
+  });
+}
+
+// 接线高级/帮助/补全按钮（bind() 之外，因为这些元素在 topbar）
+function bindSearchGui() {
+  const advBtn = $('search-advanced-toggle');
+  if (advBtn) advBtn.onclick = () => toggleAdvancedPanel();
+  const helpBtn = $('search-help');
+  if (helpBtn) helpBtn.onclick = (e) => { e.stopPropagation(); toggleSearchHelp(); };
+  // 搜索框 oninput 也触发补全检测（在 bind() 的 oninput 之上叠加）
+  const inp = $('search');
+  if (inp) inp.addEventListener('input', () => checkSuggestOnInput());
+}
+bindSearchGui();
+// 启动后拉设置（含 savedSearches，loadSettingsData 内已调 renderSavedSearches）
+loadSettingsData().catch(() => {});
+// 暴露给调试/reader 复用
+window.PaperWikiSearchGUI = { triggerSearch, toggleAdvancedPanel, syncAdvancedPanelFromDsl };
 
 bind();
 applyListWidth(state.listWidth);

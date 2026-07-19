@@ -35,6 +35,8 @@ services:
       POSTGRES_USER: paperwiki
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: paperwiki
+    ports:
+      - '25432:5432'
     volumes:
       - 'pgdata:/var/lib/postgresql/data'
     healthcheck:
