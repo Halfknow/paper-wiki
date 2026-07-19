@@ -926,6 +926,9 @@ function renderDetail() {
   flushPendingNotes(); // 轮询刷新也会重建详情面板，先把待存笔记落盘（不 await：值已先从 DOM 读出）
   const p = state.detail;
   const d = $('detail');
+  // 聊天 tab 激活时去掉面板底 padding（.chat-active）：sticky composer 无法越过容器
+  // content edge 下移，唯有归零底 padding 才能让聊天框真正贴底
+  d.classList.toggle('chat-active', !!p && state.tab === 'chat');
   if (!p) { d.innerHTML = '<div class="empty"><span class="big"><svg viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5a1 1 0 0 1 1-1h9l6 6v9a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1z"/><path d="M14 4v6h6"/><path d="M8 13h6"/><path d="M8 16h4"/></svg></span>从左侧选择一篇论文</div>'; return; }
   // chat tab 特殊保护：流式中(busy) 或 用户正在输入框打字时，整体跳过重建（d.innerHTML 会销毁 textarea → 失焦 + 打断流式）。
   // 定时 refresh 触发的重建在此被拦截，保留当前 DOM + 焦点 + 草稿。切论文/切 tab 等主动操作不受影响（那时 chatState 已失效）。
@@ -1417,7 +1420,9 @@ function searchPapersForMention(query, excludeId, selectedIds) {
   const sel = Array.isArray(selectedIds) ? new Set(selectedIds) : null;
   const list = (state.papers || []).filter((x) => x.id !== excludeId && !(sel && sel.has(x.id)));
   const proj = (x) => ({
-    id: x.id, title: x.title,
+    id: x.id,
+    // title 兜底链与主列表一致：无元数据的论文用文件名（去 .pdf），绝不落到裸 id
+    title: x.title || String(x.filename || '').replace(/\.pdf$/i, ''),
     authors: Array.isArray(x.authors) ? x.authors.join(', ') : (x.authors || ''),
     year: x.year,
     status: x.status, tags: Array.isArray(x.tags) ? x.tags.slice(0, 3) : [], topics: x.topics,
@@ -1433,7 +1438,7 @@ function searchPapersForMention(query, excludeId, selectedIds) {
   // 拆 token：每个 token 都须在任一字段命中（AND 语义，更精准）
   const tokens = q.split(/\s+/).filter(Boolean);
   const fieldOf = (x) => {
-    const t = String(x.title || '').toLowerCase();
+    const t = String(x.title || x.filename || '').toLowerCase(); // 无标题论文按文件名搜
     const a = String(x.authors || '').toLowerCase();
     const y = String(x.year || '');
     const tags = (Array.isArray(x.tags) ? x.tags : []).join(' ').toLowerCase();

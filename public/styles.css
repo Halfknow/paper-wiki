@@ -645,6 +645,8 @@ body.is-resizing { cursor:col-resize; user-select:none; }
 .pane-splitter:hover, .pane-splitter:focus { background:var(--accent-soft); outline:none; }
 .pane-splitter:hover span, .pane-splitter:focus span { background:var(--accent); }
 .detail-pane { background:var(--bg); padding:18px 26px; }
+/* 聊天 tab 激活：底 padding 归零让 sticky composer 贴住面板底缘 */
+.detail-pane.chat-active { padding-bottom:0; }
 
 /* ---------- 侧栏：收藏夹/筛选（对齐设置中心导航设计语言） ---------- */
 .side-section { padding:0 10px 6px; }
@@ -1204,7 +1206,9 @@ body.is-resizing { cursor:col-resize; user-select:none; }
 .chat-input-shell {
   position:sticky; bottom:0; z-index:3;
   flex:0 0 auto; display:flex; flex-direction:column; gap:0;
-  margin-top:14px; padding:10px 0 12px;
+  /* 置底：去掉自身底 padding；配合 .detail-pane.chat-active 的 padding-bottom:0
+     （sticky 元素无法越过容器 content edge 下移，负 margin 无效——只能归零容器底 padding） */
+  margin-top:14px; padding:10px 0 0;
   background:linear-gradient(180deg, rgba(241,245,249,0) 0, var(--bg) 38%);
 }
 .rcd-input-row {
