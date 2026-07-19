@@ -299,25 +299,31 @@ input,select,textarea { font:inherit; color:var(--text); }
 }
 .advanced-search:not([hidden]) { display:block; }
 @keyframes adv-in { from { opacity:0; transform:translateY(-6px) scale(.99); } to { opacity:1; transform:none; } }
-.adv-grid { display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px 14px; }
-/* 窄面板（positionAdvancedPanel 给 root 挂 .narrow）降两列，字段不再挤成一条缝 */
-.advanced-search.narrow .adv-grid { grid-template-columns:1fr 1fr; }
-.adv-field { display:flex; flex-direction:column; gap:4px; font-size:11px; color:var(--muted); font-weight:600; }
+.adv-grid {
+  display:grid;
+  /* 自适应列：每列最小 180px，宽屏自动排 3 列，窄屏自动降为 2 或 1 列。
+     配合 positionAdvancedPanel 的全宽模式，从根上消除内部横向滚动。 */
+  grid-template-columns:repeat(auto-fill, minmax(180px, 1fr));
+  gap:10px 14px;
+}
+/* 极窄面板（positionAdvancedPanel 挂 .narrow）单列堆叠，字段不挤 */
+.advanced-search.narrow .adv-grid { grid-template-columns:1fr; }
+.adv-field { display:flex; flex-direction:column; gap:4px; font-size:11px; color:var(--muted); font-weight:600; min-width:0; }
 .adv-field span { white-space:nowrap; }
 .adv-field input[type=text], .adv-field input[type=number], .adv-field select {
-  padding:5px 8px; border:1px solid var(--border2); border-radius:6px; background:var(--panel2);
+  width:100%; min-width:0; padding:5px 8px; border:1px solid var(--border2); border-radius:6px; background:var(--panel2);
   font:13px/1.4 inherit; color:var(--text); transition:border-color .12s ease, box-shadow .12s ease;
 }
 .adv-field input:focus, .adv-field select:focus { outline:none; border-color:var(--accent); box-shadow:0 0 0 2px var(--accent-soft); background:var(--panel); }
 .adv-field.adv-full { grid-column:1 / -1; }
-.adv-year-row { display:flex; align-items:center; gap:6px; }
-.adv-year-row input { width:0; flex:1 1 auto; }
+.adv-year-row { display:flex; align-items:center; gap:6px; min-width:0; }
+.adv-year-row input { width:0; flex:1 1 auto; min-width:0; }
 .adv-dash { color:var(--muted2); flex:0 0 auto; }
 .adv-tags { flex-direction:column; }
 .adv-chips { display:flex; flex-wrap:wrap; gap:4px; min-height:0; }
 .adv-chips:empty { display:none; }
 .adv-chip {
-  display:inline-flex; align-items:center; gap:4px; padding:2px 4px 2px 8px;
+  display:inline-flex; align-items:center; gap:4px; padding:2px 4px 2px 8px; max-width:100%;
   background:var(--accent-soft); border:1px solid #c7d2fe; color:var(--accent-strong);
   border-radius:10px; font-size:11px; line-height:1.6;
 }

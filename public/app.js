@@ -4678,10 +4678,22 @@ function positionAdvancedPanel() {
   if (!root || !inp || root.hidden) return;
   const r = inp.getBoundingClientRect();
   const gap = 6;
-  // 宽度跟随搜索框但设上限（大屏不无限拉伸）；<560 时挂 .narrow 降两列布局
-  const panelW = Math.max(400, Math.min(640, r.width + 60));
-  root.classList.toggle('narrow', panelW < 560);
-  const left = Math.max(8, Math.min(window.innerWidth - panelW - 8, r.left));
+  const margin = 12; // 离视口左右边的最小留白
+  const vw = window.innerWidth;
+  // 宽度策略：
+  //   - 窄视口（<720px）：面板铺满可用宽度（全宽，消除内部横向滚动）。
+  //   - 宽视口：面板宽度 = max(搜索框宽+80, 620)，并设上限 880。下限 620 保证至少能排 3 列
+  //     （每列 minmax 180px × 3 + gap ≈ 568px），避免宽屏下面板反窄于中屏。
+  let panelW, left;
+  if (vw < 720) {
+    panelW = vw - margin * 2;     // 全宽减两边留白
+    left = margin;
+  } else {
+    panelW = Math.max(620, Math.min(880, r.width + 80));
+    left = Math.max(margin, Math.min(vw - panelW - margin, r.left));
+  }
+  // .narrow 让网格降列（CSS auto-fill 会自适应，这里仅给极窄态额外收紧）
+  root.classList.toggle('narrow', panelW < 400);
   let top = r.bottom + gap;
   // 下方空间不足 → 尝试放搜索框上方
   const estH = Math.min(640, window.innerHeight * 0.8);
