@@ -29,15 +29,13 @@
     </div>
     <div class="search-wrap">
       <svg class="search-ico" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
-      <input id="search" type="search" placeholder="搜索… title: tag: year: body: 回车检索正文" autocomplete="off" />
-      <button class="search-btn" id="search-help" type="button" title="搜索语法帮助" aria-label="搜索语法帮助"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.7.3-1 .8-1 1.7v.5"/><line x1="12" y1="17" x2="12" y2="17"/></svg></button>
-      <button class="search-btn" id="search-advanced-toggle" type="button" title="高级搜索" aria-label="高级搜索" aria-expanded="false"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="4" y1="6" x2="20" y2="6"/><line x1="7" y1="12" x2="17" y2="12"/><line x1="10" y1="18" x2="14" y2="18"/></svg></button>
-      <span class="search-kbd">Ctrl K</span>
+      <input id="search" type="search" placeholder="搜索论文…" autocomplete="off" />
+      <span class="search-actions">
+        <button class="search-btn" id="search-help" type="button" title="搜索语法帮助" aria-label="搜索语法帮助"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.7.3-1 .8-1 1.7v.5"/><line x1="12" y1="17" x2="12" y2="17"/></svg></button>
+        <button class="search-btn" id="search-advanced-toggle" type="button" title="高级搜索" aria-label="高级搜索" aria-expanded="false"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="4" y1="6" x2="20" y2="6"/><line x1="7" y1="12" x2="17" y2="12"/><line x1="10" y1="18" x2="14" y2="18"/></svg></button>
+        <span class="search-kbd">Ctrl K</span>
+      </span>
     </div>
-    <!-- 高级搜索面板（v3.2）：折叠；与搜索框 DSL 双向同步 -->
-    <div class="advanced-search" id="advanced-search" hidden></div>
-    <!-- 保存的搜索预设（chip 行） -->
-    <div class="saved-searches" id="saved-searches" hidden></div>
     <div class="filter-strip" aria-label="筛选条件">
       <select id="filter-status" title="状态筛选">
         <option value="">全部状态</option>
@@ -61,6 +59,10 @@
       <span id="stats" class="stats"></span>
     </div>
   </header>
+  <!-- 高级搜索面板（v3.2）：fixed 浮层，脱离 topbar grid 流；与搜索框 DSL 双向同步 -->
+  <div class="advanced-search" id="advanced-search" hidden></div>
+  <!-- 保存的搜索预设（fixed 浮层 chip 行，搜索框下方） -->
+  <div class="saved-searches" id="saved-searches" hidden></div>
   <div id="toast-root" class="toast-root" aria-live="polite" aria-atomic="true"></div>
 
   <!-- 主布局：侧栏 + 列表 + 详情 -->

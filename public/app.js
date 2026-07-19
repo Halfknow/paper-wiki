@@ -599,7 +599,7 @@ function renderFulltextResults(ul) {
     const meta = escapeHtml(`${(p.authors || [])[0] || '未知作者'}${p.year ? ' · ' + p.year : ''}`);
     li.innerHTML = `
       <div class="pt"><span class="dot ${statusDot(p)}"></span>${title}</div>
-      <div class="pm"><span>${meta}</span><span class="mini-metric">${p.matches} 处命中</span></div>
+      <div class="pm"><span>${meta}</span><span class="mini-metric">${p.matches >= 50 ? '50+' : p.matches} 处命中</span></div>
       <div class="ft-snips">${(p.snippets || []).map((sn) => `<div class="ft-snip">${sn}</div>`).join('')}</div>`;
     li.onclick = () => select(p.id);
     ul.appendChild(li);
@@ -4470,37 +4470,44 @@ function ensureAdvancedPanel() {
   if (!root || _advPanel) return root;
   root.innerHTML = `
     <div class="adv-grid">
-      <label class="adv-field"><span>标题</span><input type="text" id="adv-title" placeholder="title:"></label>
-      <label class="adv-field"><span>作者</span><input type="text" id="adv-author" placeholder="author:"></label>
-      <label class="adv-field"><span>摘要</span><input type="text" id="adv-abstract" placeholder="abstract:"></label>
-      <label class="adv-field"><span>总结</span><input type="text" id="adv-summary" placeholder="summary:"></label>
+      <label class="adv-field adv-full"><span>关键词</span><input type="text" id="adv-text" placeholder="同时搜标题 / 摘要 / 总结 / 笔记，多个词需同时命中"></label>
+      <label class="adv-field"><span>标题</span><input type="text" id="adv-title" placeholder="标题中包含…"></label>
+      <label class="adv-field"><span>作者</span><input type="text" id="adv-author" placeholder="作者名包含…"></label>
       <label class="adv-field adv-year"><span>年份</span>
-        <input type="number" id="adv-year-from" placeholder="起" min="1900" max="2099">
-        <span class="adv-dash">–</span>
-        <input type="number" id="adv-year-to" placeholder="止" min="1900" max="2099">
+        <div class="adv-year-row">
+          <input type="number" id="adv-year-from" placeholder="起" min="1900" max="2099">
+          <span class="adv-dash">–</span>
+          <input type="number" id="adv-year-to" placeholder="止" min="1900" max="2099">
+        </div>
       </label>
+      <label class="adv-field adv-tags"><span>标签</span><div class="adv-chips" id="adv-tags-row"></div><input type="text" id="adv-tag-input" placeholder="输入后回车添加"></label>
+      <label class="adv-field adv-tags"><span>主题</span><div class="adv-chips" id="adv-topics-row"></div><input type="text" id="adv-topic-input" placeholder="输入后回车添加"></label>
       <label class="adv-field"><span>处理状态</span>
         <select id="adv-status"><option value="">不限</option><option value="ready">已就绪</option><option value="error">出错</option><option value="pending">处理中</option><option value="missing">缺失</option></select>
       </label>
+      <label class="adv-field"><span>摘要</span><input type="text" id="adv-abstract" placeholder="摘要中包含…"></label>
+      <label class="adv-field"><span>AI 总结</span><input type="text" id="adv-summary" placeholder="总结中包含…"></label>
       <label class="adv-field"><span>阅读状态</span>
         <select id="adv-read"><option value="">不限</option><option value="unread">未读</option><option value="reading">在读</option><option value="done">已读</option></select>
       </label>
-      <label class="adv-field adv-tags"><span>标签</span><div class="adv-chips" id="adv-tags-row"></div><input type="text" id="adv-tag-input" placeholder="+ 加标签（回车）"></label>
-      <label class="adv-field adv-tags"><span>主题</span><div class="adv-chips" id="adv-topics-row"></div><input type="text" id="adv-topic-input" placeholder="+ 加主题（回车）"></label>
-      <label class="adv-field adv-full"><span>关键词（标题/摘要/总结/笔记/标签/主题）</span><input type="text" id="adv-text" placeholder="transformer attention（分词 AND）"></label>
-      <label class="adv-field adv-full adv-scope"><span>搜索范围</span>
-        <label class="adv-radio"><input type="radio" name="adv-scope" value="metadata" checked> 仅元数据</label>
-        <label class="adv-radio"><input type="radio" name="adv-scope" value="body"> 含正文全文</label>
-        <input type="text" id="adv-body-text" placeholder="正文检索词（body:）" disabled>
-      </label>
-      <label class="adv-check"><input type="checkbox" id="adv-starred"> 仅星标</label>
-      <label class="adv-check"><input type="checkbox" id="adv-has-notes"> 仅含笔记</label>
+      <div class="adv-field adv-full adv-scope">
+        <span>正文全文</span>
+        <div class="adv-scope-row">
+          <label class="adv-radio"><input type="radio" name="adv-scope" value="metadata" checked> 不搜正文</label>
+          <label class="adv-radio"><input type="radio" name="adv-scope" value="body"> 搜正文</label>
+          <input type="text" id="adv-body-text" placeholder="正文中包含的词（含高亮片段结果）" disabled>
+        </div>
+      </div>
+      <div class="adv-full adv-checks">
+        <label class="adv-check"><input type="checkbox" id="adv-starred"> 仅星标</label>
+        <label class="adv-check"><input type="checkbox" id="adv-has-notes"> 仅含笔记</label>
+      </div>
     </div>
     <div class="adv-footer">
       <button class="btn ghost sm" id="adv-clear" type="button">清空</button>
       <button class="btn ghost sm" id="adv-save" type="button">保存为预设…</button>
       <span class="adv-spacer"></span>
-      <span class="adv-dsl-preview" id="adv-dsl-preview"></span>
+      <span class="adv-dsl-preview" id="adv-dsl-preview" title="等效查询语法"></span>
       <button class="btn sm" id="adv-search" type="button">搜索</button>
     </div>`;
   _advPanel = {
@@ -4639,7 +4646,47 @@ function toggleAdvancedPanel(open) {
   const shouldOpen = open == null ? root.hidden : open;
   root.hidden = !shouldOpen;
   if (btn) { btn.setAttribute('aria-expanded', String(shouldOpen)); btn.classList.toggle('active', shouldOpen); }
-  if (shouldOpen) syncAdvancedPanelFromDsl($('search').value);
+  if (shouldOpen) {
+    syncAdvancedPanelFromDsl($('search').value);
+    positionAdvancedPanel();
+    // 打开时挂滚动/缩放监听，关闭时摘除（避免泄漏）
+    if (!_advReposition) {
+      _advReposition = () => {
+        if ($('advanced-search') && !$('advanced-search').hidden) positionAdvancedPanel();
+        positionSavedSearches();
+      };
+      window.addEventListener('resize', _advReposition);
+      window.addEventListener('scroll', _advReposition, true);
+    }
+    // 面板打开后让保存的搜索行让位下移
+    setTimeout(positionSavedSearches, 0);
+  } else {
+    // 关闭后保存的搜索行回到原位
+    setTimeout(positionSavedSearches, 0);
+  }
+}
+let _advReposition = null;
+/** 把高级面板定位到搜索框正下方（fixed 浮层，宽度对齐搜索框，不超过视口）。 */
+function positionAdvancedPanel() {
+  const root = $('advanced-search');
+  const inp = $('search');
+  if (!root || !inp || root.hidden) return;
+  const r = inp.getBoundingClientRect();
+  const gap = 6;
+  // 宽度跟随搜索框但设上限（大屏不无限拉伸）；<560 时挂 .narrow 降两列布局
+  const panelW = Math.max(400, Math.min(640, r.width + 60));
+  root.classList.toggle('narrow', panelW < 560);
+  const left = Math.max(8, Math.min(window.innerWidth - panelW - 8, r.left));
+  let top = r.bottom + gap;
+  // 下方空间不足 → 尝试放搜索框上方
+  const estH = Math.min(640, window.innerHeight * 0.8);
+  if (top + estH > window.innerHeight - 8) {
+    const aboveTop = r.top - estH - gap;
+    if (aboveTop > 8) top = aboveTop;
+  }
+  root.style.top = top + 'px';
+  root.style.left = left + 'px';
+  root.style.width = panelW + 'px';
 }
 
 // ---- 内联补全（tag:/topic:/author:/title: 等 field: 前缀触发）----
@@ -4852,23 +4899,46 @@ function renderSavedSearches() {
       triggerSearch(s.dsl, { immediate: true });
     };
   });
+  positionSavedSearches();
+}
+/** 把保存的搜索 chip 行定位到搜索框下方左侧（fixed 浮层）。 */
+function positionSavedSearches() {
+  const root = $('saved-searches');
+  const inp = $('search');
+  if (!root || !inp || root.hidden) return;
+  const r = inp.getBoundingClientRect();
+  root.style.top = (r.bottom + 4) + 'px';
+  root.style.left = Math.max(8, r.left) + 'px';
+  // 面板打开时往下让位
+  const adv = $('advanced-search');
+  if (adv && !adv.hidden) {
+    const advR = adv.getBoundingClientRect();
+    root.style.top = (advR.bottom + 4) + 'px';
+  }
 }
 
 // 接线高级/帮助/补全按钮（bind() 之外，因为这些元素在 topbar）
 function bindSearchGui() {
   const advBtn = $('search-advanced-toggle');
-  if (advBtn) advBtn.onclick = () => toggleAdvancedPanel();
+  if (advBtn) advBtn.onclick = (e) => { e.stopPropagation(); toggleAdvancedPanel(); };
   const helpBtn = $('search-help');
   if (helpBtn) helpBtn.onclick = (e) => { e.stopPropagation(); toggleSearchHelp(); };
   // 搜索框 oninput 也触发补全检测（在 bind() 的 oninput 之上叠加）
   const inp = $('search');
   if (inp) inp.addEventListener('input', () => checkSuggestOnInput());
+  // 点高级面板/帮助/补全/保存搜索外部 → 关闭它们（浮层都是 fixed，需手动点外关闭）
+  document.addEventListener('mousedown', (e) => {
+    const adv = $('advanced-search');
+    if (adv && !adv.hidden && !adv.contains(e.target) && e.target !== advBtn && !advBtn.contains(e.target)) {
+      toggleAdvancedPanel(false);
+    }
+  }, true);
 }
 bindSearchGui();
 // 启动后拉设置（含 savedSearches，loadSettingsData 内已调 renderSavedSearches）
-loadSettingsData().catch(() => {});
+loadSettingsData().then(() => { setTimeout(positionSavedSearches, 100); }).catch(() => {});
 // 暴露给调试/reader 复用
-window.PaperWikiSearchGUI = { triggerSearch, toggleAdvancedPanel, syncAdvancedPanelFromDsl };
+window.PaperWikiSearchGUI = { triggerSearch, toggleAdvancedPanel, syncAdvancedPanelFromDsl, positionSavedSearches };
 
 bind();
 applyListWidth(state.listWidth);

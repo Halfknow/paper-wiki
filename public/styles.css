@@ -261,40 +261,48 @@ input,select,textarea { font:inherit; color:var(--text); }
   flex:1 1 200px; min-width:0;
   font-family:ui-monospace,"SFMono-Regular",Consolas,monospace; font-size:12px;
 }
-.search-wrap { position:relative; min-width:0; display:flex; align-items:center; }
+.search-wrap { position:relative; min-width:0; display:flex; align-items:center; max-width:600px; }
 .search-ico { position:absolute; left:10px; top:50%; transform:translateY(-50%); color:var(--muted2); pointer-events:none; flex:0 0 auto; }
 #search {
   width:100%; min-width:0; min-height:34px;
-  padding:6px 110px 6px 32px; background:rgba(241,245,249,.86);
+  padding:6px 112px 6px 32px; background:rgba(241,245,249,.86);
   border:1px solid var(--border); border-radius:var(--radius-sm);
 }
 #search:focus { outline:none; border-color:var(--accent); background:var(--panel); box-shadow:0 0 0 3px var(--accent-soft); }
 /* body: 正文检索模式：输入框左侧加 Indigo 竖条提示 */
 #search.body-mode { border-color:var(--accent); box-shadow:inset 3px 0 0 var(--accent); }
+/* 右侧动作区：帮助/高级/快捷键徽章统一放进一个 flex 容器（绝对定位到输入框右缘），
+   彼此按内容宽度排列——修掉旧版三个元素各自 absolute right 值互相重叠的 bug */
+.search-actions {
+  position:absolute; right:6px; top:50%; transform:translateY(-50%);
+  display:flex; align-items:center; gap:2px;
+}
 .search-btn {
-  position:absolute; top:50%; transform:translateY(-50%);
   width:28px; height:28px; border:0; background:transparent; color:var(--muted2); cursor:pointer;
   border-radius:6px; display:inline-flex; align-items:center; justify-content:center;
   transition:background .12s ease, color .12s ease;
 }
 .search-btn:hover { background:var(--panel2); color:var(--accent-strong); }
 .search-btn.active { background:var(--accent-soft); color:var(--accent-strong); }
-#search-help { right:62px; }
-#search-advanced-toggle { right:34px; }
 .search-kbd {
-  position:absolute; right:8px; top:50%; transform:translateY(-50%);
-  color:var(--muted2); border:1px solid var(--border2); border-radius:5px;
-  padding:1px 5px; font-size:10px; background:var(--panel);
+  margin-left:4px; color:var(--muted2); border:1px solid var(--border2); border-radius:5px;
+  padding:1px 5px; font-size:10px; background:var(--panel); white-space:nowrap;
 }
-/* v3.2 高级搜索面板 */
+/* v3.2 高级搜索面板 —— position:fixed 悬浮层（脱离 topbar grid 流，避免破坏顶栏布局）。
+   hidden 时 display:none 不占 grid；打开时 fixed 定位到搜索框正下方，由 JS 计算 top/left/width。 */
 .advanced-search {
-  padding:12px 12px 10px; background:var(--panel); border:1px solid var(--border);
-  border-radius:0 0 var(--radius) var(--radius); border-top:0;
-  box-shadow:var(--shadow); animation:adv-in .14s ease;
+  position:fixed; z-index:220; display:none;
+  padding:12px 14px 10px; background:var(--panel); border:1px solid var(--border);
+  border-radius:12px; box-shadow:0 16px 40px rgba(15,23,42,.18), 0 4px 12px rgba(15,23,42,.08);
+  animation:adv-in .14s ease;
+  max-height:min(80vh, 640px); overflow:auto;
 }
-@keyframes adv-in { from { opacity:0; transform:translateY(-4px); } to { opacity:1; transform:none; } }
-.adv-grid { display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px 12px; }
-.adv-field { display:flex; flex-direction:column; gap:3px; font-size:11px; color:var(--muted); font-weight:600; }
+.advanced-search:not([hidden]) { display:block; }
+@keyframes adv-in { from { opacity:0; transform:translateY(-6px) scale(.99); } to { opacity:1; transform:none; } }
+.adv-grid { display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px 14px; }
+/* 窄面板（positionAdvancedPanel 给 root 挂 .narrow）降两列，字段不再挤成一条缝 */
+.advanced-search.narrow .adv-grid { grid-template-columns:1fr 1fr; }
+.adv-field { display:flex; flex-direction:column; gap:4px; font-size:11px; color:var(--muted); font-weight:600; }
 .adv-field span { white-space:nowrap; }
 .adv-field input[type=text], .adv-field input[type=number], .adv-field select {
   padding:5px 8px; border:1px solid var(--border2); border-radius:6px; background:var(--panel2);
@@ -302,9 +310,9 @@ input,select,textarea { font:inherit; color:var(--text); }
 }
 .adv-field input:focus, .adv-field select:focus { outline:none; border-color:var(--accent); box-shadow:0 0 0 2px var(--accent-soft); background:var(--panel); }
 .adv-field.adv-full { grid-column:1 / -1; }
-.adv-year { flex-direction:row; align-items:center; gap:6px; }
-.adv-year input { width:72px !important; }
-.adv-dash { color:var(--muted2); }
+.adv-year-row { display:flex; align-items:center; gap:6px; }
+.adv-year-row input { width:0; flex:1 1 auto; }
+.adv-dash { color:var(--muted2); flex:0 0 auto; }
 .adv-tags { flex-direction:column; }
 .adv-chips { display:flex; flex-wrap:wrap; gap:4px; min-height:0; }
 .adv-chips:empty { display:none; }
@@ -316,12 +324,14 @@ input,select,textarea { font:inherit; color:var(--text); }
 .adv-chip-x { border:0; background:rgba(79,70,229,.16); color:var(--accent-strong); width:14px; height:14px; border-radius:50%; cursor:pointer; font-size:12px; line-height:1; display:inline-flex; align-items:center; justify-content:center; }
 .adv-chip-x:hover { background:var(--red); color:#fff; }
 .adv-field.adv-tags input { margin-top:2px; }
-.adv-scope { flex-direction:row; align-items:center; gap:10px; flex-wrap:wrap; }
-.adv-scope > span { flex:0 0 auto; }
-.adv-radio { display:inline-flex; align-items:center; gap:4px; font-weight:500; font-size:12px; color:var(--text); }
+/* 正文全文行：label 在上，radio + 输入框一行（与其它字段同构，视觉更整齐） */
+.adv-scope-row { display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+.adv-radio { display:inline-flex; align-items:center; gap:4px; font-weight:500; font-size:12px; color:var(--text); white-space:nowrap; }
 .adv-radio input { accent-color:var(--accent); }
-.adv-scope input[type=text] { flex:1 1 200px; min-width:120px; }
-.adv-check { display:inline-flex; align-items:center; gap:6px; font-size:12px; color:var(--text); font-weight:500; grid-column:span 1; }
+.adv-scope-row input[type=text] { flex:1 1 220px; min-width:140px; }
+.adv-scope-row input[type=text]:disabled { opacity:.5; cursor:not-allowed; }
+.adv-checks { display:flex; gap:18px; align-items:center; }
+.adv-check { display:inline-flex; align-items:center; gap:6px; font-size:12px; color:var(--text); font-weight:500; cursor:pointer; }
 .adv-check input { accent-color:var(--accent); }
 .adv-footer { display:flex; align-items:center; gap:8px; margin-top:10px; padding-top:10px; border-top:1px solid var(--border); }
 .adv-spacer { flex:1 1 auto; }
@@ -329,14 +339,22 @@ input,select,textarea { font:inherit; color:var(--text); }
   font-family:ui-monospace,monospace; font-size:11px; color:var(--muted2); max-width:50%; overflow:hidden;
   text-overflow:ellipsis; white-space:nowrap; padding:2px 8px; background:var(--panel2); border-radius:5px;
 }
-/* 保存的搜索 chip 行 */
-.saved-searches { display:flex; flex-wrap:wrap; gap:5px; padding:4px 0; }
+/* 保存的搜索 chip 行 —— fixed 浮层，紧贴搜索框下方左侧（脱离 topbar grid） */
+.saved-searches {
+  position:fixed; z-index:210; display:none; flex-wrap:wrap; gap:5px;
+  padding:5px 8px; background:rgba(255,255,255,.92); backdrop-filter:blur(8px);
+  border-radius:8px; box-shadow:0 4px 12px rgba(15,23,42,.08);
+  max-width:min(520px, 90vw);
+}
+.saved-searches:not([hidden]) { display:flex; }
 .saved-chip {
-  display:inline-flex; align-items:center; padding:3px 10px; border:1px solid var(--border2);
+  display:inline-flex; align-items:center; gap:4px; padding:3px 4px 3px 10px; border:1px solid var(--border2);
   border-radius:11px; background:var(--panel); color:var(--muted); font-size:11.5px; cursor:pointer;
   transition:background .12s ease, color .12s ease, border-color .12s ease;
 }
 .saved-chip:hover { background:var(--accent-soft); color:var(--accent-strong); border-color:#c7d2fe; }
+.saved-chip-x { color:var(--muted2); cursor:pointer; padding:0 2px; font-size:14px; line-height:1; border-radius:5px; }
+.saved-chip-x:hover { color:var(--red); background:rgba(239,68,68,.1); }
 /* 内联补全浮层 */
 .search-suggest-pop {
   position:fixed; z-index:400; max-height:320px; display:none; flex-direction:column;
