@@ -314,6 +314,12 @@ arXiv 导入 (POST /api/import { url, meta? }):
 
 - **测试**：`npm test`（node --test，225 例，覆盖全 lib；db/spaces/scanner/api 用 pg-mem 无需真实 PG）；
   `npm run test:e2e`（Playwright，reader 渲染 + 高亮往返；需 dev PG，见下）。
+- **双 PG 设计（生产 + 测试）**：`docker-compose.yml` 同时维护两个 PG，用 profile 隔离默认行为：
+  - **`postgres`（生产）**：端口 `25432` → 宿主，持久卷 `pgdata`（存真实论文），`restart: unless-stopped`。`docker compose up` 默认启动，app 容器连此（`DATABASE_URL=@postgres:5432`）。
+  - **`postgres-test`（测试）**：端口 `127.0.0.1:15432` → 宿主，**无持久卷**（容器删即丢），密码 `dev`，`restart: no`。专用于 e2e + 本地 node 开发调试。
+    `profiles: [test]` 隔离，默认 `docker compose up` **不启动**；跑 e2e 前手动：`docker compose --profile test up -d postgres-test`。
+- **双 PG 设计原因**：e2e 会往 default 空间注入假 sample 论文 + 跑高亮往返；若直连生产 PG 会污染真实 156 篇。测试 PG 无持久卷，可反复重置。
+  **勿再手动 `docker run` 制造游离 PG 容器**——所\u6709\u6d4b\u8bd5 PG \u7edf\u4e00\u8d70 `postgres-test` 服\u52a1\u3002
 - **代码质量**：`npm run lint`（ESLint，`eqeqeq` 配 `null:ignore` 容纳 `== null`）；`npm run format`/`format:check`（Prettier，**仅 lib/server/tests**，public/ 排除因无分号风格冲突）。
 - **CI**：`.github/workflows/ci.yml` 三个 job——lint-and-unit、pg-smoke（postgres service + 启动冒烟 CRUD）、e2e（postgres service）。push/PR 触发。
 - **运维**：`GET /api/health` 探活（含 `missingFuse` 挂载失效告警）；`NODE_ENV=production` 错误响应脱敏；
@@ -331,14 +337,13 @@ docker compose up -d --build app   # 改任何代码后（lib/public 都打进�
 docker compose run --rm -v ./data:/legacy-data app node scripts/migrate-json-to-pg.js /legacy-data
                                    # 旧 JSON 数据一次性迁移（Git Bash 下加 MSYS_NO_PATHCONV=1）
 
-# 本地开发（不进容器；需一个可连的 PG）
-docker run -d --name pw-dev-pg -p 127.0.0.1:5433:5432 -e POSTGRES_USER=paperwiki \
-  -e POSTGRES_PASSWORD=dev -e POSTGRES_DB=paperwiki postgres:16-alpine
-DATABASE_URL=postgres://paperwiki:dev@127.0.0.1:5433/paperwiki npm start
+# 本地开发（不进容器；用测试 PG postgres-test）
+docker compose --profile test up -d postgres-test   # 启测试 PG（端口 15432）
+DATABASE_URL=postgres://paperwiki:dev@127.0.0.1:15432/paperwiki npm start
 DATABASE_URL=... npm run scan      # 只扫一次，不启 HTTP
 
 npm test                  # node --test（225 例，pg-mem，无需真实 PG）
-npm run test:e2e          # Playwright（默认连 5433 的 dev PG，可用 E2E_DATABASE_URL 覆盖）
+npm run test:e2e          # Playwright（先 docker compose --profile test up -d postgres-test；默认连 15432，可用 E2E_DATABASE_URL 覆盖）
 npm run lint              # ESLint
 npm run format:check      # Prettier 检查
 ```

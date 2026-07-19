@@ -2,6 +2,18 @@
 
 本文件记录 PaperWiki 每个版本的显著变更。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/)，版本号语义化。
 
+## [Unpublished]
+
+### Changed — 双 PG 设计统一到 compose（生产 + 测试，消除游离容器）
+- **背景**：历史上 e2e/本地开发用的 PG 由手动 `docker run -p 5433:5432 ...` 启动（playwright.config.js / e2e-bootstrap.js 默认连此端口），每次开发/e2e 都要记一长串命令，且容易制造游离容器（本次清理前的 `pw-dev-pg2`、`pw-e2e-pg`）。
+- **docker-compose.yml 双 PG**：`postgres`（生产，端口 25432，持久卷 `pgdata`，存真实论文，`restart: unless-stopped`）+ `postgres-test`（测试，端口 `127.0.0.1:15432`，**无持久卷**，密码 `dev`，`restart: no`）。两者用 **compose profile `test`** 隔离：默认 `docker compose up` 只起生产；测试 PG 仅 `docker compose --profile test up -d postgres-test` 时启动。
+- **端口**：测试 PG 宿主端口定为 `15432`（区别于生产 `25432`，且 `15xxx` 段易于辨识为「测试/镜像」用途）。playwright.config.js / e2e-bootstrap.js 默认 DATABASE_URL 同步改为 `127.0.0.1:15432`。
+- **命名**：测试 PG 从 `postgres-e2e` 改名为 `postgres-test`（与 `postgres` 同族，`-test` 后缀一眼看出是测试对应物；且不只服务 e2e，也服务本地 node 开发）。
+- **设计原因**：e2e 会往 default 空间注入假 sample + 跑高亮往返；若直连生产 PG 会污染真实 156 篇。测试 PG 无持久卷，可反复重置。
+- **清理**：删除游离的 `pw-dev-pg2`（含匿名卷）、`pw-e2e-pg`（无人连接、无有价值数据；生产 156 篇数据在 compose `postgres` 完好无损）。
+- **文档对齐**：`docker-compose.yml` 顶部加双 PG 设计说明；`scripts/e2e-bootstrap.js` + `playwright.config.js` 注释改指向 `postgres-test`；`AGENTS.md` 工程化段改写为「双 PG 设计」+ 设计原因 + 启动方式，运行命令段更新；`CLAUDE.md` 加双 PG 要点；`README.md` 生产部署段加双 PG 说明 blockquote。
+- **验证**：`docker compose --profile test up -d postgres-test` → 容器 `ai_paper_wiki-postgres-test-1` healthy；`npm run test:e2e` 2/2 通过；单元 260 pass；生产 PG 156 篇完好。
+
 ## [3.3.0] — 2026-07-18
 
 ### Changed — 项目结构分层重组（标准化布局）
@@ -48,6 +60,12 @@
 - `public/index.html`：搜索框加图标/帮助/高级按钮 + 高级面板 + 保存 chip 行容器；加载 search-dsl.js。
 - `public/styles.css`：搜索框图标/按钮、高级面板网格、chip、补全浮层、帮助 popover、保存 chip 样式。
 - `tests/search-query.test.js`（新）：22 例解析器测试。
+
+### Fixed — 高级搜索面板破坏顶栏布局（v3.2.1）
+- **根因**：`#advanced-search` 和 `#saved-searches` 原本是 `.topbar`（grid 布局）的直接子元素，但 topbar 的 grid 只定义了 5 列（品牌/空间/搜索/筛选/动作）。这俩元素即使 `hidden` 不占位，一旦打开就变成 grid 的第 6/7 列，把顶栏高度撑到 466px（正常 59px）+ 横向溢出。
+- **修复**：把 `#advanced-search` / `#saved-searches` 从 `<header class="topbar">` 移到 `</header>` 之后（body 级），CSS 改 `position:fixed` 脱离 grid 流。`positionAdvancedPanel()` 用 JS 计算 top/left/width（锚定搜索框正下方，下方空间不足时翻到上方），`positionSavedSearches()` 同理（面板打开时往下让位）。打开时挂 `resize`/`scroll`（capture）监听重定位，z-index 220 在内容之上。
+- **点击外部关闭**：高级面板加 `mousedown` 委托（点面板/按钮外即关闭），与帮助 popover/补全浮层一致。
+- **验证**：打开前/后 topbar 高度均 59px、`overflowX:false`、`childCount:5`（恢复 5 列）；面板 `position:fixed top:53 left:228 w:432`；双向同步（填 title → DSL 回填）正常；窄屏 800px 不溢出；DSL 检索/补全/保存搜索全链路无回归。
 
 ### Tested
 - 单元：`npm test` 260 例全过（+22 解析器 + settings 路由）。

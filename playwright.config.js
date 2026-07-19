@@ -26,9 +26,13 @@ module.exports = defineConfig({
     env: {
       PORT: '9999',
       NODE_ENV: 'test',
-      // v3：需要 PostgreSQL（本地默认连 5433 的开发实例，CI 由 services.postgres 提供并覆盖此值）
+      // v3：需要 PostgreSQL。本地用 docker-compose 的 postgres-test 服务（端口 15432）：
+      //   `docker compose --profile test up -d postgres-test`
+      // CI 由 services.postgres 提供并经 E2E_DATABASE_URL 覆盖。
       DATABASE_URL:
-        process.env.E2E_DATABASE_URL || process.env.DATABASE_URL || 'postgres://paperwiki:dev@127.0.0.1:5433/paperwiki',
+        process.env.E2E_DATABASE_URL ||
+        process.env.DATABASE_URL ||
+        'postgres://paperwiki:dev@127.0.0.1:15432/paperwiki',
     },
   },
   projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'], channel: undefined } }],

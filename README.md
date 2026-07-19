@@ -64,6 +64,8 @@ docker compose up -d --build app   # 升级代码后重建
 
 论文目录约定：`PAPERS_ROOT` 是挂载根，**每个空间是其下的一个子目录**（默认空间 = `<PAPERS_ROOT>/default`）。
 
+> **双 PG（生产 + 测试）**：`docker-compose.yml` 同时维护两个 PostgreSQL——`postgres`（生产，端口 25432，持久卷，存你的真实论文）和 `postgres-test`（测试，端口 15432，无持久卷，密码 `dev`）。`docker compose up` 只启动生产；测试 PG 用 profile 隔离，仅 `docker compose --profile test up -d postgres-test` 时启动，用于 e2e 测试和本地 node 开发调试。这样跑测试不会污染真实数据，也避免手动 `docker run` 制造游离容器。
+
 **从 v2（pm2 + JSON）升级**：
 
 ```bash

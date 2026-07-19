@@ -2,14 +2,15 @@
 // 生成最小 config.json、复制 fixture PDF 到 PAPERS_ROOT/default、经 repo 向 PG 预置一条 sample 记录。
 // 幂等——upsert 语义，可重复执行。供 playwright.config.js 的 webServer.command 调用。
 //
-// 需要可用的 PostgreSQL：E2E_DATABASE_URL / DATABASE_URL（默认 postgres://paperwiki:dev@127.0.0.1:5433/paperwiki，
-// 对应 `docker run -d -p 127.0.0.1:5433:5432 -e POSTGRES_USER=paperwiki -e POSTGRES_PASSWORD=dev -e POSTGRES_DB=paperwiki postgres:16-alpine`）。
+// 需要可用的 PostgreSQL：E2E_DATABASE_URL / DATABASE_URL（默认 postgres://paperwiki:dev@127.0.0.1:15432/paperwiki，
+// 对应 docker-compose.yml 的 postgres-test 服务，启动方式：`docker compose --profile test up -d postgres-test`）。
+// CI 由 services.postgres 提供并经 E2E_DATABASE_URL 覆盖。
 const fs = require('fs');
 const path = require('path');
 
 const root = path.resolve(__dirname, '..');
 const DB_URL =
-  process.env.E2E_DATABASE_URL || process.env.DATABASE_URL || 'postgres://paperwiki:dev@127.0.0.1:5433/paperwiki';
+  process.env.E2E_DATABASE_URL || process.env.DATABASE_URL || 'postgres://paperwiki:dev@127.0.0.1:15432/paperwiki';
 
 async function main() {
   // 1) config.json（若缺）
