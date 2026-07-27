@@ -125,6 +125,8 @@ function statusDot(p) {
   if (p.status === 'ready') return 'ready';
   if (p.status === 'error') return 'error';
   if (p.status === 'missing') return 'missing';
+  // pending/parsing/enriching/summarizing 都属「处理中」，归 busy（琥珀色闪烁）。
+  // 显式列出，避免「pending 不在 isBusy 判断里时圆点无样式」的疑虑。
   return 'busy';
 }
 
@@ -430,6 +432,11 @@ async function refresh() {
     const fresh = state.papers.find((p) => p.id === state.current);
     if (fresh && state.detail) {
       state.detail = { ...state.detail, ...fresh };
+      // chat / notes tab：定时刷新不重建详情面板。renderDetail 会 innerHTML 全量重建，
+      // 销毁 #chat-list / 笔记 textarea —— 每 10s 打断阅读（重置滚动 / 闪烁流式占位 / 抢焦点）。
+      // 这两个 tab 的数据由专属 handler 维护（聊天：清空/编辑/重新生成 + 流式增量；笔记：本地编辑+防抖落盘），
+      // 无需定时全量刷新；detail-head 的状态变化（如总结完成）会在切 tab / 重开论文时自然反映（state.detail 已更新）。
+      if (state.tab === 'chat' || state.tab === 'notes') return;
       renderDetail();
     }
   }
@@ -2409,30 +2416,61 @@ async function showConcepts() {
   showView('concepts');
   renderConcepts();
 }
+// 概念页排序状态（localStorage 持久化用户选择）
+let _conceptSort = localStorage.getItem('pw-concept-sort') || 'freq';
 function renderConcepts() {
-  const q = ($('concept-q').value || '').toLowerCase();
-  const list = state.concepts.filter((c) => !q || (c.term + ' ' + (c.definition || '')).toLowerCase().includes(q));
+  const q = ($('concept-q').value || '').trim().toLowerCase();
+  const sort = _conceptSort;
+  // 筛选
+  let list = state.concepts.filter((c) => !q || (c.term + ' ' + (c.definition || '')).toLowerCase().includes(q));
+  // 排序
+  if (sort === 'freq') {
+    list = list.slice().sort((a, b) => {
+      const d = (b.paperIds || []).length - (a.paperIds || []).length;
+      if (d !== 0) return d;
+      return String(a.term || '').localeCompare(String(b.term || '')); // 频次相同按字母
+    });
+  } else {
+    list = list.slice().sort((a, b) => String(a.term || '').localeCompare(String(b.term || ''), 'zh-Hans-CN-u-co-pinyin'));
+  }
+  // 统计徽章
+  const cb = $('concepts-count');
+  if (cb) cb.textContent = list.length;
+  // 排序切换按钮 active 态
+  document.querySelectorAll('#concept-sort button').forEach((b) => b.classList.toggle('active', b.dataset.sort === sort));
+  // 字母索引条（仅字母排序 + 无搜索词时显示）
+  renderConceptAlphaBar(sort, q, list);
+  // 卡片渲染
   const g = $('concepts-grid');
   g.innerHTML = '';
-  if (!list.length) { g.innerHTML = '<div class="empty-state">无概念。在论文详情「信息」tab 点「重新抽取并追加」，或多选论文后批量抽取。</div>'; return; }
+  if (!list.length) {
+    g.innerHTML = '<div class="empty-state">' + (q ? '没有匹配「' + escapeHtml(q) + '」的概念' : '无概念。在论文详情「信息」tab 点「重新抽取并追加」，或多选论文后批量抽取。') + '</div>';
+    return;
+  }
+  const frag = document.createDocumentFragment();
   for (const c of list) {
     const card = document.createElement('div');
     card.className = 'concept-card';
+    const freq = (c.paperIds || []).length;
     const papers = (c.paperIds || []).map((id) => {
       const p = state.papers.find((x) => x.id === id);
       return p ? (p.title || p.filename) : id;
     });
+    const metaHtml = papers.length
+      ? `<span class="meta-papers" title="${escapeHtml(papers.join('\n'))}">出现于 ${escapeHtml(papers.slice(0, 2).join(' / '))}${papers.length > 2 ? ' 等 ' + papers.length + ' 篇' : ''}</span>`
+      : '<span class="meta-papers">（独立条目）</span>';
     card.innerHTML = `
-      <div class="ct"><h3>${escapeHtml(c.term)}</h3>
+      <div class="ct"><h3>${escapeHtml(c.term)}</h3>${freq ? `<span class="freq-badge" data-freq="${freq}" title="出现在 ${freq} 篇论文中">${freq} 篇</span>` : ''}
         <div class="row-actions">
-          <button class="btn ghost sm" data-edit="${c.id}">编辑</button>
-          <button class="btn ghost sm danger" data-del="${c.id}">删除</button>
+          <button class="btn ghost sm" data-edit="${c.id}" title="编辑解释">编辑</button>
+          <button class="btn ghost sm danger" data-del="${c.id}" title="删除概念">删除</button>
         </div>
       </div>
       <div class="cd">${escapeHtml(c.definition || '（无解释）')}</div>
-      <div class="meta-line">${papers.length ? '出现于 ' + papers.slice(0, 3).map(escapeHtml).join(' / ') + (papers.length > 3 ? ' 等' : '') : '（独立条目）'}</div>`;
-    g.appendChild(card);
+      <div class="meta-line">${metaHtml}</div>`;
+    frag.appendChild(card);
   }
+  g.appendChild(frag);
   g.querySelectorAll('[data-del]').forEach((b) => b.onclick = async () => {
     const c = state.concepts.find((x) => x.id === b.dataset.del);
     if (!confirm(`删除概念「${c ? c.term : b.dataset.del}」？`)) return;
@@ -2450,6 +2488,50 @@ function renderConcepts() {
       else toast(r.error || '保存失败', 'error');
       showConcepts();
     }
+  });
+}
+/** 字母索引条：列出 A-Z + 中文首字（按拼音），点击滚动到对应字母段。仅字母排序 + 无搜索词时显示。 */
+function renderConceptAlphaBar(sort, q, list) {
+  const bar = $('concepts-alpha-bar');
+  if (!bar) return;
+  if (sort !== 'alpha' || q) { bar.hidden = true; return; }
+  // 收集所有首字符（英文取大写字母，中文原样）
+  const heads = new Set();
+  for (const c of list) {
+    const t = String(c.term || '').trim();
+    if (!t) continue;
+    const ch = t[0].toUpperCase();
+    heads.add(ch);
+  }
+  // 英文字母 A-Z（存在的点亮，不存在的灰）
+  const links = [];
+  for (let i = 0; i < 26; i++) {
+    const L = String.fromCharCode(65 + i);
+    const has = heads.has(L);
+    links.push(`<a href="#concept-${L}" class="${has ? '' : 'empty'}" data-letter="${L}">${L}</a>`);
+  }
+  // 中文首字单独列（#分隔后）
+  const cjkHeads = [...heads].filter((h) => /[^A-Z]/.test(h)).sort();
+  if (cjkHeads.length) {
+    links.push('<span class="concepts-alpha-sep"></span>');
+    for (const h of cjkHeads.slice(0, 30)) links.push(`<a href="#concept-${encodeURIComponent(h)}" data-letter="${encodeURIComponent(h)}">${escapeHtml(h)}</a>`);
+  }
+  bar.innerHTML = links.join('');
+  bar.hidden = false;
+  // 点击：滚动到第一个 term 以该字母开头的卡片
+  bar.querySelectorAll('a:not(.empty)').forEach((a) => {
+    a.onclick = (e) => {
+      e.preventDefault();
+      const letter = decodeURIComponent(a.dataset.letter);
+      const target = [...document.querySelectorAll('#concepts-grid .concept-card h3')].find((h) => h.textContent.trim().toUpperCase().startsWith(letter));
+      if (target) {
+        const card = target.closest('.concept-card');
+        card.scrollIntoView({ block: 'start', behavior: 'smooth' });
+        card.style.transition = 'background .12s ease';
+        card.style.background = 'var(--accent-soft)';
+        setTimeout(() => { card.style.background = ''; }, 800);
+      }
+    };
   });
 }
 
@@ -3792,6 +3874,14 @@ function bind() {
   $('btn-concepts').onclick = showConcepts;
   $('btn-concepts-close').onclick = showLibrary;
   $('concept-q').oninput = renderConcepts;
+  // 排序切换（频次/字母），持久化用户选择
+  document.querySelectorAll('#concept-sort button').forEach((b) => {
+    b.onclick = () => {
+      _conceptSort = b.dataset.sort;
+      localStorage.setItem('pw-concept-sort', _conceptSort);
+      renderConcepts();
+    };
+  });
 
   // 设置中心（原「提示词」入口）
   $('btn-prompt').onclick = () => openSettings('summary'); // 顶栏「提示词」→ 设置中心·总结提示词
@@ -4474,55 +4564,55 @@ function ensureAdvancedPanel() {
   const root = $('advanced-search');
   if (!root || _advPanel) return root;
   root.innerHTML = `
-    <div class="adv-grid">
-      <label class="adv-field adv-full"><span>关键词</span><input type="text" id="adv-text" placeholder="同时搜标题 / 摘要 / 总结 / 笔记，多个词需同时命中"></label>
-      <label class="adv-field"><span>标题</span><input type="text" id="adv-title" placeholder="标题中包含…"></label>
-      <label class="adv-field"><span>作者</span><input type="text" id="adv-author" placeholder="作者名包含…"></label>
-      <label class="adv-field adv-year"><span>年份</span>
-        <div class="adv-year-row">
-          <input type="number" id="adv-year-from" placeholder="起" min="1900" max="2099">
-          <span class="adv-dash">–</span>
-          <input type="number" id="adv-year-to" placeholder="止" min="1900" max="2099">
+    <div class="sf-grid">
+      <label class="sf-field sf-full"><span>关键词</span><input type="text" id="sf-text" autocomplete="off" placeholder="同时搜标题 / 摘要 / 总结 / 笔记，多个词需同时命中"></label>
+      <label class="sf-field"><span>标题</span><input type="text" id="sf-title" autocomplete="off" placeholder="标题中包含…"></label>
+      <label class="sf-field"><span>作者</span><input type="text" id="sf-author" autocomplete="off" placeholder="作者名包含…"></label>
+      <label class="sf-field sf-year"><span>年份</span>
+        <div class="sf-year-row">
+          <input type="number" id="sf-year-from" autocomplete="off" placeholder="起" min="1900" max="2099">
+          <span class="sf-dash">–</span>
+          <input type="number" id="sf-year-to" autocomplete="off" placeholder="止" min="1900" max="2099">
         </div>
       </label>
-      <label class="adv-field adv-tags"><span>标签</span><div class="adv-chips" id="adv-tags-row"></div><input type="text" id="adv-tag-input" placeholder="输入后回车添加"></label>
-      <label class="adv-field adv-tags"><span>主题</span><div class="adv-chips" id="adv-topics-row"></div><input type="text" id="adv-topic-input" placeholder="输入后回车添加"></label>
-      <label class="adv-field"><span>处理状态</span>
-        <select id="adv-status"><option value="">不限</option><option value="ready">已就绪</option><option value="error">出错</option><option value="pending">处理中</option><option value="missing">缺失</option></select>
+      <label class="sf-field sf-tags"><span>标签</span><div class="sf-chips" id="sf-tags-row"></div><input type="text" id="sf-tag-input" autocomplete="off" placeholder="输入后回车添加"></label>
+      <label class="sf-field sf-tags"><span>主题</span><div class="sf-chips" id="sf-topics-row"></div><input type="text" id="sf-topic-input" autocomplete="off" placeholder="输入后回车添加"></label>
+      <label class="sf-field"><span>处理状态</span>
+        <select id="sf-status"><option value="">不限</option><option value="ready">已就绪</option><option value="error">出错</option><option value="pending">处理中</option><option value="missing">缺失</option></select>
       </label>
-      <label class="adv-field"><span>摘要</span><input type="text" id="adv-abstract" placeholder="摘要中包含…"></label>
-      <label class="adv-field"><span>AI 总结</span><input type="text" id="adv-summary" placeholder="总结中包含…"></label>
-      <label class="adv-field"><span>阅读状态</span>
-        <select id="adv-read"><option value="">不限</option><option value="unread">未读</option><option value="reading">在读</option><option value="done">已读</option></select>
+      <label class="sf-field"><span>摘要</span><input type="text" id="sf-abstract" autocomplete="off" placeholder="摘要中包含…"></label>
+      <label class="sf-field"><span>AI 总结</span><input type="text" id="sf-summary" autocomplete="off" placeholder="总结中包含…"></label>
+      <label class="sf-field"><span>阅读状态</span>
+        <select id="sf-read"><option value="">不限</option><option value="unread">未读</option><option value="reading">在读</option><option value="done">已读</option></select>
       </label>
-      <div class="adv-field adv-full adv-scope">
+      <div class="sf-field sf-full sf-scope">
         <span>正文全文</span>
-        <div class="adv-scope-row">
-          <label class="adv-radio"><input type="radio" name="adv-scope" value="metadata" checked> 不搜正文</label>
-          <label class="adv-radio"><input type="radio" name="adv-scope" value="body"> 搜正文</label>
-          <input type="text" id="adv-body-text" placeholder="正文中包含的词（含高亮片段结果）" disabled>
+        <div class="sf-scope-row">
+          <label class="sf-radio"><input type="radio" name="sf-scope" value="metadata" checked> 不搜正文</label>
+          <label class="sf-radio"><input type="radio" name="sf-scope" value="body"> 搜正文</label>
+          <input type="text" id="sf-body-text" autocomplete="off" placeholder="正文中包含的词（含高亮片段结果）" disabled>
         </div>
       </div>
-      <div class="adv-full adv-checks">
-        <label class="adv-check"><input type="checkbox" id="adv-starred"> 仅星标</label>
-        <label class="adv-check"><input type="checkbox" id="adv-has-notes"> 仅含笔记</label>
+      <div class="sf-full sf-checks">
+        <label class="sf-check"><input type="checkbox" id="sf-starred"> 仅星标</label>
+        <label class="sf-check"><input type="checkbox" id="sf-has-notes"> 仅含笔记</label>
       </div>
     </div>
-    <div class="adv-footer">
-      <button class="btn ghost sm" id="adv-clear" type="button">清空</button>
-      <button class="btn ghost sm" id="adv-save" type="button">保存为预设…</button>
-      <span class="adv-spacer"></span>
-      <span class="adv-dsl-preview" id="adv-dsl-preview" title="等效查询语法"></span>
-      <button class="btn sm" id="adv-search" type="button">搜索</button>
+    <div class="sf-footer">
+      <button class="btn ghost sm" id="sf-clear" type="button">清空</button>
+      <button class="btn ghost sm" id="sf-save" type="button">保存为预设…</button>
+      <span class="sf-spacer"></span>
+      <span class="sf-dsl-preview" id="sf-dsl-preview" title="等效查询语法"></span>
+      <button class="btn sm" id="sf-search" type="button">搜索</button>
     </div>`;
   _advPanel = {
-    title: $('adv-title'), author: $('adv-author'), abstract: $('adv-abstract'), summary: $('adv-summary'),
-    yearFrom: $('adv-year-from'), yearTo: $('adv-year-to'), status: $('adv-status'), read: $('adv-read'),
-    tagsRow: $('adv-tags-row'), tagInput: $('adv-tag-input'),
-    topicsRow: $('adv-topics-row'), topicInput: $('adv-topic-input'),
-    text: $('adv-text'), scopeBody: document.querySelector('input[name="adv-scope"][value="body"]'),
-    bodyText: $('adv-body-text'), starred: $('adv-starred'), hasNotes: $('adv-has-notes'),
-    preview: $('adv-dsl-preview'),
+    title: $('sf-title'), author: $('sf-author'), abstract: $('sf-abstract'), summary: $('sf-summary'),
+    yearFrom: $('sf-year-from'), yearTo: $('sf-year-to'), status: $('sf-status'), read: $('sf-read'),
+    tagsRow: $('sf-tags-row'), tagInput: $('sf-tag-input'),
+    topicsRow: $('sf-topics-row'), topicInput: $('sf-topic-input'),
+    text: $('sf-text'), scopeBody: document.querySelector('input[name="sf-scope"][value="body"]'),
+    bodyText: $('sf-body-text'), starred: $('sf-starred'), hasNotes: $('sf-has-notes'),
+    preview: $('sf-dsl-preview'),
   };
   // 字段变化 → 生成 DSL → 回填搜索框 → 触发搜索
   const onChange = () => {
@@ -4534,7 +4624,7 @@ function ensureAdvancedPanel() {
   [_advPanel.title, _advPanel.author, _advPanel.abstract, _advPanel.summary, _advPanel.yearFrom, _advPanel.yearTo, _advPanel.text, _advPanel.bodyText].forEach((el) => { if (el) el.addEventListener('input', onChange); });
   [_advPanel.status, _advPanel.read].forEach((el) => { if (el) el.addEventListener('change', onChange); });
   [_advPanel.starred, _advPanel.hasNotes].forEach((el) => { if (el) el.addEventListener('change', onChange); });
-  document.querySelectorAll('input[name="adv-scope"]').forEach((r) => r.addEventListener('change', () => { _advPanel.bodyText.disabled = !_advPanel.scopeBody.checked; onChange(); }));
+  document.querySelectorAll('input[name="sf-scope"]').forEach((r) => r.addEventListener('change', () => { _advPanel.bodyText.disabled = !_advPanel.scopeBody.checked; onChange(); }));
   // 标签/主题 chip 输入（回车添加）
   const wireChipInput = (input, getArr, setArr, row) => {
     if (!input) return;
@@ -4557,17 +4647,17 @@ function ensureAdvancedPanel() {
   _advPanel._tags = () => _tags; _advPanel._setTags = (a) => { _tags = a.slice(); renderAdvChips(_advPanel.tagsRow, _tags, setTags); };
   _advPanel._topics = () => _topics; _advPanel._setTopics = (a) => { _topics = a.slice(); renderAdvChips(_advPanel.topicsRow, _topics, setTopics); };
   // 底部按钮
-  $('adv-clear').onclick = () => clearAdvancedPanel();
-  $('adv-search').onclick = () => { triggerSearch($('search').value, { immediate: true }); toggleAdvancedPanel(false); };
-  $('adv-save').onclick = () => saveCurrentSearch();
+  $('sf-clear').onclick = () => clearAdvancedPanel();
+  $('sf-search').onclick = () => { triggerSearch($('search').value, { immediate: true }); toggleAdvancedPanel(false); };
+  $('sf-save').onclick = () => saveCurrentSearch();
   return root;
 }
 
 /** 渲染可移除 chip 行。 */
 function renderAdvChips(row, arr, setArr) {
   if (!row) return;
-  row.innerHTML = arr.map((v, i) => `<span class="adv-chip">${escapeHtml(v)}<button class="adv-chip-x" data-i="${i}" type="button" aria-label="移除">×</button></span>`).join('');
-  row.querySelectorAll('.adv-chip-x').forEach((b) => {
+  row.innerHTML = arr.map((v, i) => `<span class="sf-chip">${escapeHtml(v)}<button class="sf-chip-x" data-i="${i}" type="button" aria-label="移除">×</button></span>`).join('');
+  row.querySelectorAll('.sf-chip-x').forEach((b) => {
     b.onclick = () => { const i = Number(b.dataset.i); arr.splice(i, 1); setArr(arr); renderAdvChips(row, arr, setArr); syncSearchBoxFromPanel(dslFromPanelInputs()); };
   });
 }
@@ -4623,7 +4713,7 @@ function syncAdvancedPanelFromDsl(dsl) {
     _advPanel.text.value = panel.text || '';
     _advPanel.starred.checked = !!panel.starred;
     _advPanel.hasNotes.checked = !!panel.hasNotes;
-    const bodyRadio = document.querySelector('input[name="adv-scope"][value="' + panel.scope + '"]');
+    const bodyRadio = document.querySelector('input[name="sf-scope"][value="' + panel.scope + '"]');
     if (bodyRadio) bodyRadio.checked = true;
     _advPanel.bodyText.value = panel.bodyText || '';
     _advPanel.bodyText.disabled = panel.scope !== 'body';
@@ -4638,7 +4728,7 @@ function clearAdvancedPanel() {
   _advPanel._setTags([]); _advPanel._setTopics([]);
   _advPanel.text.value = ''; _advPanel.starred.checked = false; _advPanel.hasNotes.checked = false;
   _advPanel.bodyText.value = '';
-  const meta = document.querySelector('input[name="adv-scope"][value="metadata"]'); if (meta) meta.checked = true;
+  const meta = document.querySelector('input[name="sf-scope"][value="metadata"]'); if (meta) meta.checked = true;
   _advPanel.bodyText.disabled = true;
   _advPanel.preview.textContent = '（无筛选）';
   syncSearchBoxFromPanel('');
@@ -4692,8 +4782,10 @@ function positionAdvancedPanel() {
     panelW = Math.max(620, Math.min(880, r.width + 80));
     left = Math.max(margin, Math.min(vw - panelW - margin, r.left));
   }
-  // .narrow 让网格降列（CSS auto-fill 会自适应，这里仅给极窄态额外收紧）
+  // 列数切换：按面板实际宽度挂 .narrow（<400 单列）/ .medium（<560 两列）/ 默认三列。
+  // 宽度档位与 CSS 断点必须一致，否则列数和字段布局会错位。
   root.classList.toggle('narrow', panelW < 400);
+  root.classList.toggle('medium', panelW >= 400 && panelW < 560);
   let top = r.bottom + gap;
   // 下方空间不足 → 尝试放搜索框上方
   const estH = Math.min(640, window.innerHeight * 0.8);

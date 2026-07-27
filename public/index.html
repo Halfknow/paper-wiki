@@ -161,17 +161,24 @@
     </section>
   </main>
 
-  <!-- 概念清单视图 -->
+  <!-- 概念清单视图（v3.4 全宽 + 多列 + 排序/字母索引） -->
   <main class="pane page-view" id="concepts-view" style="display:none;">
     <div class="concepts-head">
-      <div>
-        <h2>概念清单</h2>
+      <div class="concepts-head-title">
+        <h2>概念清单<span class="count-badge" id="concepts-count">0</span></h2>
         <p>跨论文归并的术语与解释，用来做二次检索和复盘。</p>
       </div>
-      <input id="concept-q" type="search" placeholder="搜索概念…" />
-      <a class="btn ghost sm" href="/api/concepts.md" target="_blank">下载 Markdown</a>
-      <button class="btn ghost sm" id="btn-concepts-close">← 返回</button>
+      <div class="concepts-toolbar">
+        <input id="concept-q" type="search" placeholder="搜索术语或解释…" />
+        <div class="seg" id="concept-sort" role="group" aria-label="排序方式">
+          <button type="button" data-sort="freq" class="active">按频次</button>
+          <button type="button" data-sort="alpha">按字母</button>
+        </div>
+        <a class="btn ghost sm" href="/api/concepts.md" target="_blank">下载 Markdown</a>
+        <button class="btn ghost sm" id="btn-concepts-close">← 返回</button>
+      </div>
     </div>
+    <div class="concepts-alpha-bar" id="concepts-alpha-bar" hidden></div>
     <div id="concepts-grid" class="concepts-grid"></div>
   </main>
 
@@ -394,7 +401,7 @@
 
             <details class="advanced-fold" id="disc-advanced">
               <summary><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg> 高级参数<span class="af-hint">新近窗口 · 去重阈值 · 数据源 · API Key</span></summary>
-              <div class="settings-form adv-body">
+              <div class="settings-form sf-body">
                 <div class="field-row">
                   <div class="field">
                     <label>新近窗口（年）<span class="ovr-badge" id="ovr-discover-recencyWindowYears" hidden>已覆盖</span></label>

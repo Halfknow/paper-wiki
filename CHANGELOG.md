@@ -4,6 +4,50 @@
 
 ## [Unpublished]
 
+### Fixed — 中间态残留自愈（扫描器 + 一次性数据修复）
+
+**根因**：`processOne`（scanner.js）在写完 summary+tags 后、执行到 `status='ready'`（:318）之前若进程被中断，store 会残留中间态（pending/parsing/enriching/summarizing）。重启后 `diffPapers` 只把文件变动的论文当 changed 重新入队——这些文件没变的论文就被永久跳过，status 卡在中间态：内容（总结/标签/元数据）齐全，但前端状态圆点不变绿（用户看到「标题前面没有」就绪标记）。
+
+- **数据修复**：新增 `scripts/fix-stale-status.js`——遍历所有空间，把「有实质 summary（>30 字，过滤占位）+ 有 summaryAt + status 仍为中间态」的论文翻成 ready。默认 dry-run 只打印清单，`--apply` 才写入（走 repo hash-diff 事务）。本次修复了 Quant 空间 9 篇。
+- **代码自愈**：`scanner.js` 的 `scan()` 在 enqueue 前新增中间态自愈——每次扫描时检测上述残留并翻成 ready，避免再次出现「内容已就绪但状态卡住」。空总结的不动（那才是真没处理好，需要重新入队）。
+- **前端注释**：`statusDot()`（app.js）显式注释 pending/parsing/enriching/summarizing 均归 busy（琥珀色闪烁），消除「pending 不在 isBusy 判断里时圆点无样式」的疑虑。
+
+### Changed — AI 聊天视觉打磨（v3.5，quiet refinement）
+对标 ChatGPT / Claude / LobeChat 的「quiet refinement」方向——从「loud」（重阴影 + 饱和渐变 + 多个 pulse 同时跑）转向「quiet」（扁平实色 + 细线边框 + 单一柔和动效）。
+
+**Markdown + 代码块**（最大内容质量提升）：
+- `.chat-content` 补齐 chat 内 markdown 元素样式：标题层级（h1-h4，`## 章节` 带下边框线）、列表（收紧缩进 + 灰色 marker）、表格（边框 + 表头底色 + 斑马纹 + `display:block; overflow:auto` 宽表滚动不撑破气泡）、引用块（左细线 + 弱化色，Claude 风格）、链接/分隔线/图片。此前 AI 回复的表格/列表/标题用浏览器默认渲染（无边框无层级）。
+- 代码块头调亮：`#1e293b → #243044`（提对比）+ `inset 0 1px 0 rgba(255,255,255,.05)` 顶部高光 hairline；语言标签 `.cb-lang` 着浅 indigo（`#a5b4fc`）区别于普通灰文。
+
+**头像柔化**：
+- 去渐变 + 去彩色发光 + 去 hover scale。user = `var(--accent)` 实色；assistant = `var(--accent-soft)` 底 + `var(--accent-strong)` 字 + 1px 边框。尺寸 32→28px，阴影 `0 1px 2px rgba(15,23,42,.08)` 极淡中性。
+
+**流式精简**：
+- 去气泡外发光环（`.chat-bubble.streaming` 的 `box-shadow` 多余信号）；流式光标从 7px 粗块 → **2px 细条**（`vertical-align:baseline`，对标 Claude/ChatGPT 纤细闪烁条），blink 振幅 `.25↔.95` 更柔。
+- 思考徽章去 `chat-reasoning-pulse` 1.6s 无限循环（与光标/skeleton 同时跑会干扰），改纯色区分（流式 = accent-soft 底）+ 静态 `◷` 小图标暗示进行中。
+
+**微交互 + 间距**：
+- 消息入场 280ms → **180ms**（`translateY 6→4px`），更跟手。
+- 操作按钮 `gap 1→2px`、`padding 4→5px`（hover 矩形更清爽，对标 ChatGPT ~4px 间距）。
+- 建议卡去 hover lift（不再抬升+阴影），只换底色 + 箭头微移（读起来像按钮不像漂浮卡）。
+- 助手气泡去 hover 加深阴影（气泡不可点，hover 加深是噪声）。
+- 空状态去「渐变 tile + sparkle 装饰 + 彩色发光」（2021 AI 老套），改扁平品牌标 `var(--accent-soft)` 底。
+- 发送键去渐变 + 去常驻阴影 + 去 hover scale + 去 `chat-send-pulse` 无限循环（圆→方块 morphing 本身已足够信号），改扁平实色。
+- composer 去常驻阴影（仅留 1px 边框），focus 只加细 accent 环（不再 ring + 紫色阴影叠加）。
+- reader FAB 去彩色发光阴影（`rgba(79,70,229,.4)` → 中性 `rgba(15,23,42,.18)`），按钮「抬起」而非「发光」。
+
+**验证**：Playwright DOM 实测——空状态图标 `backgroundImage:none`、composer `box-shadow:none`、发送键实色无阴影、markdown 表格渲染有边框且不撑破气泡；260 单元 + 2 e2e 通过，无 JS 错误。
+
+### Changed — 概念页面全宽 + 多列 + 信息增强（v3.4）
+- **全宽布局**：`#concepts-view` 去掉 `max-width:1160px` 限制（`max-width:none`），仅留 `padding:24px 32px 40px` 留白，真正铺满视口。`#prompt-view`（表单类）保留窄布局。
+- **响应式多列网格**：`.concepts-grid` 从固定 `1fr`（单列）改为 `repeat(auto-fill, minmax(320px, 1fr))`——宽屏 1440px → 4 列、1024/768px → 2 列、窄屏 1 列，95 个概念不再纵向拉超长。`align-items:start` 让卡片顶部对齐（不等高）。
+- **头部增强**：标题加**统计徽章**（实时显示筛选后的概念数，搜索时同步更新）；搜索框拓宽（`flex:1; max-width:360px`，placeholder 改"搜索术语或解释…"）；新增**排序切换** seg 控件（按频次 / 按字母），用户选择持久化到 `localStorage('pw-concept-sort')`。
+- **卡片增强**：每张卡加**频次徽章**（"N 篇"，出现在多篇的概念点亮 Indigo，仅 1 篇的灰显）；论文 meta 行 truncate + `title` tooltip 显示完整论文列表（hover 看全部）；编辑/删除按钮 hover 才显示（触屏常驻）。
+- **字母索引条**（按字母排序 + 无搜索词时显示）：A-Z 字母索引（存在的点亮、不存在的灰），点击平滑滚动到对应字母段并高亮目标卡片；中文首字单独列（拼音排序）。让长列表快速定位。
+- **排序逻辑**：按频次 = `paperIds` 数倒序（同频次按字母兜底）；按字母 = `localeCompare('zh-Hans-CN-u-co-pinyin')`（中文按拼音）。
+- **空状态**：搜索无结果时显示"没有匹配「xxx」的概念"，区分无数据态。
+- **验证**：Playwright 实测 1440/1024/768px 全宽无横向溢出、列数正确；排序/搜索/字母索引/编辑/删除全链路无回归（260 单元 + 2 e2e 通过）。
+
 ### Changed — 双 PG 设计统一到 compose（生产 + 测试，消除游离容器）
 - **背景**：历史上 e2e/本地开发用的 PG 由手动 `docker run -p 5433:5432 ...` 启动（playwright.config.js / e2e-bootstrap.js 默认连此端口），每次开发/e2e 都要记一长串命令，且容易制造游离容器（本次清理前的 `pw-dev-pg2`、`pw-e2e-pg`）。
 - **docker-compose.yml 双 PG**：`postgres`（生产，端口 25432，持久卷 `pgdata`，存真实论文，`restart: unless-stopped`）+ `postgres-test`（测试，端口 `127.0.0.1:15432`，**无持久卷**，密码 `dev`，`restart: no`）。两者用 **compose profile `test`** 隔离：默认 `docker compose up` 只起生产；测试 PG 仅 `docker compose --profile test up -d postgres-test` 时启动。

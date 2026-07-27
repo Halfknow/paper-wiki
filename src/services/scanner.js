@@ -396,9 +396,25 @@ function createScanner({ store, papersDir, textStore, deps, scanIntervalMs, onEn
       lastFuse = null;
       for (const m of missing) store.papers[m.id].status = 'missing';
     }
+    // 中间态自愈：processOne 在写完 summary+tags 后、跑到 `status='ready'`（见下方 processOne）
+    // 之前若进程被中断，store 会残留中间态（pending/parsing/enriching/summarizing）。
+    // 重启后 diffPapers 不把未变文件当 changed，这些论文就永远停在中间态（前端圆点不变绿）。
+    // 自愈规则：有实质 summary（>30 字，过滤占位）+ 有 summaryAt → 翻成 ready。
+    // 空总结的不动（那才是真没处理好，需要重新入队）。
+    const STALE_STATUSES = ['pending', 'parsing', 'enriching', 'summarizing'];
+    let healed = 0;
+    for (const p of Object.values(store.papers)) {
+      if (!p || !STALE_STATUSES.includes(p.status)) continue;
+      if (!p.summaryAt) continue;
+      if (String(p.summary || '').trim().length < 30) continue;
+      p.status = 'ready';
+      p.error = null;
+      healed++;
+    }
+    if (healed > 0) log(`[scan] 中间态自愈：${healed} 篇已有完整内容但 status 卡在中间态，已修正为 ready`);
     await deps.saveStore(store);
     enqueue([...added, ...changed].map((s) => s.id));
-    return { added: added.length, changed: changed.length, missing: missing.length, missingFuse };
+    return { added: added.length, changed: changed.length, missing: missing.length, missingFuse, healed };
   }
 
   function start() {
