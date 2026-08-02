@@ -56,6 +56,7 @@ public/                零构建前端（原生 ESM，浏览器直接加载）
   search-dsl.js ★      高级搜索面板（DSL 双向同步）
   styles.css ★         Indigo 主题
 scripts/               运维脚本：scan-once（CLI 扫描）/ migrate-json-to-pg（旧数据迁移，幂等）/
+                        backfill-metadata（arXiv 元数据回填，dry-run 默认）/
                         e2e-bootstrap（e2e 种子）/ backup-pg.sh（pg_dump）
 tests/                 node --test 单测（449 例，pg-mem 无需真实 PG；chat-ui/notes-panel/regression-ui 用
                         jsdom 驱动真实 app.js，共享 helpers/ui.js 的 bootUi）+ e2e（Playwright 7 例，需 dev PG）
@@ -348,6 +349,12 @@ arXiv 导入 (POST /api/import { url, meta? }):
     （跳过 pre/code、内容不跨标签/换行 [^<
 ]、必须先于 KaTeX 否则 <span> 阻断匹配）。改渲染
     管线勿删此兜底；所有 Markdown 展示都经 renderMd 单一入口。
+
+35. **arXiv API 查询语法三大坑（v3.7 实测）**：① `ti:"整句"` 是连续短语精确匹配（长标题/弯引号易 0 命中）；
+   ② `ti:词 AND ti:词` 里任何停用词项把整查清零（`AND ti:Is` → 0）；③ `language/models/data` 高频词
+   作 ti: 项召回过宽。需要标题搜索时按 `scripts/backfill-metadata.js` 的三级兜底写：整句 → 去停用词
+   关键词 AND（月份约束/英美拼写变体候选）→ 标题互包含验收。文件名取 ID 统一用 `extractArxivIdFromFilename`
+   （裸 ID/[id] 下载命名/括号内/老格式，MM 01-12 防误报），enrichment 与规范改名勿再用裸 parseArxivUrl 判定。
 
 34. **e2e 必须显式钉住 PAPERS_ROOT**：playwright webServer.env 默认继承 process.env，容器里
     `PAPERS_ROOT=/papers`（生产挂载）会漏进 e2e 服务进程 → 扫描/bootstrap 写坏真实论文目录

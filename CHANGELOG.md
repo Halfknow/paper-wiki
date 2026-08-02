@@ -4,6 +4,19 @@
 
 ## [Unpublished]
 
+### Added — 元数据回填与 arXiv 补全管线（v3.7）
+
+- **存量回填**：`scripts/backfill-metadata.js`（dry-run 默认 / `--apply` 写库）修复迁移期遗留的元数据缺失——A. 已有 arxivId 精确查；B. 文件名 ID 提取 + 标题校验；C. 多候选标题搜索（清洗全程 / 去作者前缀块 / 英美拼写变体；整句短语 → 关键词 AND → 标题互包含验收）；D. 全文首页标题候选。只填缺失字段，`metaSource='arxiv-backfill'` 可审计。本次执行：**91 篇补回 year、14 篇补回 authors**（剩余 15 篇为书籍/演示/博客等非 arXiv 内容，确认无误判）。
+- **流水线优化**：`extractArxivIdFromFilename`（util.js 新增）——enrichment 与规范改名统一改走更宽的文件名 ID 判定：除裸 ID / arxiv.org URL 外，新增标准下载命名 `[2306.02781v4] Title.pdf`、括号内 ID、老格式 `cs.AI/0701001`（月份约束 01-12 防日期误报）。这类文件从此直接 `id:` 精确查，不再掉进 ti: 猜标题必失败的坑。
+
+### Fixed — arXiv 查询语法深坑（回填过程中实测沉淀）
+
+- `ti:"整句"` 是**连续短语精确匹配**：长标题、含弯引号（’）时易 0 命中。
+- `ti:词 AND ti:词` 中**任何停用词项会把整个查询清零**（实测 `ti:Attention AND ti:Is` → 0；`AND ti:Need` → 3）。
+- `language/models/data` 等高频词作 ti: 项召回过宽或干扰排序。
+- 英式拼写（behavioural）与 arXiv 美式标题互不命中。
+- 对策（脚本内）：整句 → 去停用词关键词 AND → 标题互包含验收三级兜底。
+
 ### Added — AI 笔记（v3.6：聊天 → 结构化笔记卡片）
 
 笔记从「单一 textarea」重构为**结构化卡片流**，AI 聊天成为笔记生产线：

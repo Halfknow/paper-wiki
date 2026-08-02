@@ -1618,3 +1618,58 @@ test('createMultiSpaceScanner.invalidate(spaceId) 丢弃缓存的子扫描器', 
     cleanup();
   }
 });
+
+test('processOne 方括号 arXiv ID 文件名 → id: 精确查 + 规范改名（extractArxivIdFromFilename 宽判定）', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pwscan-br-'));
+  const fname = '[2401.99999] Some Transformer Paper.pdf';
+  fs.writeFileSync(path.join(dir, fname), Buffer.from('%PDF-1.4\n%placeholder\n'));
+  const store = {
+    version: 2,
+    tags: [],
+    papers: {
+      br1: {
+        id: 'br1', filename: fname, filepath: path.join(dir, fname),
+        title: '', authors: [], year: null, arxivId: null, status: 'pending', error: null, updatedAt: 0,
+      },
+    },
+  };
+  let usedQuery = null;
+  const deps = {
+    parser: { extractText: async () => ({ text: '全文', charCount: 2, numPages: 1 }) },
+    arxiv: {
+      cleanFilenameToTitle,
+      searchArxiv: async (query) => {
+        usedQuery = query;
+        return {
+          entries: [{
+            title: 'Some Transformer Paper', authors: ['Jane Doe'], summary: 'a',
+            id: 'http://arxiv.org/abs/2401.99999v1', primaryCategory: 'cs.CL', published: '2024-01-15T00:00:00Z',
+          }],
+        };
+      },
+      pickBest: () => { throw new Error('方括号ID应走 id: 精确查'); },
+      extractArxivId: () => '2401.99999',
+    },
+    ai: {
+      summarize: async () => '## TL;DR\nt',
+      extractTagsTopics: async () => ({ tags: ['transformer'], topics: [], metadata: {} }),
+      buildSummaryMarkdown: (md) => md,
+      applySettingsOverride: (c) => c,
+    },
+    saveStore: async () => {},
+    mergeTags: () => {},
+    config: { ai: { model: 'm' }, arxiv: { enabled: true } },
+    rateLimitArxiv: async () => {},
+  };
+  const scanner = createScanner({ store, textStore: memTextStore(), papersDir: dir, deps, scanIntervalMs: 0 });
+  scanner.enqueue(['br1']);
+  await new Promise((res) => setTimeout(res, 100));
+  const p = store.papers['br1'];
+  assert.strictEqual(usedQuery, 'id:2401.99999', '方括号 ID 应走 id: 精确查');
+  assert.strictEqual(p.title, 'Some Transformer Paper');
+  assert.strictEqual(p.year, '2024');
+  assert.strictEqual(p.filename, 'Doe - 2024 - Some Transformer Paper.pdf', '方括号文件也应规范改名');
+  assert.ok(fs.existsSync(path.join(dir, p.filename)), '规范名文件存在');
+  scanner.stop();
+  fs.rmSync(dir, { recursive: true, force: true });
+});

@@ -1,6 +1,6 @@
 const fsp = require('fs/promises');
 const path = require('path');
-const { sha1OfFile, log, sleep, parseArxivUrl, buildPaperFilename } = require('../core/util');
+const { sha1OfFile, log, sleep, parseArxivUrl, buildPaperFilename, extractArxivIdFromFilename } = require('../core/util');
 const { splitMarkdownToCards } = require('../core/notes');
 
 /** 扫描目录下所有 PDF 文件信息 */
@@ -141,9 +141,11 @@ function createScanner({ store, papersDir, textStore, deps, scanIntervalMs, onEn
           // 已知 arxivId（URL/发现导入）或文件名本身就是裸 arXiv ID（2401.12345.pdf）→ 用 id: 精确查，
           // 跳过 cleanFilenameToTitle 猜标题（裸ID当标题搜必失败，正是历史上元数据为空的根因）。
           // 其余文件走原 ti: 搜索 + pickBest。
+          // 文件名取 arXiv ID：裸 ID / arxiv.org URL / 标准下载命名 [2306.02781v4] / 括号内 ID / 老格式。
+          // id: 精确查跳过 cleanFilenameToTitle 猜标题（裸ID当标题搜必失败，正是历史上元数据为空的根因）。
           let knownArxivId = p.arxivId;
           if (!knownArxivId) {
-            const fromName = parseArxivUrl(String(p.filename || '').replace(/\.pdf$/i, ''));
+            const fromName = extractArxivIdFromFilename(p.filename);
             if (fromName) knownArxivId = fromName.arxivId;
           }
           if (knownArxivId) {
@@ -269,7 +271,8 @@ function createScanner({ store, papersDir, textStore, deps, scanIntervalMs, onEn
       //    用户自己起的描述性文件名（非裸ID）一律保留不动。
       try {
         const cur = store.papers[id];
-        const isBareId = !!parseArxivUrl(String(cur.filename || '').replace(/\.pdf$/i, ''));
+        // 与 enrichment 同一判定（extractArxivIdFromFilename）：裸 ID / [id] 下载命名 / 括号内 ID 都规范改名
+        const isBareId = !!extractArxivIdFromFilename(cur.filename);
         if (isBareId && cur.title) {
           let desired = buildPaperFilename({
             authors: cur.authors,

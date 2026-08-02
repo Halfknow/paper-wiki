@@ -219,3 +219,25 @@ test('decodeChunked：正常 chunked 解码、截断保护、非 chunked 直通'
   assert.strictEqual(decodeChunked('plain body'), 'plain body');
   assert.strictEqual(decodeChunked('{"a":1}'), '{"a":1}');
 });
+
+test('extractArxivIdFromFilename：裸 ID / 方括号下载命名 / 任意位置 / 老格式 / 防误报', () => {
+  const { extractArxivIdFromFilename: f } = require('../src/core/util');
+  // 整串裸 ID（沿用 parseArxivUrl 严格解析，trap 14 语义不变）
+  assert.strictEqual(f('2306.02781.pdf').arxivId, '2306.02781');
+  assert.strictEqual(f('2306.02781').via, 'bare');
+  // 标准下载命名 [id] Title
+  assert.strictEqual(f('[2306.02781v4] An Automated Survey of Generative AI.pdf').arxivId, '2306.02781');
+  assert.strictEqual(f('[2306.02781v4] An Automated Survey of Generative AI.pdf').via, 'inline');
+  // 任意位置（括号内 / 名称内嵌）
+  assert.strictEqual(f('论文备份 (2401.12345).pdf').arxivId, '2401.12345');
+  assert.strictEqual(f('paper hep-th/9901001 v2.pdf').arxivId, 'hep-th/9901001');
+  // 老格式分类前缀小写规范化
+  assert.strictEqual(f('cs.AI/0701001.pdf').arxivId, 'cs.ai/0701001');
+  // 防误报：非 ID 文件名 / 无有效月份
+  assert.strictEqual(f('Pre_2025_Survey.pdf'), null);
+  assert.strictEqual(f('normal title.pdf'), null);
+  assert.strictEqual(f(''), null);
+  assert.strictEqual(f(null), null);
+  // 月份约束：13 月不算 ID（inline 分支；bare 分支是 parseArxivUrl 既有宽松语义，不在此约束）
+  assert.strictEqual(f('report 2413.9999.pdf'), null);
+});

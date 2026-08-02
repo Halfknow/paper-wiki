@@ -293,6 +293,34 @@ function decodeChunked(body) {
   return out;
 }
 
+/** 从文件名里提取 arXiv ID（比 parseArxivUrl 宽：
+ *  - parseArxivUrl 只认「整串是裸 ID / arxiv.org URL」；
+ *  - 本函数还认文件名中**任意位置**的 ID：标准下载命名 `[2306.02781v4] Title.pdf`、
+ *    括号内 ID、老格式 `cs.AI/0701001`。
+ *  防误报：新格式 ID 约束 YYMM 的 MM ∈ 01-12（避免把 2024.0101 这类日期/版本号当 ID）。
+ *  返回 { arxivId, pdfUrl, via } 或 null。via: 'bare'|'inline'（供调用方决定置信度）。 */
+function extractArxivIdFromFilename(name) {
+  const s = String(name || '').replace(/\.pdf$/i, '').trim();
+  if (!s) return null;
+  // 1) 整串裸 ID / arxiv.org URL（沿用严格解析）
+  const bare = parseArxivUrl(s);
+  if (bare) return { arxivId: bare.arxivId, pdfUrl: bare.pdfUrl, via: 'bare' };
+  // 2) 新格式 ID 出现在任意位置（MM 约束 01-12 防日期误报），可选 v 后缀
+  const m = /(?:^|[^0-9])([0-9]{2}(?:0[1-9]|1[0-2])\.[0-9]{4,5})(?:v\d+)?(?:[^0-9]|$)/.exec(s);
+  if (m) {
+    const arxivId = m[1];
+    return { arxivId, pdfUrl: `https://arxiv.org/pdf/${arxivId}.pdf`, via: 'inline' };
+  }
+  // 3) 老格式 分类/NNNNNNN（如 cs.AI/0701001、hep-th/9901001），任意位置
+  const old = /(?:^|[^a-zA-Z0-9])([a-z-]+(?:\.[a-z]{2})?\/[0-9]{7})(?:v\d+)?(?:[^0-9]|$)/i.exec(s);
+  if (old) {
+    const [cat, num] = old[1].split('/');
+    const arxivId = cat.toLowerCase() + '/' + num;
+    return { arxivId, pdfUrl: `https://arxiv.org/pdf/${arxivId}.pdf`, via: 'inline' };
+  }
+  return null;
+}
+
 module.exports = {
   sha1OfFile,
   sleep,
@@ -302,6 +330,7 @@ module.exports = {
   cleanFilenameToTitle,
   log,
   parseArxivUrl,
+  extractArxivIdFromFilename,
   safeFilename,
   buildPaperFilename,
   proxyFetchJson,
