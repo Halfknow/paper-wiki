@@ -29,6 +29,7 @@ src/                   后端源码（v3.2 分层：core 纯逻辑 / db 持久�
     search.js  ★       全文检索辅助：splitTerms（CJK 整串/英文分词）+ buildSnippets（转义+<mark>）
     search-query.js ★  搜索 DSL 解析器（field:value/布尔/year 区间）→ /api/papers?q= 元数据筛选
     annotations.js     批注归一化层：pdf.js TypedArray(quadPoints) 经 JSON 退化的双向修复
+    notes.js     ★       AI 笔记卡片纯逻辑（v3.6）：normalizeNoteCards/splitMarkdownToCards/newCardId
     util.js    ★       sha1、限速器、标题归一化/相似度、文件名清洗、parseArxivUrl、safeFilename
   db/
     index.js   ★       PG 持久化层：createDb（pg Pool + migrations 幂等执行）+ createRepository
@@ -56,7 +57,8 @@ public/                零构建前端（原生 ESM，浏览器直接加载）
   styles.css ★         Indigo 主题
 scripts/               运维脚本：scan-once（CLI 扫描）/ migrate-json-to-pg（旧数据迁移，幂等）/
                         e2e-bootstrap（e2e 种子）/ backup-pg.sh（pg_dump）
-tests/                 node --test 单测（261 例，pg-mem 无需真实 PG）+ e2e（Playwright，需 dev PG）
+tests/                 node --test 单测（449 例，pg-mem 无需真实 PG；chat-ui/notes-panel/regression-ui 用
+                        jsdom 驱动真实 app.js，共享 helpers/ui.js 的 bootUi）+ e2e（Playwright 7 例，需 dev PG）
 docs/                  设计文档（superpowers/specs+plans）+ TODO + 调研报告
 Dockerfile / docker-compose.yml / .env(.example)   部署（app+postgres；PAPERS_ROOT bind mount）
 config.json(.example)  业务配置（AI 网关等；根目录，compose 只读挂载）
@@ -73,6 +75,7 @@ backups/ logs/         运行时产物（gitignore）：JSON 快照与归档 / �
 > repository 负责 组装（loadSpaceStore）与 hash-diff 保存（saveSpaceStore）。表结构：
 > `spaces`（meta + tags/topics/settings JSONB）、`papers`（PK=(space_id,id)，标量列 + JSONB 列 + extra 兜底）、
 > `paper_texts`（全文独立表）、`concepts`、`folders`、`app_state`（activeSpaceId）、`schema_migrations`。
+> v3.6 起 `papers` 增 `note_cards` jsonb 列（migration 003）；`src/core/notes.js` 为卡片纯逻辑层（normalizeNoteCards/splitMarkdownToCards）。
 > **注意**：`filepath`/`fulltextPath` 是运行时派生字段，不落库（见陷阱 22）。
 
 ```jsonc
@@ -91,7 +94,8 @@ backups/ logs/         运行时产物（gitignore）：JSON 快照与归档 / �
       "folders": [],       // 所属虚拟收藏夹 id
       "readProgress": { "page", "scrollTop", "scale", "total", "updatedAt" } | null,
       "annotations": { "hash", "items":[...], "updatedAt" } | null,  // PDF 批注（坐标存 PDF 点）
-      "notes": "",
+      "notes": "",           // 旧字段（v3.6 起退役，首开自动拆卡迁移到 noteCards）
+      "noteCards": [],       // AI 笔记卡片（v3.6）：[{id,type:qa|skeleton|manual,title,body,meta,createdAt,updatedAt}]
       "starred": false, "readStatus": "unread|reading|done",
       "status": "pending|parsing|enriching|summarizing|ready|error|missing",
       "error": null
@@ -310,9 +314,49 @@ arXiv 导入 (POST /api/import { url, meta? }):
    - **`searchFulltext` 的 `opts.ids` 子集**：`/api/search` 含元数据字段时，先 `applyMetadataQuery` 得候选 id，传给 `searchFulltext` 的 `opts.ids`，SQL 加 `AND paper_id = ANY($4)` 限定。**改交集逻辑勿在 Node 侧二次过滤**（SQL 已做）。
    - **保存的搜索**：`PUT /api/settings/saved-searches`（规整去空/限 30 条），per-space。前端 chip 行点击应用 DSL。
 
+29. **pdf.js KeyboardManager 会抢 textarea 的键（聊天输入框无法删除/Ctrl+A 全选高亮）**：
+   UIManager 在 window 冒泡阶段注册全局 keydown，KeyboardManager 绑定 ctrl+a（全选批注编辑器）/
+   Delete/Backspace（删选中批注）/方向键（平移），执行后 stopEvent 吞默认行为。其豁免检查
+   textInputChecker 只认 <input type=text|number>，**不认 textarea**；有批注编辑器处于选中/编辑态
+   （isEditorHandlingKeyboard 为真）时，抽屉里 textarea 的这些键全被抢走。
+   修复：bindChat 里在抽屉冒泡阶段统一 e.stopPropagation()（textarea 默认行为不受影响；
+   我方 Esc 分层在 document capture 先行，也不受影响）。改键盘相关代码勿删此拦截。
+
+30. **AI 笔记架构（v3.6）**：卡片存 `papers.note_cards`（jsonb），旧 `notes` TEXT 由 NotesPanel.load 首开时
+    自动按 `^## ` 拆卡 PATCH 迁移（幂等）。写入边界一律 `normalizeNoteCards`（router PATCH 归一化 +
+    detailView 读取自愈）。骨架生成必须含 `^## ` 否则报 error（防整段文本塞一张卡）。**NotesPanel 是
+    共享组件**：详情 tab（renderTabBody）与阅读器抽屉（window.NotesPanel 桥）各挂一份，保存后
+    `syncNotePanels` 同步另一份；`window._readerNotesPanel` 是阅读器侧注册点。`commitOpenEditor`
+    的 `discardEmptyNew`（flushPendingNotes 用）防「空新卡草稿保持编辑态 → renderDetail 守卫永久
+    跳过 → 笔记 tab 卡死」。聊天「存入笔记」是拷贝语义（删聊天不删卡），reader 侧先 GET fresh chat
+    再存（this.paper.chat 可能滞后）。notesPrompt 三级回退同 summaryPrompt 模式。
+
+31. **阅读器键盘/Esc 事件分层**：`_onKey`（document capture）Esc 处理顺序固定：框选截图 →
+    （typing && @浮层开 → 交给输入框 handleMentionKeydown）→ 笔记卡编辑（commitOpenEditor）→
+    聊天抽屉 → 批注选中/文本浮层 →（冒泡到 app.js 全局）阅读器。app.js 全局 Esc 分支有
+    `e.defaultPrevented` 守卫（内层已消费不再关阅读器/模态）。**点击 PDF 关闭未钉住抽屉**
+    （wirePdfClickClose）：豁免划词选区/选区浮窗/翻译面板/框选遮罩；pin 按钮（rcd-pin-btn，
+    localStorage 持久化）钉住后不关。改键盘交互必须保持分层，勿一键全关。
+
+32. **renderDetail 轮询重建守卫**：10s 轮询对 summary/info tab 只在 `fresh.updatedAt !==
+    state.detail.updatedAt` 时重建，且有活动文本选择（detail 内 getSelection 非空）时推迟——
+    否则选区每 10s 被 innerHTML 摧毁（「标题/总结无法复制」的根因）。chat/notes tab 沿用旧守卫
+    （busy/草稿/卡编辑态跳过）。新增周期性重渲染逻辑必须过同样的守卫。
+
+33. **CommonMark CJK 缺陷 + fixCjkStrong**：`**“引用”**`、`**$公式$**` 前接汉字时按侧翼规则
+    定界符非法 → marked 原样输出 `**`。renderMd 在 DOMPurify 之后、KaTeX 之前跑 fixCjkStrong
+    （跳过 pre/code、内容不跨标签/换行 [^<
+]、必须先于 KaTeX 否则 <span> 阻断匹配）。改渲染
+    管线勿删此兜底；所有 Markdown 展示都经 renderMd 单一入口。
+
+34. **e2e 必须显式钉住 PAPERS_ROOT**：playwright webServer.env 默认继承 process.env，容器里
+    `PAPERS_ROOT=/papers`（生产挂载）会漏进 e2e 服务进程 → 扫描/bootstrap 写坏真实论文目录
+    （曾把 fixture 写进生产根）。playwright.config.js 已显式 `PAPERS_ROOT=<repo>/papers`，
+    勿移除；新增 e2e 环境变量同理要防环境泄漏。
+
 ## 工程化
 
-- **测试**：`npm test`（node --test，225 例，覆盖全 lib；db/spaces/scanner/api 用 pg-mem 无需真实 PG）；
+- **测试**：`npm test`（node --test，449 例，覆盖全 lib + jsdom UI（聊天/笔记面板/回归）；db/spaces/scanner/api 用 pg-mem 无需真实 PG）；
   `npm run test:e2e`（Playwright，reader 渲染 + 高亮往返；需 dev PG，见下）。
 - **双 PG 设计（生产 + 测试）**：`docker-compose.yml` 同时维护两个 PG，用 profile 隔离默认行为：
   - **`postgres`（生产）**：端口 `25432` → 宿主，持久卷 `pgdata`（存真实论文），`restart: unless-stopped`。`docker compose up` 默认启动，app 容器连此（`DATABASE_URL=@postgres:5432`）。
@@ -342,8 +386,8 @@ docker compose --profile test up -d postgres-test   # 启测试 PG（端口 1543
 DATABASE_URL=postgres://paperwiki:dev@127.0.0.1:15432/paperwiki npm start
 DATABASE_URL=... npm run scan      # 只扫一次，不启 HTTP
 
-npm test                  # node --test（225 例，pg-mem，无需真实 PG）
-npm run test:e2e          # Playwright（先 docker compose --profile test up -d postgres-test；默认连 15432，可用 E2E_DATABASE_URL 覆盖）
+npm test                  # node --test（449 例，pg-mem + jsdom，无需真实 PG）
+npm run test:e2e          # Playwright 7 例（先 docker compose --profile test up -d postgres-test；默认连 15432，可用 E2E_DATABASE_URL 覆盖）
 npm run lint              # ESLint
 npm run format:check      # Prettier 检查
 ```

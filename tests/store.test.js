@@ -274,3 +274,130 @@ test('backupStoreObject：写 JSON 快照、同日幂等、保留 7 份', async 
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// ==================== 追加：backupStore / 备份回退 / 循环引用 / 归一化边界 ====================
+
+test('backupStore（legacy 文件备份）：生成当日起始的 papers-YYYY-MM-DD.json 备份', async () => {
+  const { backupStore } = require('../src/core/store');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pwlbak-'));
+  try {
+    const p = path.join(dir, 'papers.json');
+    fs.writeFileSync(p, JSON.stringify({ version: 2, tags: [], papers: { a: { id: 'a' } } }), 'utf8');
+    await backupStore(p);
+    const today = new Date().toISOString().slice(0, 10);
+    const dest = path.join(dir, 'backups', `papers-${today}.json`);
+    assert.ok(fs.existsSync(dest), '应在 data/backups/ 生成当日备份文件');
+    const loaded = JSON.parse(fs.readFileSync(dest, 'utf8'));
+    assert.ok(loaded.papers.a, '备份内容为 papers.json 拷贝');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('loadLatestBackup 回退：最新备份损坏/空 papers 时落到较旧的有效备份', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pwfb-'));
+  try {
+    const p = path.join(dir, 'papers.json');
+    const backupDir = path.join(dir, 'backups');
+    fs.mkdirSync(backupDir, { recursive: true });
+    const valid = {
+      version: 2,
+      tags: ['old'],
+      topics: [],
+      folders: [],
+      concepts: [],
+      settings: {},
+      papers: { old1: { id: 'old1', title: 'OldValid', status: 'ready' } },
+    };
+    // 三份备份：最新是损坏 JSON，次新是合法 JSON 但 papers 为空，最旧是有效数据
+    const fOld = path.join(backupDir, 'papers-2020-01-01.json');
+    const fEmpty = path.join(backupDir, 'papers-2020-01-02.json');
+    const fCorrupt = path.join(backupDir, 'papers-2020-01-03.json');
+    fs.writeFileSync(fOld, JSON.stringify(valid), 'utf8');
+    fs.writeFileSync(fEmpty, JSON.stringify({ version: 2, papers: {} }), 'utf8');
+    fs.writeFileSync(fCorrupt, 'not json {{', 'utf8');
+    // mtime 降序排列：corrupt 最新，valid 最旧
+    fs.utimesSync(fOld, new Date('2020-01-01'), new Date('2020-01-01'));
+    fs.utimesSync(fEmpty, new Date('2020-01-02'), new Date('2020-01-02'));
+    fs.utimesSync(fCorrupt, new Date('2020-01-03'), new Date('2020-01-03'));
+    // 主文件也损坏 → 触发自愈恢复路径
+    fs.writeFileSync(p, 'CORRUPT', 'utf8');
+    const store = await loadStore(p);
+    assert.ok(store.papers && store.papers.old1, '应跳过损坏/空备份，回退到最旧有效备份');
+    assert.strictEqual(store.papers.old1.title, 'OldValid');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('saveStore：循环引用 store 拒绝写入且不破坏原文件', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pwcirc-'));
+  try {
+    const p = path.join(dir, 'papers.json');
+    const good = { version: 2, tags: ['ok'], topics: [], folders: [], concepts: [], settings: {}, papers: { a: { id: 'a' } } };
+    await saveStore(p, good);
+    const circular = { version: 2, papers: {} };
+    circular.self = circular; // 循环引用 → JSON.stringify 抛 TypeError
+    await assert.rejects(() => saveStore(p, circular), /circular|JSON/i);
+    const final = await loadStore(p);
+    assert.ok(final.papers && final.papers.a, '原文件未被破坏');
+    // 写锁不被失败卡死：后续合法保存仍可成功
+    good.tags = ['ok', 'after'];
+    await saveStore(p, good);
+    const again = await loadStore(p);
+    assert.deepStrictEqual(again.tags.sort(), ['after', 'ok']);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('normalizePaper（经 upsertPaper）：chat 非数组→[]、rating 字符串强转、未知字段保留', () => {
+  const store = { version: 2, tags: [], papers: {} };
+  const saved = upsertPaper(store, {
+    id: 'n1',
+    title: 'T',
+    status: 'ready',
+    chat: 'not-an-array',
+    rating: '4',
+    customField: { a: 1 },
+  });
+  assert.deepStrictEqual(saved.chat, [], 'chat 非数组 → []');
+  assert.strictEqual(saved.rating, 4, 'rating 字符串被数值化');
+  assert.strictEqual(saved.starred, true, 'rating>0 → starred 镜像');
+  assert.deepStrictEqual(saved.customField, { a: 1 }, '未知字段经展开保留');
+  // rating 非法字符串：Math.round('abc')=NaN，经 min/max 后仍 NaN（记录实际行为）
+  const saved2 = upsertPaper(store, { id: 'n2', title: 'U', status: 'ready', rating: 'abc' });
+  assert.ok(Number.isNaN(saved2.rating), 'rating 非法字符串 → NaN（min/max 不拦截 NaN）');
+});
+
+test('normalizeTopic / normalizeTerm：标点、大小写折叠、空白折叠', () => {
+  const { normalizeTopic, normalizeTerm } = require('../src/core/store');
+  // normalizeTopic：小写 + 去标点（非字母数字→空格）+ 折叠空白
+  assert.strictEqual(normalizeTopic('  Mixture-of-Experts! 2024 '), 'mixture of experts 2024');
+  assert.strictEqual(normalizeTopic('强化  学习'), '强化 学习');
+  assert.strictEqual(normalizeTopic(null), '');
+  // normalizeTerm：小写 + 折叠空白 + trim，但保留连字符等标点
+  assert.strictEqual(normalizeTerm('  Mixture-of-Experts  '), 'mixture-of-experts');
+  assert.strictEqual(normalizeTerm('A   B'), 'a b');
+  assert.strictEqual(normalizeTerm('  '), '');
+});
+
+test('mergeConcepts：已有概念无 definition 时回填；空 term 跳过', () => {
+  const store = { version: 2, concepts: [], papers: {} };
+  const ids1 = mergeConcepts(store, [{ term: 'MoE' }], 'p1');
+  assert.strictEqual(ids1.length, 1);
+  assert.strictEqual(store.concepts[0].definition, '', '首次无 definition → 空串');
+  // 同 term（大小写不同）带 definition → 不新增，但回填 definition、合并 paperId
+  const ids2 = mergeConcepts(store, [{ term: 'moe', definition: '混合专家' }], 'p2');
+  assert.deepStrictEqual(ids2, []);
+  assert.strictEqual(store.concepts.length, 1);
+  assert.strictEqual(store.concepts[0].definition, '混合专家', 'definition 应被回填');
+  assert.deepStrictEqual(store.concepts[0].paperIds, ['p1', 'p2']);
+  // 已有 definition 不被新值覆盖
+  mergeConcepts(store, [{ term: 'MOE', definition: '别的定义' }], 'p3');
+  assert.strictEqual(store.concepts[0].definition, '混合专家', '已有 definition 不被覆盖');
+  // 空 term / 全空白 term 跳过
+  const ids3 = mergeConcepts(store, [{ term: '' }, { term: '   ' }, {}], 'p1');
+  assert.deepStrictEqual(ids3, []);
+  assert.strictEqual(store.concepts.length, 1);
+});

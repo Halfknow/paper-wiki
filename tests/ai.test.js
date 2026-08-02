@@ -477,3 +477,258 @@ test('listModels 无 baseURL 时回退静态候选', async () => {
     ['m'],
   );
 });
+
+// ==================== AI 笔记骨架（generateNotes / buildNotesMessages） ====================
+
+test('buildNotesMessages：默认用 DEFAULT_NOTES_PROMPT，含六段式章节要求', () => {
+  const { buildNotesMessages, DEFAULT_NOTES_PROMPT } = require('../src/services/ai');
+  const msgs = buildNotesMessages({ title: 'T', abstract: 'A', fulltext: 'F', maxInputChars: 100 });
+  assert.strictEqual(msgs[0].role, 'system');
+  assert.strictEqual(msgs[0].content, DEFAULT_NOTES_PROMPT);
+  assert.ok(msgs[0].content.includes('## 🎯 研究问题'));
+  assert.ok(msgs[0].content.includes('## 🔁 可复用想法'));
+  assert.ok(msgs[0].content.includes('（论文未提及）')); // 防幻觉约束
+  assert.ok(msgs[1].content.includes('T'));
+});
+
+test('buildNotesMessages：自定义 prompt 覆盖 + 全文截断到 maxInputChars', () => {
+  const { buildNotesMessages } = require('../src/services/ai');
+  const long = 'y'.repeat(500);
+  const msgs = buildNotesMessages({ title: 'T', abstract: 'A', fulltext: long, maxInputChars: 100, prompt: '自定义笔记提示词' });
+  assert.strictEqual(msgs[0].content, '自定义笔记提示词');
+  assert.ok(msgs[1].content.length < 500);
+  // 空白 prompt 回退默认
+  const msgs2 = buildNotesMessages({ title: 'T', fulltext: 'F', prompt: '   ' });
+  assert.notStrictEqual(msgs2[0].content, '   ');
+});
+
+test('generateNotes 走自由 Markdown 调用（jsonMode:false）并返回原文', async () => {
+  const { generateNotes } = require('../src/services/ai');
+  let capturedBody;
+  const fakeFetch = async (url, opts) => {
+    capturedBody = JSON.parse(opts.body);
+    return { ok: true, json: async () => ({ choices: [{ message: { content: '## 🎯 研究问题\nx' } }] }) };
+  };
+  const md = await generateNotes({ title: 'T', abstract: 'A', fulltext: 'F', config: CFG, fetchImpl: fakeFetch });
+  assert.strictEqual(md, '## 🎯 研究问题\nx');
+  assert.strictEqual(capturedBody.response_format, undefined); // 不强制 json_object
+  assert.strictEqual(capturedBody.messages[0].role, 'system');
+});
+
+test('generateNotes 非 2xx 抛错（供路由 502 分支）', async () => {
+  const { generateNotes } = require('../src/services/ai');
+  const fakeFetch = async () => ({ ok: false, status: 500, text: async () => 'boom' });
+  await assert.rejects(() => generateNotes({ config: CFG, fetchImpl: fakeFetch }), /500/);
+});
+
+// ==================== callChatStream（SSE 流式） ====================
+
+/** 把 SSE 文本包装成 Web ReadableStream（单 chunk 推送后关闭） */
+function sseStream(sseText) {
+  return new ReadableStream({
+    start(c) {
+      c.enqueue(new TextEncoder().encode(sseText));
+      c.close();
+    },
+  });
+}
+
+test('callChatStream 消费 SSE 流：delta.content 累积、reasoning 单独回调、[DONE] 结束', async () => {
+  const { callChatStream } = require('../src/services/ai');
+  const sse = [
+    'data: {"choices":[{"delta":{"reasoning_content":"先思考一下"}}]}\n\n',
+    'data: {"choices":[{"delta":{"content":"你好"}}]}\n\n',
+    'data: {"choices":[{"delta":{"content":"，世界"}}]}\n\n',
+    'data: [DONE]\n\n',
+  ].join('');
+  let capturedBody;
+  const tokens = [];
+  const reply = await callChatStream({
+    messages: [{ role: 'user', content: 'hi' }],
+    config: CFG,
+    fetchImpl: async (url, opts) => {
+      capturedBody = JSON.parse(opts.body);
+      return { ok: true, body: sseStream(sse) };
+    },
+    onToken: (t, kind) => {
+      tokens.push([t, kind]);
+    },
+  });
+  assert.strictEqual(reply, '你好，世界', '返回值只累积 content（不含 reasoning）');
+  assert.deepStrictEqual(tokens, [
+    ['先思考一下', 'reasoning'],
+    ['你好', 'content'],
+    ['，世界', 'content'],
+  ]);
+  assert.strictEqual(capturedBody.stream, true, '流式请求带 stream:true');
+});
+
+test('callChatStream 无 body.getReader 时回退 parseSseBody（text() 整体解析）', async () => {
+  const { callChatStream } = require('../src/services/ai');
+  const sse = 'data: {"choices":[{"delta":{"content":"整段"}}]}\n\ndata: {"choices":[{"delta":{"content":"回复"}}]}\n\ndata: [DONE]\n\n';
+  const tokens = [];
+  const reply = await callChatStream({
+    messages: [{ role: 'user', content: 'hi' }],
+    config: CFG,
+    fetchImpl: async () => ({ ok: true, body: null, text: async () => sse }), // 无 getReader
+    onToken: (t, kind) => {
+      tokens.push([t, kind]);
+    },
+  });
+  assert.strictEqual(reply, '整段回复');
+  assert.deepStrictEqual(tokens, [
+    ['整段', 'content'],
+    ['回复', 'content'],
+  ]);
+});
+
+test('callChatStream onToken 返回 false 时该块 content 不计入 reply', async () => {
+  const { callChatStream } = require('../src/services/ai');
+  const sse = 'data: {"choices":[{"delta":{"content":"A"}}]}\n\ndata: {"choices":[{"delta":{"content":"B"}}]}\n\ndata: [DONE]\n\n';
+  const reply = await callChatStream({
+    messages: [{ role: 'user', content: 'hi' }],
+    config: CFG,
+    fetchImpl: async () => ({ ok: true, body: sseStream(sse) }),
+    onToken: (t) => t !== 'B', // 对 B 返回 false（模拟客户端中止）
+  });
+  assert.strictEqual(reply, 'A', 'onToken 返回 false 的块不累积进 reply');
+});
+
+// ==================== callChat 重试 / chatParams 透传 ====================
+
+test('callChat 5xx 重试耗尽后抛最后一次错误（1+4 次尝试）', async () => {
+  let calls = 0;
+  const fakeFetch = async () => {
+    calls++;
+    return { ok: false, status: 500, text: async () => 'boom' };
+  };
+  // 退避最长 ~30s：测试内把 setTimeout 替换为立即执行（结束后还原，不影响其它用例）
+  const origSetTimeout = global.setTimeout;
+  global.setTimeout = (fn, ...rest) => origSetTimeout(fn, 0);
+  try {
+    await assert.rejects(
+      () => callChat({ messages: [{ role: 'user', content: 'hi' }], config: CFG, fetchImpl: fakeFetch, jsonMode: false }),
+      /AI HTTP 500: boom/,
+      '重试耗尽后应抛最后一次错误',
+    );
+  } finally {
+    global.setTimeout = origSetTimeout;
+  }
+  assert.strictEqual(calls, 5, '1 次原始请求 + 4 次重试');
+});
+
+test('callChat chatParams 透传 temperature/topP/maxTokens/thinking 到请求体', async () => {
+  let capturedBody;
+  const fakeFetch = async (url, opts) => {
+    capturedBody = JSON.parse(opts.body);
+    return { ok: true, json: async () => ({ choices: [{ message: { content: 'ok' } }] }) };
+  };
+  await callChat({
+    messages: [{ role: 'user', content: 'hi' }],
+    config: CFG,
+    fetchImpl: fakeFetch,
+    jsonMode: false,
+    chatParams: { temperature: 0.7, topP: 0.9, maxTokens: 128, thinking: { type: 'enabled' } },
+  });
+  assert.strictEqual(capturedBody.temperature, 0.7, 'temperature 覆盖默认 0.3');
+  assert.strictEqual(capturedBody.top_p, 0.9, 'topP → top_p');
+  assert.strictEqual(capturedBody.max_tokens, 128, 'maxTokens → max_tokens');
+  assert.deepStrictEqual(capturedBody.thinking, { type: 'enabled' }, 'thinking 原样透传（GLM 格式）');
+  // 无 chatParams 时用默认值，且不挂可选字段
+  await callChat({ messages: [{ role: 'user', content: 'hi' }], config: CFG, fetchImpl: fakeFetch, jsonMode: false });
+  assert.strictEqual(capturedBody.temperature, 0.3, '默认 temperature 0.3');
+  assert.ok(!('top_p' in capturedBody), '无 topP 时不挂 top_p');
+  assert.ok(!('max_tokens' in capturedBody), '无 maxTokens 时不挂 max_tokens');
+  assert.ok(!('thinking' in capturedBody), '无 thinking 时不挂 thinking');
+});
+
+// ==================== applySettingsOverride 补充分支 ====================
+
+test('applySettingsOverride 覆盖 translate 段（engine/targetLang，未设透传）', () => {
+  const config = { ai: {}, translate: { engine: 'google', targetLang: 'zh' } };
+  const eff = applySettingsOverride(config, { translate: { engine: 'ai' } });
+  assert.strictEqual(eff.translate.engine, 'ai', 'engine 覆盖');
+  assert.strictEqual(eff.translate.targetLang, 'zh', '未设字段透传 config');
+  const eff2 = applySettingsOverride(config, { translate: { targetLang: 'en' } });
+  assert.strictEqual(eff2.translate.targetLang, 'en', 'targetLang 覆盖');
+  assert.strictEqual(eff2.translate.engine, 'google');
+  assert.strictEqual(config.translate.engine, 'google', '不改原 config');
+});
+
+test('applySettingsOverride ai 段空字符串 baseURL/model 不覆盖（空串=未设置）', () => {
+  const config = { ai: { baseURL: 'http://a/v1', model: 'm1', apiKey: 'k' } };
+  const eff = applySettingsOverride(config, { ai: { baseURL: '', model: '' } });
+  assert.strictEqual(eff.ai.baseURL, 'http://a/v1', 'baseURL 空串不覆盖');
+  assert.strictEqual(eff.ai.model, 'm1', 'model 空串不覆盖');
+  assert.strictEqual(config.ai.baseURL, 'http://a/v1', '不改原 config');
+});
+
+// ==================== listModels 补充分支 ====================
+
+test('listModels 上游 ok 但列表为空 → 回退 config 静态候选', async () => {
+  const fakeFetch = async () => ({ ok: true, json: async () => ({ data: [] }) });
+  const r = await listModels({
+    config: { ai: { baseURL: 'http://gw/v1', apiKey: 'k', model: 'm', extraModels: ['a'] } },
+    fetchImpl: fakeFetch,
+  });
+  assert.strictEqual(r.source, 'config', '空列表回退 config');
+  assert.deepStrictEqual(
+    r.models.map((m) => m.id),
+    ['m', 'a'],
+  );
+});
+
+test('listModels 支持 data.models 备选结构（字符串与对象混合）', async () => {
+  const fakeFetch = async () => ({
+    ok: true,
+    json: async () => ({ models: ['glm-4', { id: 'gpt-4o', owned_by: 'openai' }] }),
+  });
+  const r = await listModels({
+    config: { ai: { baseURL: 'http://gw/v1', apiKey: 'k', model: 'm', extraModels: ['glm-4'] } },
+    fetchImpl: fakeFetch,
+  });
+  assert.strictEqual(r.source, 'upstream');
+  assert.deepStrictEqual(
+    r.models.map((m) => m.id),
+    ['glm-4', 'gpt-4o'],
+    '字符串元素转 {id}，extraModels 去重',
+  );
+  assert.strictEqual(r.models[1].owned_by, 'openai', '对象元素保留 owned_by');
+});
+
+test('listModels 上游非 2xx → 回退 config（不读 body、不抛错）', async () => {
+  const fakeFetch = async () => ({ ok: false, status: 502 });
+  const r = await listModels({
+    config: { ai: { baseURL: 'http://gw/v1', apiKey: 'k', model: 'm' } },
+    fetchImpl: fakeFetch,
+  });
+  assert.strictEqual(r.source, 'config');
+  assert.deepStrictEqual(
+    r.models.map((m) => m.id),
+    ['m'],
+  );
+});
+
+// ==================== buildSummaryMessages / buildTagsMessages 提示词覆盖 ====================
+
+test('buildSummaryMessages 自定义 prompt 覆盖默认总结提示词（空白回退默认）', () => {
+  const { buildSummaryMessages, DEFAULT_SUMMARY_PROMPT } = require('../src/services/ai');
+  const msgs = buildSummaryMessages({ title: 'T', abstract: 'A', fulltext: 'F', prompt: '自定义总结提示词' });
+  assert.strictEqual(msgs[0].content, '自定义总结提示词', '自定义 prompt 作为 system');
+  assert.ok(msgs[1].content.includes('T'), 'user 含标题');
+  const blank = buildSummaryMessages({ title: 'T', fulltext: 'F', prompt: '   ' });
+  assert.strictEqual(blank[0].content, DEFAULT_SUMMARY_PROMPT, '空白 prompt 回退默认');
+  const none = buildSummaryMessages({ title: 'T', fulltext: 'F' });
+  assert.strictEqual(none[0].content, DEFAULT_SUMMARY_PROMPT, '无 prompt 回退默认');
+});
+
+test('buildTagsMessages 自定义 prompt 覆盖默认标签提示词（空白回退默认）', () => {
+  const { buildTagsMessages, DEFAULT_TAGS_PROMPT } = require('../src/services/ai');
+  const msgs = buildTagsMessages({ title: 'T', abstract: 'A', fulltext: 'F', prompt: '自定义标签提示词' });
+  assert.strictEqual(msgs[0].content, '自定义标签提示词');
+  assert.ok(msgs[1].content.includes('tags / topics / metadata'), 'user 含 JSON 输出要求');
+  const blank = buildTagsMessages({ title: 'T', fulltext: 'F', prompt: '  ' });
+  assert.strictEqual(blank[0].content, DEFAULT_TAGS_PROMPT, '空白 prompt 回退默认');
+  const none = buildTagsMessages({ title: 'T', fulltext: 'F' });
+  assert.strictEqual(none[0].content, DEFAULT_TAGS_PROMPT);
+});

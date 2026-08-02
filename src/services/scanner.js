@@ -1,6 +1,7 @@
 const fsp = require('fs/promises');
 const path = require('path');
 const { sha1OfFile, log, sleep, parseArxivUrl, buildPaperFilename } = require('../core/util');
+const { splitMarkdownToCards } = require('../core/notes');
 
 /** 扫描目录下所有 PDF 文件信息 */
 async function scanDir(dir) {
@@ -640,6 +641,26 @@ function createScanner({ store, papersDir, textStore, deps, scanIntervalMs, onEn
     return { reply, chat: p.chat };
   }
 
+  /** 生成笔记骨架卡（AI 笔记）：读全文 → AI 六段式 Markdown → 按 ## 拆成 skeleton 卡。
+   *  不落盘（由调用方决定插入位置后 PATCH noteCards），只返回 cards。
+   *  提示词三级回退：store.settings.notesPrompt > config.notesPrompt > DEFAULT_NOTES_PROMPT（同 summaryPrompt 模式）。 */
+  async function generateNoteCards(id) {
+    const p = store.papers[id];
+    if (!p) return { cards: [] };
+    const effConfig = deps.ai.applySettingsOverride
+      ? deps.ai.applySettingsOverride(deps.config, store.settings)
+      : deps.config;
+    const prompt = (store.settings && store.settings.notesPrompt) || deps.config.notesPrompt || undefined;
+    const text = (await textStore.load(id).catch(() => null)) || '';
+    if (!text && !p.abstract) return { cards: [], error: '全文未解析且无摘要，无法生成' };
+    const md = await deps.ai.generateNotes({ title: p.title, abstract: p.abstract, fulltext: text, config: effConfig, prompt });
+    // 骨架语义要求分段输出：无 ## 标题说明模型没按格式来（整段文本塞成一张卡体验很差），报 error 请重试
+    if (!/^##\s+/m.test(md || '')) return { cards: [], error: '模型未按骨架格式输出，请重试' };
+    const cards = splitMarkdownToCards(md || '', 'skeleton');
+    if (!cards.length) return { cards: [], error: '模型返回为空，请重试' };
+    return { cards };
+  }
+
   return {
     scan,
     enqueue,
@@ -651,6 +672,7 @@ function createScanner({ store, papersDir, textStore, deps, scanIntervalMs, onEn
     extractConcepts,
     retagPapers,
     chatPaper,
+    generateNoteCards,
     getFuseState: () => lastFuse,
   };
 }
@@ -830,6 +852,11 @@ function createMultiSpaceScanner({ manager, deps }) {
     if (!sub) return { reply: '', chat: [] };
     return sub.scanner.chatPaper(id, message, opts);
   }
+  async function generateNoteCards(spaceId, id) {
+    const sub = await subFor(spaceId);
+    if (!sub) return { cards: [], error: 'space not found' };
+    return sub.scanner.generateNoteCards(id);
+  }
 
   /** 各空间 missing 熔断状态聚合：{spaceId: fuseInfo}（全部正常时为 {}） */
   function getFuseState() {
@@ -853,6 +880,7 @@ function createMultiSpaceScanner({ manager, deps }) {
     extractConcepts,
     retagPapers,
     chatPaper,
+    generateNoteCards,
     invalidate,
     getFuseState,
     _subFor: subFor,

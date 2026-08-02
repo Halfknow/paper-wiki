@@ -102,6 +102,7 @@ const PAPER_COLS = [
   ['summaryModel', 'summary_model'],
   ['summaryAt', 'summary_at'],
   ['notes', 'notes'],
+  ['noteCards', 'note_cards', true],
   ['rating', 'rating'],
   ['starred', 'starred'],
   ['readStatus', 'read_status'],

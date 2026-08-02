@@ -70,6 +70,37 @@ const TRANSLATE_SYSTEM_PROMPT = `你是一名专业学术翻译。将用户给�
 - 保留原文的换行与段落结构。
 - 若原文已是目标语言，原样返回。`;
 
+/** 默认笔记骨架提示词：基于全文生成结构化笔记初稿（六段式），输出自由 Markdown。
+ *  章节用 ## 二级标题——前端/后端按 ^## 拆成骨架卡（src/core/notes.splitMarkdownToCards）。
+ *  可被 settings.notesPrompt / config.notesPrompt 覆盖（三级回退，同 summaryPrompt 模式）。 */
+const DEFAULT_NOTES_PROMPT = `你是一位 AI/ML 论文研究员。阅读给定论文，输出一份结构化读书笔记（Markdown），包含以下六个章节（## 二级标题，标题文字保持完全一致）：
+
+## 🎯 研究问题
+这篇论文要解决什么问题？为什么重要？（2-4 句）
+
+## 💡 核心贡献
+- 贡献 1
+- 贡献 2
+（2-4 条，每条一句话，突出「新在哪」）
+
+## 🔧 方法拆解
+方法的关键步骤与设计动机，必要时给公式（$...$）。分 3-5 点写清「怎么做的、为什么这样做」。
+
+## 📊 实验与结果
+关键实验设置与最重要的量化结果（带数字），以及与基线的对比结论。
+
+## ⚠️ 局限与开放问题
+论文自己承认的局限 + 你读出的潜在问题/未回答的疑问（2-4 条）。
+
+## 🔁 可复用想法
+这篇论文的哪些技巧/视角可以迁移到其它工作？（1-3 条）
+
+要求：
+- 直接输出 Markdown 正文，不要包裹代码块，不要输出 JSON。
+- 六个章节标题原样保留（含 emoji），顺序不变；某章节论文确实未涉及时，正文写「（论文未提及）」。
+- 内容必须基于论文实际内容，不要编造；数字/公式以原文为准。
+- 中文为主，专有名词/术语保留英文。`;
+
 // ============================================================================
 // 消息构造
 // ============================================================================
@@ -329,7 +360,7 @@ async function callChat({ messages, config, fetchImpl = fetch, jsonMode = true, 
   const reqBody = { model: cp.model || model, messages, temperature: cp.temperature != null ? cp.temperature : 0.3 };
   if (cp.topP != null) reqBody.top_p = cp.topP;
   if (cp.maxTokens != null) reqBody.max_tokens = cp.maxTokens;
-  if (cp.thinking != null) reqBody.thinking = cp.thinking;
+  if (cp.thinking != null) reqBody.thinking = cp.thinking; // GLM 对象格式 {type:"enabled"|"disabled"}，由 router 解析
   if (jsonMode) reqBody.response_format = { type: 'json_object' };
   const maxRetries = 4;
   let lastErr;
@@ -386,7 +417,7 @@ async function callChatStream({ messages, config, fetchImpl = fetch, jsonMode = 
   };
   if (cp.topP != null) reqBody.top_p = cp.topP;
   if (cp.maxTokens != null) reqBody.max_tokens = cp.maxTokens;
-  if (cp.thinking != null) reqBody.thinking = cp.thinking; // GLM/部分模型的思考强度参数
+  if (cp.thinking != null) reqBody.thinking = cp.thinking; // GLM 对象格式 {type:"enabled"|"disabled"}，由 router 解析
   if (jsonMode) reqBody.response_format = { type: 'json_object' };
   const maxRetries = 4;
   let lastErr;
@@ -514,6 +545,26 @@ async function summarize({ title, abstract, fulltext, config, fetchImpl = fetch,
   return text;
 }
 
+/** 构造「笔记骨架」请求消息：与总结同构（标题/摘要/全文截断），system 用笔记提示词三级回退。 */
+function buildNotesMessages({ title, abstract, fulltext, maxInputChars = 24000, prompt }) {
+  const head = (abstract || '').slice(0, 4000);
+  const body = (fulltext || '').slice(0, maxInputChars);
+  const user = `标题：${title || '（未知）'}\n摘要：${head}\n\n论文全文（节选）：\n${body}\n\n请输出结构化读书笔记。`;
+  return [
+    { role: 'system', content: prompt && prompt.trim() ? prompt : DEFAULT_NOTES_PROMPT },
+    { role: 'user', content: user },
+  ];
+}
+
+/** 生成笔记骨架：自由 Markdown 调用（jsonMode:false），返回六段式 Markdown 原文。
+ *  调用方用 splitMarkdownToCards 拆成骨架卡。 */
+async function generateNotes({ title, abstract, fulltext, config, fetchImpl = fetch, prompt }) {
+  const { maxInputChars = 24000 } = config.ai;
+  const messages = buildNotesMessages({ title, abstract, fulltext, maxInputChars, prompt });
+  const text = await callChat({ messages, config, fetchImpl, jsonMode: false });
+  return text;
+}
+
 /** 抽取标签/主题（+ metadata 兜底）：强制 JSON 调用。
  *  返回归一化后的 { tags:[], topics:[], metadata|null }，解析失败返回空结构（不抛）。 */
 async function extractTagsTopics({ title, abstract, fulltext, config, fetchImpl = fetch, prompt }) {
@@ -633,12 +684,14 @@ module.exports = {
   CONCEPT_PROMPT,
   DEFAULT_CHAT_SYSTEM_PROMPT,
   TRANSLATE_SYSTEM_PROMPT,
+  DEFAULT_NOTES_PROMPT,
   // 消息构造
   buildMessages, // 别名（向后兼容）= buildSummaryMessages
   buildSummaryMessages,
   buildTagsMessages,
   buildConceptMessages,
   buildChatMessages,
+  buildNotesMessages,
   // 解析
   parseAiJson,
   parseConceptResult,
@@ -649,6 +702,7 @@ module.exports = {
   applySettingsOverride,
   // AI 调用
   summarize,
+  generateNotes,
   extractTagsTopics,
   extractConcepts,
   chatPaper,

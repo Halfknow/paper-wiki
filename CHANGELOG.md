@@ -4,6 +4,46 @@
 
 ## [Unpublished]
 
+### Added — AI 笔记（v3.6：聊天 → 结构化笔记卡片）
+
+笔记从「单一 textarea」重构为**结构化卡片流**，AI 聊天成为笔记生产线：
+
+- **数据模型**：新增 `papers.note_cards` jsonb 列（migration `003-note-cards.sql` + `PAPER_COLS`）。卡片形状 `{id,type:qa|skeleton|manual,title,body,meta,createdAt,updatedAt}`；`src/core/notes.js` 纯函数层（`normalizeNoteCards` 写入边界归一化：type 白名单/限量 200 张/单卡 5 万字符/id 撞车重发；`splitMarkdownToCards` 按 `##` 拆卡）。PATCH 白名单 + `detailView` 读取自愈。
+- **聊天一键存问答卡**：assistant 消息操作条新增「存入笔记」（书签图标），自动前溯被回答的 user 问题作卡片标题（`Q: ...`）。详情 tab 与阅读器抽屉两处接入（reader 经 `window.saveQaCardToNotes` 桥，GET 取 fresh chat）。拷贝语义：删聊天不删卡。
+- **笔记 tab 卡片视图**（`NotesPanel` 组件）：类型色条（qa=indigo/skeleton=amber/manual=slate）、内联编辑/复制/删除/上移下移、≥4 张章节锚点 chips（平滑滚动+flash）、编辑中切论文/切 tab 自动提交。**旧 `notes` TEXT 首开自动按 `##` 拆卡迁移**（幂等，toast 告知），此后该字段退役。
+- **AI 一键生成骨架**：`POST /api/papers/:id/notes/generate`（`scanner.generateNoteCards` → `ai.generateNotes`，jsonMode:false 自由 Markdown）：六段式「🎯研究问题/💡核心贡献/🔧方法拆解/📊实验与结果/⚠️局限与开放问题/🔁可复用想法」（含「（论文未提及）」防幻觉约束），骨架卡插入笔记开头。提示词三级覆盖 `settings.notesPrompt > config.notesPrompt > DEFAULT_NOTES_PROMPT`（同 summaryPrompt 模式）。模型不按 `##` 格式输出时报 error 不落卡。
+- **阅读器内笔记侧栏**：抽屉头部新增「聊天 | 笔记」segmented（`.rcd-seg`），与详情 tab 共用同一 `NotesPanel` 实现（`window.NotesPanel` 桥），`syncNotePanels` 两处实时双向同步。
+- **搜索适配**：`notes:` DSL 与 `hasNotes` 同时匹配 noteCards 的 title+body（`notesHaystackText`）。
+
+### Added — 阅读器聊天抽屉交互
+
+- **点击 PDF 关闭抽屉**：点击 PDF 画布区域关闭未钉住的聊天气泡；豁免划词选区（正要做批注/提问）、选区浮窗、翻译面板、框选遮罩。
+- **Pin 钉住按钮**：钉住后点击 PDF 不再关闭（Esc/关闭键/退出阅读器仍可关），状态持久化 `localStorage('pw-reader-chat-pin')`，钉住态高亮 + 图钉倾斜。
+- **Esc 分层退出**：框选截图 → @ 引用浮层 → 笔记卡编辑 → 聊天抽屉 → 批注选中 → 阅读器，逐层退出不再一键全关。
+
+### Fixed — 交互与渲染
+
+- **pdf.js 抢键盘**（根因：UIManager KeyboardManager 在 window 冒泡阶段绑定 Ctrl+A/Delete/Backspace/方向键，`textInputChecker` 只豁免 `<input type=text|number>` 不豁免 textarea；有批注编辑器处于选中/编辑态时聊天输入框的这些键全被抢走并 stopEvent）→ 表现为「Ctrl+A 全选 PDF 高亮、Backspace 无法删除」。修复：抽屉冒泡阶段统一 `stopPropagation`（textarea 默认行为不受影响；我方 Esc 分层在 document capture 先行）。已沉淀为 AGENTS.md 陷阱 29。
+- **标题/总结无法选中复制**（根因：10s 轮询对 summary/info tab 无条件 `renderDetail()` 全量 `innerHTML` 重建，选区被反复摧毁）。修复双防线：`updatedAt` 不变不重建 + 活动选区推迟重建。
+- **重新生成后问题消失**：`doRegenerate` 曾连 user 消息一起从 DOM 移除，但流式完成只补回 assistant → 问题从视图消失直到下次全量刷新。现保留 user 消息（服务端弹整轮重推，索引自然对齐）。
+- **换论文聊天历史串台**：reader 是单例但 `#reader-chat-list` 的 `dataset.loaded` 一次性标记导致只有首篇论文加载历史。`open()` 检测换论文 → `_resetChatState()` 重置抽屉（中止流式/清列表草稿 chips/重置 loaded 标记/抽屉开着则立即拉新历史）。
+- **参数浮层不可见**（根因：`.chat-params-pop` 的 `bottom:calc(100%+6px)` 是相对详情 composer 上浮，阅读器里包含块是全高抽屉 → 浮层被顶到视口外）。`.rcd-params-pop` 改为头部下拉。
+- **CJK 加粗不渲染**（CommonMark 侧翼规则缺陷：`**“引用”**`、`**$公式$**` 前接汉字时定界符非法，marked 原样输出 `**`）。`renderMd` 在 sanitize 后、KaTeX 前加 `fixCjkStrong` 兜底（跳过 code/pre、不跨标签/换行）。
+- **`notes:.` 语义错**：原是「含字面点号」子串匹配，纯中文无点号笔记漏检 → 修为「字段非空」约定（`matchField`）。
+- **空新卡草稿卡死笔记 tab**：空草稿被 flush 拒绝后保持编辑态 → renderDetail 守卫永久跳过重建。`commitOpenEditor({discardEmptyNew})` 离开即弃。
+- **迁移脚本 Windows 路径**：`path.basename` 在 Linux 容器不认旧数据 `D:\...` 反斜杠 → basename 归一失败。先归一分隔符再取。
+- **e2e 环境污染**：容器里 `PAPERS_ROOT=/papers` 漏进 webServer 进程会把 fixture 写进生产论文目录。`playwright.config.js` 显式钉住 `PAPERS_ROOT=<repo>/papers`。
+
+### Added — 测试体系（271 → 449 例单元 + 2 → 7 例 e2e）
+
+- **jsdom UI 测试层**（新基建 `tests/helpers/ui.js`）：真实 index.html + 真实 app.js + 可控假后端（fetch/EventSource stub），`bootUi()` 一行启动，轮询回调可手动触发。覆盖：
+  - `tests/chat-ui.test.js`（14）：输入/发送键禁用/Enter 发送/删除（user 连带回答）/编辑回填/重新生成/存笔记/复制/清空/建议卡/@浮层/参数持久化/草稿保护。
+  - `tests/notes-panel.test.js`（14）：NotesPanel 全操作 + 双面板同步。
+  - `tests/regression-ui.test.js`（4）：fixCjkStrong、refresh 选区保护、Esc 分层。
+- **后端补测**：`tests/sse.test.js`（8：chat/vision SSE 事件序列与参数白名单）、`tests/property.test.js`（8：幂等/垃圾输入/XSS）、`tests/claude.test.js`（10，claude.js 改 spawn 注入）、`tests/discover-internals.test.js`（16，内部件仅补导出）、`tests/backup.test.js`（6）；api/scanner/ai/db/store/util/search-query 六文件共 +72（processOne 全分支、callChatStream、searchFulltext ids 子集、未测路由批量等）。
+- **e2e**：`tests/e2e/reader-chat.spec.js`（5）：真实浏览器验证 Esc 分层、pin 点击外部、pdf.js 抢键、跨论文聊天历史、笔记侧栏。
+- `jsdom` 入 devDependencies；`src/core/util.js` 补导出 `parseJsonLenient`/`decodeChunked`（可测性）。
+
 ### Fixed — 中间态残留自愈（扫描器 + 一次性数据修复）
 
 **根因**：`processOne`（scanner.js）在写完 summary+tags 后、执行到 `status='ready'`（:318）之前若进程被中断，store 会残留中间态（pending/parsing/enriching/summarizing）。重启后 `diffPapers` 只把文件变动的论文当 changed 重新入队——这些文件没变的论文就被永久跳过，status 卡在中间态：内容（总结/标签/元数据）齐全，但前端状态圆点不变绿（用户看到「标题前面没有」就绪标记）。

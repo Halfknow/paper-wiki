@@ -525,4 +525,13 @@ module.exports = {
   enrichWithOpenAlex,
   discoverPapers,
   parseClaudeOutput,
+  // 以下为内部件的附加导出（仅供单测直接调用，逻辑未变）
+  DEFAULT_WEIGHTS,
+  normalizePlan,
+  tokenSet,
+  authorityScore,
+  recencyScore,
+  scoreOne,
+  arxivIdFromDoi,
+  toResult,
 };

@@ -1584,3 +1584,800 @@ test('GET /api/search：命中 snippet 高亮 + 元数据 enrich + 空查询 400
     fs.rmSync(ctx._root, { recursive: true, force: true });
   }
 });
+
+// ==================== AI 笔记卡片（noteCards） ====================
+
+function noteStore() {
+  return {
+    papers: { p1: { id: 'p1', filename: 'a.pdf', title: 'T', status: 'ready', tags: [], topics: [], folders: [], notes: '' } },
+    tags: [], topics: [], folders: [], concepts: [], settings: {},
+  };
+}
+
+test('PATCH noteCards：写入边界归一化（type 白名单/空卡滤除/补 id 与时间戳）+ hasNotes 联动', async () => {
+  const store = noteStore();
+  let saved = false;
+  const router = createApiRouter(baseCtx(store, async () => { saved = true; }));
+  const server = await startServer(router.handle);
+  try {
+    const r = await call(server.address().port, 'PATCH', '/api/papers/p1', {
+      noteCards: [
+        { type: 'qa', title: 'Q: x', body: 'y', meta: { question: 'x' } },
+        { type: 'bogus', title: 't', body: 'b' },   // 非法 type → manual
+        { title: '', body: '' },                    // 空卡 → 滤除
+      ],
+    });
+    assert.strictEqual(r.status, 200);
+    const cards = r.json.data.noteCards;
+    assert.strictEqual(cards.length, 2);
+    assert.strictEqual(cards[0].type, 'qa');
+    assert.deepStrictEqual(cards[0].meta, { question: 'x' });
+    assert.strictEqual(cards[1].type, 'manual');
+    assert.ok(cards[0].id && cards[0].createdAt > 0 && cards[0].updatedAt > 0);
+    assert.strictEqual(store.papers.p1.noteCards.length, 2, 'store 已落');
+    assert.ok(saved, '触发了 save');
+    assert.strictEqual(r.json.data.hasNotes, true, 'summaryView.hasNotes 反映 noteCards');
+  } finally { await server.close(); }
+});
+
+test('PATCH noteCards 非数组输入归一为空数组（防写坏 jsonb）', async () => {
+  const store = noteStore();
+  store.papers.p1.noteCards = [{ id: 'nc-1', type: 'manual', title: 't', body: 'b', createdAt: 1, updatedAt: 1 }];
+  const router = createApiRouter(baseCtx(store, async () => {}));
+  const server = await startServer(router.handle);
+  try {
+    const r = await call(server.address().port, 'PATCH', '/api/papers/p1', { noteCards: 'garbage' });
+    assert.strictEqual(r.status, 200);
+    assert.deepStrictEqual(r.json.data.noteCards, []);
+  } finally { await server.close(); }
+});
+
+test('GET 详情：noteCards 读取时归一化自愈（存量脏数据补字段）', async () => {
+  const store = noteStore();
+  store.papers.p1.noteCards = [{ title: '只有标题', body: '正文' }]; // 缺 id/type/时间戳
+  const router = createApiRouter(baseCtx(store));
+  const server = await startServer(router.handle);
+  try {
+    const r = await call(server.address().port, 'GET', '/api/papers/p1');
+    assert.strictEqual(r.status, 200);
+    const c = r.json.data.noteCards[0];
+    assert.strictEqual(c.type, 'manual');
+    assert.ok(c.id && c.createdAt > 0);
+  } finally { await server.close(); }
+});
+
+test('POST /api/papers/:id/notes/generate：200 返回骨架卡', async () => {
+  const store = noteStore();
+  const ctx = baseCtx(store);
+  ctx.scanner.generateNoteCards = async (spaceId, id) => {
+    assert.strictEqual(id, 'p1');
+    return { cards: [{ id: 'nc-g', type: 'skeleton', title: '🎯 研究问题', body: 'x', createdAt: 1, updatedAt: 1 }] };
+  };
+  const router = createApiRouter(ctx);
+  const server = await startServer(router.handle);
+  try {
+    const r = await call(server.address().port, 'POST', '/api/papers/p1/notes/generate');
+    assert.strictEqual(r.status, 200);
+    assert.strictEqual(r.json.data.cards.length, 1);
+    assert.strictEqual(r.json.data.cards[0].type, 'skeleton');
+  } finally { await server.close(); }
+});
+
+test('POST /api/papers/:id/notes/generate：404 无论文 / 501 无 scanner 方法', async () => {
+  const store = noteStore();
+  const ctx = baseCtx(store);
+  delete ctx.scanner.generateNoteCards; // 模拟旧 scanner
+  const router = createApiRouter(ctx);
+  const server = await startServer(router.handle);
+  try {
+    const r404 = await call(server.address().port, 'POST', '/api/papers/nope/notes/generate');
+    assert.strictEqual(r404.status, 404);
+    const r501 = await call(server.address().port, 'POST', '/api/papers/p1/notes/generate');
+    assert.strictEqual(r501.status, 501);
+  } finally { await server.close(); }
+});
+
+test('POST /api/papers/:id/notes/generate：422 内容不足 / 502 AI 抛错', async () => {
+  const store = noteStore();
+  const ctx = baseCtx(store);
+  ctx.scanner.generateNoteCards = async () => ({ cards: [], error: '全文未解析且无摘要，无法生成' });
+  const router = createApiRouter(ctx);
+  const server = await startServer(router.handle);
+  try {
+    const r422 = await call(server.address().port, 'POST', '/api/papers/p1/notes/generate');
+    assert.strictEqual(r422.status, 422);
+    ctx.scanner.generateNoteCards = async () => { throw new Error('gateway down'); };
+    const r502 = await call(server.address().port, 'POST', '/api/papers/p1/notes/generate');
+    assert.strictEqual(r502.status, 502);
+    assert.ok(r502.json.error.includes('gateway down'));
+  } finally { await server.close(); }
+});
+
+// ==================== v3.2 搜索补全 / 设置 / 概念 / 排序等未覆盖路由 ====================
+
+test('GET /api/search/suggest 各字段返回候选（按使用频次倒序）', async () => {
+  const store = {
+    version: 2,
+    tags: [],
+    topics: [],
+    folders: [],
+    concepts: [],
+    settings: {},
+    papers: {
+      a: {
+        id: 'a',
+        title: 'Alpha',
+        tags: ['ml', 'rl'],
+        topics: ['推理'],
+        authors: ['Alice', 'Bob'],
+        status: 'ready',
+        readStatus: 'reading',
+      },
+      b: {
+        id: 'b',
+        title: 'Beta',
+        tags: ['ml'],
+        topics: ['视觉'],
+        authors: ['Alice'],
+        status: 'pending',
+        readStatus: 'unread',
+      },
+    },
+  };
+  const router = createApiRouter(baseCtx(store));
+  const server = await startServer(router.handle);
+  const port = server.address().port;
+  // tag：ml 出现 2 次排第一
+  const tag = await call(port, 'GET', '/api/search/suggest?field=tag');
+  assert.strictEqual(tag.status, 200);
+  assert.deepStrictEqual(tag.json.data.results, [
+    { value: 'ml', count: 2 },
+    { value: 'rl', count: 1 },
+  ]);
+  assert.strictEqual(tag.json.data.field, 'tag');
+  // author
+  const author = await call(port, 'GET', '/api/search/suggest?field=author');
+  assert.deepStrictEqual(author.json.data.results, [
+    { value: 'Alice', count: 2 },
+    { value: 'Bob', count: 1 },
+  ]);
+  // topic / title / status / read：均计数 1，用对象断言内容（并列次序不断言）
+  const topic = await call(port, 'GET', '/api/search/suggest?field=topic');
+  assert.deepStrictEqual(
+    Object.fromEntries(topic.json.data.results.map((r) => [r.value, r.count])),
+    { 推理: 1, 视觉: 1 },
+  );
+  const title = await call(port, 'GET', '/api/search/suggest?field=title');
+  assert.deepStrictEqual(
+    Object.fromEntries(title.json.data.results.map((r) => [r.value, r.count])),
+    { Alpha: 1, Beta: 1 },
+  );
+  const status = await call(port, 'GET', '/api/search/suggest?field=status');
+  assert.deepStrictEqual(
+    Object.fromEntries(status.json.data.results.map((r) => [r.value, r.count])),
+    { ready: 1, pending: 1 },
+  );
+  const read = await call(port, 'GET', '/api/search/suggest?field=read');
+  assert.deepStrictEqual(
+    Object.fromEntries(read.json.data.results.map((r) => [r.value, r.count])),
+    { reading: 1, unread: 1 },
+  );
+  server.close();
+});
+
+test('GET /api/search/suggest 非法 field → 400', async () => {
+  const store = { version: 2, tags: [], topics: [], folders: [], concepts: [], settings: {}, papers: {} };
+  const router = createApiRouter(baseCtx(store));
+  const server = await startServer(router.handle);
+  const port = server.address().port;
+  const r = await call(port, 'GET', '/api/search/suggest?field=bogus');
+  assert.strictEqual(r.status, 400);
+  assert.strictEqual(r.json.ok, false);
+  assert.ok(r.json.error.includes('field'));
+  // 缺 field 参数同样 400
+  const r2 = await call(port, 'GET', '/api/search/suggest');
+  assert.strictEqual(r2.status, 400);
+  server.close();
+});
+
+test('GET /api/search/suggest prefix 子串过滤 + limit clamp 上限 20', async () => {
+  const tags = [];
+  for (let i = 0; i < 25; i++) tags.push('t' + String(i).padStart(2, '0'));
+  const store = {
+    version: 2,
+    tags: [],
+    topics: [],
+    folders: [],
+    concepts: [],
+    settings: {},
+    papers: { a: { id: 'a', title: 'T', tags, status: 'ready' } },
+  };
+  const router = createApiRouter(baseCtx(store));
+  const server = await startServer(router.handle);
+  const port = server.address().port;
+  // limit=999 → clamp 到 20
+  const r = await call(port, 'GET', '/api/search/suggest?field=tag&limit=999');
+  assert.strictEqual(r.json.data.results.length, 20, 'limit 应 clamp 到 20');
+  // limit=3 → 3 条
+  const r3 = await call(port, 'GET', '/api/search/suggest?field=tag&limit=3');
+  assert.strictEqual(r3.json.data.results.length, 3);
+  // prefix 子串过滤：'t1' 命中 t10-t19 共 10 个
+  const rp = await call(port, 'GET', '/api/search/suggest?field=tag&prefix=t1&limit=20');
+  assert.strictEqual(rp.json.data.results.length, 10);
+  assert.strictEqual(rp.json.data.prefix, 't1');
+  assert.ok(rp.json.data.results.every((x) => x.value.includes('t1')));
+  server.close();
+});
+
+test('PUT /api/settings/tags-prompt 持久化 trim + 空串恢复默认 + GET 回显', async () => {
+  const store = { version: 2, tags: [], topics: [], folders: [], concepts: [], settings: {}, papers: {} };
+  let saved = null;
+  const router = createApiRouter(
+    baseCtx(store, async (s) => {
+      saved = s;
+    }),
+  );
+  const server = await startServer(router.handle);
+  const port = server.address().port;
+  const r = await call(port, 'PUT', '/api/settings/tags-prompt', { value: '  我的标签提示  ' });
+  assert.strictEqual(r.status, 200);
+  assert.strictEqual(store.settings.tagsPrompt, '我的标签提示');
+  assert.strictEqual(r.json.data.tagsPrompt, '我的标签提示');
+  assert.ok(saved, 'save should be called');
+  const g = await call(port, 'GET', '/api/settings');
+  assert.strictEqual(g.json.data.tagsPrompt, '我的标签提示', 'GET /api/settings 应回显');
+  // 空串 = 恢复默认
+  const r2 = await call(port, 'PUT', '/api/settings/tags-prompt', { value: '   ' });
+  assert.strictEqual(r2.status, 200);
+  assert.strictEqual(store.settings.tagsPrompt, '');
+  server.close();
+});
+
+test('PUT /api/settings/saved-searches 规整：去空 dsl / 截断 name40 dsl500 / createdAt 兜底', async () => {
+  const store = { version: 2, tags: [], topics: [], folders: [], concepts: [], settings: {}, papers: {} };
+  let saved = false;
+  const router = createApiRouter(
+    baseCtx(store, async () => {
+      saved = true;
+    }),
+  );
+  const server = await startServer(router.handle);
+  const port = server.address().port;
+  const r = await call(port, 'PUT', '/api/settings/saved-searches', {
+    value: [
+      { name: '高频', dsl: 'tag:rl', createdAt: 123 },
+      { name: '空', dsl: '   ' }, // 空 dsl 应被过滤
+      { name: 'x'.repeat(50), dsl: 'y'.repeat(600) }, // name 截 40 / dsl 截 500
+    ],
+  });
+  assert.strictEqual(r.status, 200);
+  const list = store.settings.savedSearches;
+  assert.strictEqual(list.length, 2, '空 dsl 项应被滤除');
+  assert.deepStrictEqual(list[0], { name: '高频', dsl: 'tag:rl', createdAt: 123 });
+  assert.strictEqual(list[1].name.length, 40, 'name 截断到 40');
+  assert.strictEqual(list[1].dsl.length, 500, 'dsl 截断到 500');
+  assert.strictEqual(typeof list[1].createdAt, 'number');
+  assert.ok(saved, 'save should be called');
+  assert.deepStrictEqual(r.json.data.savedSearches, list);
+  server.close();
+});
+
+test('PUT /api/settings/saved-searches 限 30 条 + 非数组清空 + GET /api/settings 回显', async () => {
+  const store = { version: 2, tags: [], topics: [], folders: [], concepts: [], settings: {}, papers: {} };
+  const router = createApiRouter(baseCtx(store, async () => {}));
+  const server = await startServer(router.handle);
+  const port = server.address().port;
+  const many = [];
+  for (let i = 0; i < 35; i++) many.push({ name: 's' + i, dsl: 'tag:t' + i });
+  const r = await call(port, 'PUT', '/api/settings/saved-searches', { value: many });
+  assert.strictEqual(r.status, 200);
+  assert.strictEqual(store.settings.savedSearches.length, 30, '应截断到 30 条');
+  const g = await call(port, 'GET', '/api/settings');
+  assert.strictEqual(g.json.data.savedSearches.length, 30, 'GET /api/settings 应回显 savedSearches');
+  // 非数组输入 → 清空
+  const r2 = await call(port, 'PUT', '/api/settings/saved-searches', { value: 'garbage' });
+  assert.strictEqual(r2.status, 200);
+  assert.deepStrictEqual(store.settings.savedSearches, []);
+  server.close();
+});
+
+test('PUT /api/settings/translate 引擎白名单（bing/google/ai/none）+ targetLang', async () => {
+  const store = { version: 2, tags: [], topics: [], folders: [], concepts: [], settings: {}, papers: {} };
+  let saved = false;
+  const router = createApiRouter(
+    baseCtx(store, async () => {
+      saved = true;
+    }),
+  );
+  const server = await startServer(router.handle);
+  const port = server.address().port;
+  for (const engine of ['bing', 'google', 'ai', 'none']) {
+    const r = await call(port, 'PUT', '/api/settings/translate', { engine });
+    assert.strictEqual(r.status, 200);
+    assert.strictEqual(store.settings.translate.engine, engine, `engine=${engine} 应被接受`);
+    assert.strictEqual(r.json.data.translate.engine, engine);
+  }
+  const r2 = await call(port, 'PUT', '/api/settings/translate', { targetLang: 'en' });
+  assert.strictEqual(r2.status, 200);
+  assert.strictEqual(store.settings.translate.targetLang, 'en');
+  assert.strictEqual(r2.json.data.translate.targetLang, 'en');
+  assert.ok(saved, 'save should be called');
+  server.close();
+});
+
+test('PUT /api/settings/translate 非法 engine 忽略（保留原值）+ GET overrides 标记', async () => {
+  const store = { version: 2, tags: [], topics: [], folders: [], concepts: [], settings: {}, papers: {} };
+  const router = createApiRouter(baseCtx(store, async () => {}));
+  const server = await startServer(router.handle);
+  const port = server.address().port;
+  await call(port, 'PUT', '/api/settings/translate', { engine: 'bing', targetLang: 'ja' });
+  const r = await call(port, 'PUT', '/api/settings/translate', { engine: 'bogus', targetLang: 'fr' });
+  assert.strictEqual(r.status, 200);
+  assert.strictEqual(store.settings.translate.engine, 'bing', '非法 engine 不应覆盖');
+  assert.strictEqual(store.settings.translate.targetLang, 'fr', 'targetLang 正常更新');
+  assert.strictEqual(r.json.data.translate.engine, 'bing');
+  const g = await call(port, 'GET', '/api/settings');
+  assert.strictEqual(g.json.data.translate.engine, 'bing');
+  assert.ok(g.json.data.overrides.translate.includes('engine'), 'overrides 应标记 translate.engine 已覆盖');
+  assert.ok(g.json.data.overrides.translate.includes('targetLang'));
+  server.close();
+});
+
+test('GET /api/translate 空文本 → 400（缺参与纯空白）', async () => {
+  const store = { version: 2, tags: [], topics: [], folders: [], concepts: [], settings: {}, papers: {} };
+  const router = createApiRouter(baseCtx(store));
+  const server = await startServer(router.handle);
+  const port = server.address().port;
+  const r = await call(port, 'GET', '/api/translate');
+  assert.strictEqual(r.status, 400);
+  assert.strictEqual(r.json.ok, false);
+  assert.ok(r.json.error.includes('empty'));
+  const r2 = await call(port, 'GET', '/api/translate?text=%20%20%20');
+  assert.strictEqual(r2.status, 400, '纯空白文本同样 400');
+  server.close();
+});
+
+test('PATCH /api/concepts/:id 更新 term/definition（trim + updatedAt + 落盘）', async () => {
+  const store = {
+    version: 2,
+    tags: [],
+    topics: [],
+    folders: [],
+    concepts: [{ id: 'c1', term: 'RL', definition: 'd', paperIds: ['a'] }],
+    settings: {},
+    papers: { a: { id: 'a', title: 'A', conceptIds: ['c1'], status: 'ready' } },
+  };
+  let saved = false;
+  const router = createApiRouter(
+    baseCtx(store, async () => {
+      saved = true;
+    }),
+  );
+  const server = await startServer(router.handle);
+  const port = server.address().port;
+  const r = await call(port, 'PATCH', '/api/concepts/c1', { term: '  RLHF  ', definition: '新定义' });
+  assert.strictEqual(r.status, 200);
+  assert.strictEqual(r.json.data.term, 'RLHF', 'term 应 trim');
+  assert.strictEqual(r.json.data.definition, '新定义');
+  assert.ok(r.json.data.updatedAt > 0, '应更新 updatedAt');
+  assert.strictEqual(store.concepts[0].term, 'RLHF');
+  assert.ok(saved, 'save should be called');
+  // 显式空 definition（'definition' in op 分支）
+  const r2 = await call(port, 'PATCH', '/api/concepts/c1', { definition: '' });
+  assert.strictEqual(r2.status, 200);
+  assert.strictEqual(store.concepts[0].definition, '');
+  server.close();
+});
+
+test('PATCH /api/concepts/:id 不存在 → 404', async () => {
+  const store = { version: 2, tags: [], topics: [], folders: [], concepts: [], settings: {}, papers: {} };
+  const router = createApiRouter(baseCtx(store));
+  const server = await startServer(router.handle);
+  const port = server.address().port;
+  const r = await call(port, 'PATCH', '/api/concepts/nope', { term: 'x' });
+  assert.strictEqual(r.status, 404);
+  assert.strictEqual(r.json.ok, false);
+  server.close();
+});
+
+test('DELETE /api/concepts/:id 删除并清理论文 conceptIds；不存在 → 404', async () => {
+  const store = {
+    version: 2,
+    tags: [],
+    topics: [],
+    folders: [],
+    concepts: [
+      { id: 'c1', term: 'RL', paperIds: ['a'] },
+      { id: 'c2', term: 'CNN', paperIds: ['a'] },
+    ],
+    settings: {},
+    papers: { a: { id: 'a', title: 'A', conceptIds: ['c1', 'c2'], status: 'ready' } },
+  };
+  let saved = false;
+  const router = createApiRouter(
+    baseCtx(store, async () => {
+      saved = true;
+    }),
+  );
+  const server = await startServer(router.handle);
+  const port = server.address().port;
+  const r = await call(port, 'DELETE', '/api/concepts/c1');
+  assert.strictEqual(r.status, 200);
+  assert.deepStrictEqual(r.json.data, { deleted: 'c1' });
+  assert.deepStrictEqual(
+    store.concepts.map((c) => c.id),
+    ['c2'],
+    '概念应被移除',
+  );
+  assert.deepStrictEqual(store.papers.a.conceptIds, ['c2'], '论文 conceptIds 应同步清理');
+  assert.ok(saved, 'save should be called');
+  const r404 = await call(port, 'DELETE', '/api/concepts/c1');
+  assert.strictEqual(r404.status, 404, '再删一次 → 404');
+  server.close();
+});
+
+test('GET /api/topics 返回主题字典 + 计数（按 count 倒序）', async () => {
+  const store = {
+    version: 2,
+    tags: [],
+    topics: ['推理', '视觉', '对齐'],
+    folders: [],
+    concepts: [],
+    papers: {
+      a: { id: 'a', title: 'A', topics: ['推理', '视觉'], status: 'ready' },
+      b: { id: 'b', title: 'B', topics: ['推理'], status: 'ready' },
+    },
+  };
+  const router = createApiRouter(baseCtx(store));
+  const server = await startServer(router.handle);
+  const port = server.address().port;
+  const r = await call(port, 'GET', '/api/topics');
+  assert.strictEqual(r.status, 200);
+  assert.deepStrictEqual(r.json.data, [
+    { name: '推理', count: 2 },
+    { name: '视觉', count: 1 },
+    { name: '对齐', count: 0 },
+  ]);
+  server.close();
+});
+
+test('GET /api/papers sort=titleAsc / titleDesc 按标题排序', async () => {
+  const store = {
+    version: 2,
+    tags: [],
+    topics: [],
+    folders: [],
+    concepts: [],
+    papers: {
+      a: { id: 'a', title: 'Gamma', status: 'ready', addedAt: 1 },
+      b: { id: 'b', title: 'Alpha', status: 'ready', addedAt: 2 },
+      c: { id: 'c', title: 'Beta', status: 'ready', addedAt: 3 },
+    },
+  };
+  const router = createApiRouter(baseCtx(store));
+  const server = await startServer(router.handle);
+  const port = server.address().port;
+  const asc = await call(port, 'GET', '/api/papers?sort=titleAsc');
+  assert.deepStrictEqual(
+    asc.json.data.map((p) => p.title),
+    ['Alpha', 'Beta', 'Gamma'],
+  );
+  const desc = await call(port, 'GET', '/api/papers?sort=titleDesc');
+  assert.deepStrictEqual(
+    desc.json.data.map((p) => p.title),
+    ['Gamma', 'Beta', 'Alpha'],
+  );
+  server.close();
+});
+
+test('GET /api/papers sort=yearDesc 无年份论文沉底', async () => {
+  const store = {
+    version: 2,
+    tags: [],
+    topics: [],
+    folders: [],
+    concepts: [],
+    papers: {
+      a: { id: 'a', title: 'A', year: '2020', status: 'ready', addedAt: 1 },
+      b: { id: 'b', title: 'B', year: '2024', status: 'ready', addedAt: 2 },
+      c: { id: 'c', title: 'C', status: 'ready', addedAt: 3 }, // 无年份
+    },
+  };
+  const router = createApiRouter(baseCtx(store));
+  const server = await startServer(router.handle);
+  const port = server.address().port;
+  const r = await call(port, 'GET', '/api/papers?sort=yearDesc');
+  assert.deepStrictEqual(
+    r.json.data.map((p) => p.id),
+    ['b', 'a', 'c'],
+    'yearDesc：新→旧，无年份沉底',
+  );
+  server.close();
+});
+
+test('GET /api/papers sort=conceptDesc 按概念数倒序', async () => {
+  const store = {
+    version: 2,
+    tags: [],
+    topics: [],
+    folders: [],
+    concepts: [],
+    papers: {
+      a: { id: 'a', title: 'A', conceptIds: ['c1', 'c2'], status: 'ready', addedAt: 1 },
+      b: { id: 'b', title: 'B', conceptIds: ['c1'], status: 'ready', addedAt: 2 },
+      c: { id: 'c', title: 'C', conceptIds: [], status: 'ready', addedAt: 3 },
+    },
+  };
+  const router = createApiRouter(baseCtx(store));
+  const server = await startServer(router.handle);
+  const port = server.address().port;
+  const r = await call(port, 'GET', '/api/papers?sort=conceptDesc');
+  assert.deepStrictEqual(
+    r.json.data.map((p) => p.id),
+    ['a', 'b', 'c'],
+  );
+  server.close();
+});
+
+test('GET /api/papers sort=progressDesc 按阅读进度倒序', async () => {
+  const store = {
+    version: 2,
+    tags: [],
+    topics: [],
+    folders: [],
+    concepts: [],
+    papers: {
+      a: { id: 'a', title: 'A', readProgress: { page: 5, total: 10 }, status: 'ready', addedAt: 1, updatedAt: 1 },
+      b: { id: 'b', title: 'B', readProgress: { page: 9, total: 10 }, status: 'ready', addedAt: 2, updatedAt: 2 },
+      c: { id: 'c', title: 'C', readProgress: null, status: 'ready', addedAt: 3, updatedAt: 3 },
+    },
+  };
+  const router = createApiRouter(baseCtx(store));
+  const server = await startServer(router.handle);
+  const port = server.address().port;
+  const r = await call(port, 'GET', '/api/papers?sort=progressDesc');
+  assert.deepStrictEqual(
+    r.json.data.map((p) => p.id),
+    ['b', 'a', 'c'],
+    '进度 0.9 > 0.5 > 无进度',
+  );
+  server.close();
+});
+
+test('GET /api/papers status / readStatus / starred=1 筛选', async () => {
+  const store = {
+    version: 2,
+    tags: [],
+    topics: [],
+    folders: [],
+    concepts: [],
+    papers: {
+      a: { id: 'a', title: 'A', status: 'ready', readStatus: 'reading', starred: true, addedAt: 1 },
+      b: { id: 'b', title: 'B', status: 'pending', readStatus: 'unread', starred: false, addedAt: 2 },
+      c: { id: 'c', title: 'C', status: 'ready', readStatus: 'reading', starred: true, addedAt: 3 },
+    },
+  };
+  const router = createApiRouter(baseCtx(store));
+  const server = await startServer(router.handle);
+  const port = server.address().port;
+  const byStatus = await call(port, 'GET', '/api/papers?status=ready');
+  assert.deepStrictEqual(
+    byStatus.json.data.map((p) => p.id).sort(),
+    ['a', 'c'],
+  );
+  const byRead = await call(port, 'GET', '/api/papers?readStatus=reading');
+  assert.deepStrictEqual(
+    byRead.json.data.map((p) => p.id).sort(),
+    ['a', 'c'],
+  );
+  const byStar = await call(port, 'GET', '/api/papers?starred=1');
+  assert.deepStrictEqual(
+    byStar.json.data.map((p) => p.id).sort(),
+    ['a', 'c'],
+  );
+  // 组合：status=pending + starred=1 → 空
+  const combo = await call(port, 'GET', '/api/papers?status=pending&starred=1');
+  assert.deepStrictEqual(combo.json.data, []);
+  server.close();
+});
+
+test('GET /api/search ?filters= 正文词与 q 元数据子集取交集', async () => {
+  const ctx = realCtx();
+  try {
+    await ctx.manager._dbMigrate();
+    await ctx.manager.ensureRegistry();
+    const store = await ctx.manager.getSpaceStore('default');
+    store.papers.pA = {
+      id: 'pA',
+      filename: 'a.pdf',
+      title: 'Attention Paper',
+      authors: ['Alice'],
+      year: 2024,
+      status: 'ready',
+      tags: ['llm'],
+      topics: [],
+    };
+    store.papers.pB = {
+      id: 'pB',
+      filename: 'b.pdf',
+      title: 'CNN Paper',
+      authors: ['Bob'],
+      year: 2020,
+      status: 'ready',
+      tags: [],
+      topics: [],
+    };
+    await ctx.manager.saveSpaceStore('default', store);
+    const ts = ctx.manager.textStoreBinder('default');
+    await ts.save('pA', 'Attention mechanisms in transformers.');
+    await ts.save('pB', 'Attention in convolutional networks.');
+
+    const server = await startServer(createApiRouter(ctx).handle);
+    const port = server.address().port;
+    // filters=attention 为正文词；q=tag:llm 提供元数据子集 → 仅 pA
+    const r = await call(port, 'GET', '/api/search?q=tag%3Allm&filters=attention');
+    assert.strictEqual(r.status, 200);
+    assert.strictEqual(r.json.data.bodyWord, 'attention');
+    assert.strictEqual(r.json.data.total, 1, '正文词 ∩ tag:llm 子集 = 仅 pA');
+    assert.strictEqual(r.json.data.results[0].id, 'pA');
+    server.close();
+  } finally {
+    fs.rmSync(ctx._root, { recursive: true, force: true });
+  }
+});
+
+test('GET /api/search q 内 body: 前缀走全文路径（无元数据约束时全量）', async () => {
+  const ctx = realCtx();
+  try {
+    await ctx.manager._dbMigrate();
+    await ctx.manager.ensureRegistry();
+    const store = await ctx.manager.getSpaceStore('default');
+    store.papers.pA = {
+      id: 'pA',
+      filename: 'a.pdf',
+      title: 'Attention Paper',
+      authors: ['Alice'],
+      year: 2024,
+      status: 'ready',
+      tags: ['llm'],
+      topics: [],
+    };
+    store.papers.pB = {
+      id: 'pB',
+      filename: 'b.pdf',
+      title: 'CNN Paper',
+      authors: ['Bob'],
+      year: 2020,
+      status: 'ready',
+      tags: [],
+      topics: [],
+    };
+    await ctx.manager.saveSpaceStore('default', store);
+    const ts = ctx.manager.textStoreBinder('default');
+    await ts.save('pA', 'Attention mechanisms in transformers.');
+    await ts.save('pB', 'Attention in convolutional networks.');
+
+    const server = await startServer(createApiRouter(ctx).handle);
+    const port = server.address().port;
+    // q 内含 body: 词 + 元数据字段：tag:llm body:attention → 仅 pA
+    const r = await call(port, 'GET', '/api/search?q=' + encodeURIComponent('tag:llm body:attention'));
+    assert.strictEqual(r.status, 200);
+    assert.strictEqual(r.json.data.bodyWord, 'attention');
+    assert.strictEqual(r.json.data.total, 1);
+    assert.strictEqual(r.json.data.results[0].id, 'pA');
+    // 纯 body: 查询（无元数据约束）→ 两篇全中
+    const r2 = await call(port, 'GET', '/api/search?q=' + encodeURIComponent('body:attention'));
+    assert.strictEqual(r2.status, 200);
+    assert.strictEqual(r2.json.data.total, 2);
+    server.close();
+  } finally {
+    fs.rmSync(ctx._root, { recursive: true, force: true });
+  }
+});
+
+test('POST /api/scan 返回 scanner.scanSpace 结果（按当前空间）', async () => {
+  const store = { version: 2, tags: [], topics: [], folders: [], concepts: [], settings: {}, papers: {} };
+  let scannedSpace = null;
+  const ctx = baseCtx(store);
+  ctx.scanner.scanSpace = async (spaceId) => {
+    scannedSpace = spaceId;
+    return { added: 3, scanned: 5 };
+  };
+  const router = createApiRouter(ctx);
+  const server = await startServer(router.handle);
+  const port = server.address().port;
+  const r = await call(port, 'POST', '/api/scan');
+  assert.strictEqual(r.status, 200);
+  assert.strictEqual(r.json.ok, true);
+  assert.strictEqual(r.json.data.added, 3);
+  assert.strictEqual(r.json.data.scanned, 5);
+  assert.strictEqual(scannedSpace, 'default', '应扫描 active 空间');
+  server.close();
+});
+
+test('GET /api/ai/models 无 baseURL → config 静态兜底（含 store.settings.ai 覆盖）', async () => {
+  const store = {
+    version: 2,
+    tags: [],
+    topics: [],
+    folders: [],
+    concepts: [],
+    settings: { ai: { model: 'store-model' } },
+    papers: {},
+  };
+  const ctx = baseCtx(store, async () => {}, {
+    config: { ai: { model: 'cfg-model', extraModels: ['cfg-extra'] } },
+  });
+  const router = createApiRouter(ctx);
+  const server = await startServer(router.handle);
+  const port = server.address().port;
+  const r = await call(port, 'GET', '/api/ai/models');
+  assert.strictEqual(r.status, 200);
+  assert.strictEqual(r.json.ok, true);
+  assert.strictEqual(r.json.data.source, 'config', '无 baseURL 应走 config 兜底');
+  assert.strictEqual(r.json.data.default, 'store-model', 'store.settings.ai.model 覆盖 config');
+  const ids = r.json.data.models.map((m) => m.id);
+  assert.ok(ids.includes('store-model'));
+  assert.ok(ids.includes('cfg-extra'), 'config.extraModels 应并入候选');
+  server.close();
+});
+
+test('GET /api/ai/models 上游不可达（127.0.0.1:1）→ 回退 config 候选不报错', async () => {
+  const store = { version: 2, tags: [], topics: [], folders: [], concepts: [], settings: {}, papers: {} };
+  const ctx = baseCtx(store, async () => {}, {
+    config: { ai: { baseURL: 'http://127.0.0.1:1/v1', apiKey: 'sk-x', model: 'm1' } },
+  });
+  const router = createApiRouter(ctx);
+  const server = await startServer(router.handle);
+  const port = server.address().port;
+  const r = await call(port, 'GET', '/api/ai/models');
+  assert.strictEqual(r.status, 200, '上游失败不应 500（listModels 自带兜底）');
+  assert.strictEqual(r.json.data.source, 'config');
+  assert.deepStrictEqual(r.json.data.models, [{ id: 'm1' }]);
+  server.close();
+});
+
+test('GET /api/papers/:id/chat 缺 message → 400；论文不存在 → 404（不进入 SSE）', async () => {
+  const store = {
+    version: 2,
+    tags: [],
+    topics: [],
+    folders: [],
+    concepts: [],
+    settings: {},
+    papers: { p1: { id: 'p1', title: 'T', status: 'ready', chat: [] } },
+  };
+  const router = createApiRouter(baseCtx(store));
+  const server = await startServer(router.handle);
+  const port = server.address().port;
+  const r = await call(port, 'GET', '/api/papers/p1/chat');
+  assert.strictEqual(r.status, 400);
+  assert.strictEqual(r.json.ok, false);
+  assert.ok(r.json.error.includes('empty message'));
+  const r2 = await call(port, 'GET', '/api/papers/p1/chat?message=%20%20');
+  assert.strictEqual(r2.status, 400, '纯空白 message 同样 400');
+  const r404 = await call(port, 'GET', '/api/papers/nope/chat?message=hi');
+  assert.strictEqual(r404.status, 404);
+  server.close();
+});
+
+test('?space=no-such 容错回退 active 空间', async () => {
+  const store = {
+    version: 2,
+    tags: [],
+    topics: [],
+    folders: [],
+    concepts: [],
+    settings: {},
+    papers: { a: { id: 'a', title: '默认空间论文', status: 'ready', addedAt: 1 } },
+  };
+  const router = createApiRouter(baseCtx(store));
+  const server = await startServer(router.handle);
+  const port = server.address().port;
+  const r = await call(port, 'GET', '/api/papers?space=no-such');
+  assert.strictEqual(r.status, 200, '不存在的空间不应报错');
+  assert.strictEqual(r.json.data.length, 1);
+  assert.strictEqual(r.json.data[0].id, 'a', '应回退到 active 空间的论文');
+  server.close();
+});
+

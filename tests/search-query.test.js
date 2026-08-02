@@ -225,3 +225,101 @@ test('parseToPanel: OR 分支回退原文到 text', () => {
   const panel = parseToPanel('(tag:moe OR tag:icl)');
   assert.strictEqual(panel.text, '(tag:moe OR tag:icl)');
 });
+
+// ==================== 笔记卡片 haystack（noteCards 可搜索） ====================
+
+test('裸词命中 noteCards 卡片 title/body（全局 haystack 合并）', () => {
+  const papers = [
+    P({ id: 'nc1', noteCards: [{ type: 'qa', title: 'Q: zyk-token 是什么', body: '解释正文' }] }),
+    P({ id: 'nc2' }),
+  ];
+  const r = applyMetadataQuery(papers, parseSearchQuery('zyk-token'));
+  assert.deepStrictEqual(r.map((p) => p.id), ['nc1']);
+});
+
+test('notes: 字段同时命中旧 notes 文本与 noteCards 内容', () => {
+  const papers = [
+    P({ id: 'old', notes: '旧文本里的 uniqkw-old', noteCards: [] }),
+    P({ id: 'new', notes: '', noteCards: [{ type: 'manual', title: 't', body: '卡片里的 uniqkw-new' }] }),
+    P({ id: 'none', notes: '' }),
+  ];
+  const r1 = applyMetadataQuery(papers, parseSearchQuery('notes:uniqkw-old'));
+  assert.deepStrictEqual(r1.map((p) => p.id), ['old']);
+  const r2 = applyMetadataQuery(papers, parseSearchQuery('notes:uniqkw-new'));
+  assert.deepStrictEqual(r2.map((p) => p.id), ['new']);
+});
+
+test('notes:.（高级面板 hasNotes）在仅有 noteCards 时也命中', () => {
+  const papers = [
+    P({ id: 'with', notes: '', noteCards: [{ type: 'skeleton', title: '研究问题', body: 'x' }] }),
+    P({ id: 'without', notes: '' }),
+    P({ id: 'legacy', notes: '旧笔记', noteCards: [] }),
+  ];
+  const r = applyMetadataQuery(papers, parseSearchQuery('notes:.'));
+  assert.deepStrictEqual(r.map((p) => p.id).sort(), ['legacy', 'with']);
+});
+
+test('noteCards 里非对象条目不炸（自愈容错）', () => {
+  const papers = [P({ id: 'bad', noteCards: [null, 'x', { body: 'validkw' }] })];
+  const r = applyMetadataQuery(papers, parseSearchQuery('notes:validkw'));
+  assert.deepStrictEqual(r.map((p) => p.id), ['bad']);
+});
+
+// ==================== 追加：year 解析边界 / 面板构建与回填 / tokenizer 边界 ====================
+
+test('parseYearValue：不完整比较符与垃圾输入返回 null', () => {
+  assert.strictEqual(parseYearValue('>'), null);
+  assert.strictEqual(parseYearValue('<'), null);
+  assert.strictEqual(parseYearValue('<='), null);
+  assert.strictEqual(parseYearValue('>='), null);
+  assert.strictEqual(parseYearValue('abcd'), null);
+  assert.strictEqual(parseYearValue('2024-'), null, '不完整范围 → null');
+  assert.strictEqual(parseYearValue(''), null);
+  assert.strictEqual(parseYearValue(null), null);
+  // 三位年份不匹配 \d{4} → null
+  assert.strictEqual(parseYearValue('202'), null);
+});
+
+test('buildDslFromPanel：hasNotes→notes:.、scope=body 无词→in:body、单侧年份', () => {
+  assert.strictEqual(buildDslFromPanel({ hasNotes: true }), 'notes:.');
+  assert.strictEqual(buildDslFromPanel({ scope: 'body' }), 'in:body');
+  assert.strictEqual(buildDslFromPanel({ scope: 'body', bodyText: '  ' }), 'in:body', '空白 bodyText 视同无词');
+  assert.strictEqual(buildDslFromPanel({ yearFrom: 2020 }), 'year:>=2020');
+  assert.strictEqual(buildDslFromPanel({ yearTo: 2024 }), 'year:<=2024');
+});
+
+test('parseToPanel：notes:.→hasNotes、author 回填、year 等值填满 From/To', () => {
+  const p1 = parseToPanel('notes:.');
+  assert.strictEqual(p1.hasNotes, true);
+  assert.strictEqual(p1.notes, '');
+  const p2 = parseToPanel('author:vaswani');
+  assert.strictEqual(p2.author, 'vaswani');
+  const p3 = parseToPanel('year:2020');
+  assert.strictEqual(p3.yearFrom, 2020, 'year 等值回填 yearFrom');
+  assert.strictEqual(p3.yearTo, 2020, 'year 等值回填 yearTo');
+  const p4 = parseToPanel('year:<2022');
+  assert.strictEqual(p4.yearFrom, '', '严格小于无法回填到 From/To');
+  assert.strictEqual(p4.yearTo, '');
+});
+
+test('tokenize：- 后接括号不构成排除；未闭合引号容错', () => {
+  const t = tokenize('-(a b)');
+  assert.strictEqual(t[0].type, 'word', '- 后接 ( 不构成排除前缀，- 本身成裸词');
+  assert.strictEqual(t[0].value, '-');
+  assert.strictEqual(t[0].exclude, false);
+  assert.strictEqual(t[1].type, 'lparen');
+  assert.strictEqual(t[2].value, 'a');
+  // 未闭合引号：读到行尾，按 phrase 收尾不抛错
+  const u = tokenize('"未闭合短语');
+  assert.strictEqual(u.length, 1);
+  assert.strictEqual(u[0].type, 'phrase');
+  assert.strictEqual(u[0].value, '未闭合短语');
+});
+
+test('evalAst：OR 组内 -tag:moe 排除（非排除项命中即入）', () => {
+  const r = parseSearchQuery('(tag:rl OR -tag:moe)');
+  assert.strictEqual(r.metadata.hasOr, true, 'OR 组走 AST 求值路径');
+  const out = applyMetadataQuery(LIST, r).map((p) => p.id);
+  // a/b 无 moe → -tag:moe 命中；d 有 rl；c 只有 moe → 两边都不满足被排除
+  assert.deepStrictEqual(out, ['a', 'b', 'd']);
+});

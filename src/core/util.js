@@ -305,4 +305,6 @@ module.exports = {
   safeFilename,
   buildPaperFilename,
   proxyFetchJson,
+  parseJsonLenient,
+  decodeChunked,
 };

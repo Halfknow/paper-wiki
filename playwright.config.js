@@ -26,6 +26,10 @@ module.exports = defineConfig({
     env: {
       PORT: '9999',
       NODE_ENV: 'test',
+      // 显式钉住 papers 根：webServer.env 默认继承 process.env，容器里 PAPERS_ROOT=/papers（生产挂载）
+      // 会漏进 e2e 服务进程 → 扫描/写库污染真实论文目录（曾因此把 fixture 写进生产根）。
+      // 永远用仓库内 papers/（e2e-bootstrap 的 fixture 也放这里）。
+      PAPERS_ROOT: require('path').join(__dirname, 'papers'),
       // v3：需要 PostgreSQL。本地用 docker-compose 的 postgres-test 服务（端口 15432）：
       //   `docker compose --profile test up -d postgres-test`
       // CI 由 services.postgres 提供并经 E2E_DATABASE_URL 覆盖。

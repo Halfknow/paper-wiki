@@ -58,10 +58,18 @@ const state = {
   listWidth: Number(localStorage.getItem('pw-list-width')) || 410,
 };
 
-// 笔记编辑的单一状态（模块级），避免每次 renderDetail/renderTabBody 重建局部 saveTimer
-// 导致旧定时器里那次 patch 永不执行、切论文时丢失最后 800ms 的输入。
-// 结构：{ id, el, dirty, saveTimer, hint }
+// 笔记的单一状态（模块级）：{ id, panel }。panel 是 NotesPanel 实例（见下方「AI 笔记卡片」节），
+// 每次进入笔记 tab 重建。renderDetail/轮询重建前用 panel.hasOpenEditor() 判定跳过；
+// flushPendingNotes 提交未完成的内联编辑，避免切论文/切 tab 丢输入（与旧 textarea 版语义一致）。
 let notesState = null;
+
+/** 立即提交笔记 tab 里未完成的内联编辑（切论文/切 tab/重建前调用）。
+ *  空的新卡草稿直接丢弃（discardEmptyNew），防止空草稿卡死笔记 tab。 */
+async function flushPendingNotes() {
+  const ns = notesState;
+  if (!ns || !ns.panel) return;
+  try { await ns.panel.commitOpenEditor({ discardEmptyNew: true }); } catch { /* ignore */ }
+}
 
 // AI 聊天的单一状态（模块级）。与 notesState 同理：定时 refresh() 会调 renderDetail 全量重建
 // 详情面板（含 AI 聊天 tab），若不保存草稿/忙碌态，用户正打的字会被清空、回复会追加到已被
@@ -73,27 +81,6 @@ let notesState = null;
 //             且追加目标用实时 document.getElementById 重查（绝不用 stale 闭包引用）
 // 参考：现代 LLM 对话 UI 最佳实践——optimistic append、请求级 id 定位、发送期禁用。
 let chatState = null;
-
-/** 立即落盘待保存的笔记。在切论文/切 tab/renderDetail 重建前调用。
- *  返回的 Promise 调用方可 await 也可不 await（fire-and-forget 也安全：值已先从 DOM 读出）。 */
-async function flushPendingNotes() {
-  const ns = notesState;
-  if (!ns || !ns.dirty) return;
-  const value = ns.el.value; // 先读出最新内容，避免 DOM 被重建后读空
-  clearTimeout(ns.saveTimer);
-  ns.saveTimer = null;
-  ns.dirty = false;          // 标记已提交，防止重入重复写
-  const hint = ns.hint;
-  try {
-    await PATCH('/api/papers/' + encodeURIComponent(ns.id), { notes: value });
-    if (hint) hint.textContent = '已保存 · ' + new Date().toLocaleTimeString();
-  } catch (e) {
-    // 落盘失败：恢复 dirty 以便下次再试，并提示
-    ns.dirty = true;
-    if (hint) hint.textContent = '保存失败，将重试';
-    console.warn('[PaperWiki] notes flush failed', e && e.message);
-  }
-}
 
 const $ = (id) => document.getElementById(id);
 const PALETTE = window.READER_PALETTE || ['#4f46e5', '#7c3aed', '#0891b2', '#d97706', '#db2777', '#2563eb', '#16a34a', '#475569'];
@@ -146,9 +133,23 @@ function starBadge(rating) {
   return r ? `<span class="star-badge"><i class="star on">${starSvg(true)}</i>${r}</span>` : '';
 }
 
+/** marked(CommonMark) 对 CJK 语境的加粗解析兜底：
+ *  「的**“引用”**的」「的**$公式$**的」中，** 紧贴中文引号/标点时按 CommonMark 侧翼规则
+ *  （定界符后接标点则前邻必须是空白/标点）被判为非法 → 原样输出字面 **（marked 14 已复现）。
+ *  在 sanitize 之后、KaTeX 之前把残留的字面 **...** 转成 <strong>：
+ *  - 跳过 <pre>/<code> 段（代码里的 ** 保持字面）；
+ *  - 内容不跨标签/换行（[^<\n]），避免吞掉 HTML 结构或跨段落误匹配；
+ *  - 必须在 KaTeX 替换之前执行（否则 $x$ 先变成 <span> 会阻断 [^<] 匹配）。 */
+function fixCjkStrong(html) {
+  return html
+    .split(/(<(?:pre|code)(?:\s[^>]*)?>[\s\S]*?<\/(?:pre|code)>)/g)
+    .map((seg, i) => (i % 2 ? seg : seg.replace(/\*\*(\S(?:[^<\n]*?\S)?)\*\*/g, '<strong>$1</strong>')))
+    .join('');
+}
 function renderMd(md) {
   const raw = marked.parse(md || '', { breaks: true });
   let html = DOMPurify.sanitize(raw);
+  html = fixCjkStrong(html);
   html = html.replace(/\$\$([\s\S]+?)\$\$/g, (_, e) => katex.renderToString(e, { displayMode: true, throwOnError: false }));
   html = html.replace(/\$([^$\n]+?)\$/g, (_, e) => katex.renderToString(e, { displayMode: false, throwOnError: false }));
   return html;
@@ -230,10 +231,14 @@ function streamChatFetch(paperId, message, { onToken, onDone, onFail, regenerate
   if (regenerate) params.set('regenerate', '1');
   // @ 引用论文（逗号分隔透传）
   if (Array.isArray(extraIds) && extraIds.length) params.set('extraIds', extraIds.join(','));
-  // 透传模型参数（thinking/temperature/topP/maxTokens）
+  // 透传模型参数（thinking=enabled/disabled 字符串；其余为数值）
   const cp = chatParams || getChatParams();
   for (const k of ['thinking', 'temperature', 'topP', 'maxTokens']) {
-    if (cp[k] != null && cp[k] !== '' && !Number.isNaN(cp[k])) params.set(k, String(cp[k]));
+    const v = cp[k];
+    if (v == null || v === '') continue;
+    // thinking 是字符串（enabled/disabled），其余是数值
+    if (k === 'thinking') { if (v === 'enabled' || v === 'disabled') params.set(k, v); continue; }
+    if (!Number.isNaN(v)) params.set(k, String(v));
   }
   // Phase 2 模型切换：透传选中模型（空=默认）
   const selModel = typeof getSelectedModel === 'function' ? getSelectedModel() : '';
@@ -431,12 +436,19 @@ async function refresh() {
     // 列表里刷新当前项的概要
     const fresh = state.papers.find((p) => p.id === state.current);
     if (fresh && state.detail) {
+      const prevUpdatedAt = state.detail.updatedAt;
       state.detail = { ...state.detail, ...fresh };
       // chat / notes tab：定时刷新不重建详情面板。renderDetail 会 innerHTML 全量重建，
       // 销毁 #chat-list / 笔记 textarea —— 每 10s 打断阅读（重置滚动 / 闪烁流式占位 / 抢焦点）。
       // 这两个 tab 的数据由专属 handler 维护（聊天：清空/编辑/重新生成 + 流式增量；笔记：本地编辑+防抖落盘），
       // 无需定时全量刷新；detail-head 的状态变化（如总结完成）会在切 tab / 重开论文时自然反映（state.detail 已更新）。
       if (state.tab === 'chat' || state.tab === 'notes') return;
+      // summary/info tab：数据没变就不重建。每 10s 的 innerHTML 全量重建会摧毁用户正在进行的
+      // 文本选择（标题/总结「无法选中复制」的根因）——updatedAt 不变说明服务端无变化，跳过重建。
+      if (fresh.updatedAt === prevUpdatedAt) return;
+      // 数据变了但用户正拖着选择文本：同样推迟重建（下一轮 refresh 再试），优先保住选择。
+      const sel = document.getSelection();
+      if (sel && !sel.isCollapsed && $('detail').contains(sel.anchorNode)) return;
       renderDetail();
     }
   }
@@ -944,12 +956,9 @@ function renderDetail() {
     const typing = chatInput && (document.activeElement === chatInput || chatState.draft);
     if (chatState.busy || typing) return; // 不重建
   }
-  // notes tab 同理：用户正在编辑笔记时跳过重建（d.innerHTML 会销毁 textarea → 失焦 + 未落盘的内容丢失）。
-  // notesState.dirty 标记有未保存的输入；notesState.id === p.id 确保是同一篇论文。
-  if (state.tab === 'notes' && notesState && notesState.id === p.id) {
-    const notesEdit = document.getElementById('notes-edit');
-    const typing = notesEdit && document.activeElement === notesEdit;
-    if (typing || notesState.dirty) return; // 不重建，保留 textarea + 焦点 + 内容
+  // notes tab 同理：用户正在内联编辑卡片时跳过重建（d.innerHTML 会销毁编辑中的 textarea → 失焦 + 内容丢失）。
+  if (state.tab === 'notes' && notesState && notesState.id === p.id && notesState.panel && notesState.panel.hasOpenEditor()) {
+    return; // 不重建，保留编辑态 + 焦点
   }
   const authorsStr = (p.authors && p.authors.length) ? p.authors.join(', ') : '未知作者';
   // tail 拼接：year / category badge / arXiv 链接 / 来源徽标，各段之间用 · 分隔
@@ -1087,8 +1096,371 @@ function renderDetail() {
   renderTabBody();
 }
 
-function renderTabBody() {
-  const p = state.detail;
+// ==================== AI 笔记卡片（NotesPanel） ====================
+// 笔记 = 结构化卡片流（type: qa 问答 / skeleton 骨架 / manual 自由），存 papers.noteCards（jsonb）。
+// 生产线：AI 聊天 assistant 消息一键「存入笔记」（自动带上被回答的问题作标题）+ AI 六段式骨架生成。
+// 旧 notes TEXT：首开笔记时自动按 ## 拆成 manual 卡迁移（幂等，toast 告知），此后该字段退役。
+// 本组件同时挂载于：详情 tab 笔记页（renderTabBody notes 分支）与阅读器抽屉笔记页（window.NotesPanel 桥）。
+
+const NOTE_CARD_TYPES = {
+  qa: { icon: '💬', label: '问答' },
+  skeleton: { icon: '✨', label: '骨架' },
+  manual: { icon: '📝', label: '笔记' },
+};
+const NC_ACT_SVGS = {
+  edit: '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.8 2.8 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z"/></svg>',
+  copy: '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>',
+  up: '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg>',
+  down: '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>',
+  delete: '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>',
+};
+
+function newNoteCardId() {
+  return 'nc-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+}
+
+/** 前端镜像：旧 notes TEXT → 按 ^## 拆成 manual 卡（与 src/core/notes.splitMarkdownToCards 同规则，改动要同步）。 */
+function splitLegacyNotesToCards(md) {
+  const text = String(md || '').trim();
+  if (!text) return [];
+  const now = Date.now();
+  const sections = [];
+  const preamble = [];
+  let cur = null;
+  for (const line of text.split('\n')) {
+    const m = line.match(/^##\s+(.+?)\s*$/);
+    if (m) {
+      if (cur) sections.push(cur);
+      cur = { title: m[1], bodyLines: [] };
+    } else if (cur) cur.bodyLines.push(line);
+    else preamble.push(line);
+  }
+  if (cur) sections.push(cur);
+  const pre = preamble.join('\n').trim();
+  const mk = (title, body) => ({ id: newNoteCardId(), type: 'manual', title, body, createdAt: now, updatedAt: now });
+  if (!sections.length) return [mk('笔记', text)];
+  return sections.map((s, i) => mk(s.title, (i === 0 && pre ? pre + '\n\n' : '') + s.bodyLines.join('\n').trim()));
+}
+
+/** 跨面板同步（详情 tab 与阅读器抽屉可能同时开同篇论文的笔记）；origin 面板除外（它自己会渲染）。 */
+function syncNotePanels(pid, cards, origin) {
+  if (notesState && notesState.id === pid && notesState.panel && notesState.panel !== origin) {
+    notesState.panel.setCards(cards);
+  }
+  const rp = window._readerNotesPanel;
+  if (rp && rp !== origin && rp.paperId === pid) rp.setCards(cards);
+}
+
+/** 把一轮聊天问答存为问答卡（详情 tab + 阅读器抽屉共用，经 window 桥暴露给 reader.js）。
+ *  question 取被回答的最近 user 消息；title = 「Q: 问题截断」，meta 记录来源。 */
+async function saveQaCardToNotes(paperId, { question, answer, mi }) {
+  let cards;
+  if (state.detail && state.detail.id === paperId && Array.isArray(state.detail.noteCards)) {
+    cards = state.detail.noteCards.slice();
+  } else {
+    const r = await jget('/api/papers/' + encodeURIComponent(paperId));
+    cards = r.data && Array.isArray(r.data.noteCards) ? r.data.noteCards.slice() : [];
+  }
+  const q = String(question || '').replace(/\s+/g, ' ').trim();
+  const now = Date.now();
+  cards.push({
+    id: newNoteCardId(),
+    type: 'qa',
+    title: q ? 'Q: ' + truncateChatTitle(q, 60) : '问答笔记',
+    body: String(answer || ''),
+    meta: { ...(q ? { question: q } : {}), ...(mi != null ? { mi } : {}) },
+    createdAt: now,
+    updatedAt: now,
+  });
+  const r2 = await PATCH('/api/papers/' + encodeURIComponent(paperId), { noteCards: cards });
+  if (!r2 || !r2.ok) { toast((r2 && r2.error) || '存入笔记失败', 'error'); return false; }
+  const next = Array.isArray(r2.data.noteCards) ? r2.data.noteCards : cards;
+  if (state.detail && state.detail.id === paperId) state.detail.noteCards = next;
+  syncNotePanels(paperId, next, null);
+  toast('已存入笔记');
+  return true;
+}
+
+/** 笔记卡片面板：卡片列表渲染 + 内联编辑/删除/排序/新增 + AI 骨架生成 + 旧笔记迁移。
+ *  用法：const panel = new NotesPanel(containerEl, { showGenerate }); await panel.load(paperId)。 */
+function NotesPanel(container, opts = {}) {
+  const showGenerate = opts.showGenerate !== false;
+  let paperId = null;
+  let cards = [];
+  let editingId = null; // 内联编辑中的卡 id；'__new__' = 顶部新建卡
+  let newDraft = null;  // 新建卡草稿 { title, body }
+  let busyGen = false;
+
+  const panel = {
+    load,
+    setCards,
+    hasOpenEditor: () => editingId != null,
+    commitOpenEditor,
+    get paperId() {
+      return paperId;
+    },
+  };
+
+  container.addEventListener('click', onAction);
+
+  function hint(t) {
+    const el = container.querySelector('.notes-hint');
+    if (el) el.textContent = t || '';
+  }
+  function typeMeta(c) {
+    return NOTE_CARD_TYPES[c.type] || NOTE_CARD_TYPES.manual;
+  }
+  function displayTitle(c) {
+    return c.title || '(无标题)';
+  }
+
+  async function load(pid) {
+    paperId = pid;
+    editingId = null;
+    newDraft = null;
+    container.innerHTML = '<div class="notes-empty">加载笔记…</div>';
+    let data = null;
+    try {
+      data = (await jget('/api/papers/' + encodeURIComponent(pid))).data;
+    } catch {
+      /* ignore */
+    }
+    cards = data && Array.isArray(data.noteCards) ? data.noteCards : [];
+    // 旧 notes TEXT 自动迁移：noteCards 为空且 notes 非空 → 按 ## 拆卡 PATCH（幂等，只发生一次）
+    const legacy = data && typeof data.notes === 'string' ? data.notes.trim() : '';
+    if (!cards.length && legacy) {
+      const converted = splitLegacyNotesToCards(data.notes);
+      if (converted.length) {
+        const r = await PATCH('/api/papers/' + encodeURIComponent(pid), { noteCards: converted });
+        if (r && r.ok) {
+          cards = Array.isArray(r.data.noteCards) ? r.data.noteCards : converted;
+          if (state.detail && state.detail.id === pid) state.detail.noteCards = cards;
+          syncNotePanels(pid, cards, panel);
+          toast(`已将旧笔记转换为 ${cards.length} 张卡片`);
+        }
+      }
+    }
+    render();
+  }
+
+  /** 外部同步入口（其它面板/聊天存卡改了同篇笔记）：更新数据；非编辑态下重渲染。 */
+  function setCards(next) {
+    cards = Array.isArray(next) ? next : [];
+    if (editingId == null) render();
+  }
+
+  function render() {
+    const anchors =
+      cards.length >= 4
+        ? `<div class="notes-anchors">${cards
+            .map((c) => `<button type="button" class="notes-anchor" data-nact="jump" data-nc="${c.id}">${typeMeta(c).icon} ${escapeHtml(displayTitle(c))}</button>`)
+            .join('')}</div>`
+        : '';
+    // 新建卡：草稿不在 cards 数组里，编辑卡片要单独渲染到列表顶部（否则点「添加卡片」看似无反应）
+    const isNew = editingId === '__new__';
+    const newCardHtml = isNew
+      ? editHtml({ id: '__new__', type: 'manual', title: (newDraft && newDraft.title) || '', body: (newDraft && newDraft.body) || '' })
+      : '';
+    const listHtml = cards.length
+      ? cards.map(cardHtml).join('')
+      : isNew
+        ? ''
+        : '<div class="notes-empty">还没有笔记卡片。<br/>在 AI 聊天里点回答下的「存入笔记」，或点上方「✨ AI 生成骨架」一键生成论文结构笔记。</div>';
+    container.innerHTML = `<div class="notes-toolbar">
+        ${showGenerate ? `<button type="button" class="notes-tb-btn accent" data-nact="generate" ${busyGen ? 'disabled' : ''}>${busyGen ? '✨ 生成中…' : '✨ AI 生成骨架'}</button>` : ''}
+        <button type="button" class="notes-tb-btn" data-nact="add">＋ 添加卡片</button>
+        <span class="notes-count">${cards.length ? cards.length + ' 张卡片' : ''}</span>
+        <span class="save-hint notes-hint"></span>
+      </div>
+      ${anchors}
+      <div class="notes-cards">${newCardHtml + listHtml}</div>`;
+    container.classList.toggle('editing', editingId != null);
+  }
+
+  function cardHtml(c) {
+    if (editingId === c.id) return editHtml(c);
+    const t = typeMeta(c);
+    return `<div class="note-card nc-${c.type}" data-nc="${c.id}">
+      <div class="nc-head">
+        <span class="nc-type" title="${t.label}卡">${t.icon}</span>
+        <span class="nc-title" title="${escapeHtml(displayTitle(c))}">${escapeHtml(displayTitle(c))}</span>
+        <span class="nc-acts">
+          <button type="button" data-nact="edit" data-nc="${c.id}" title="编辑">${NC_ACT_SVGS.edit}</button>
+          <button type="button" data-nact="copy" data-nc="${c.id}" title="复制 Markdown">${NC_ACT_SVGS.copy}</button>
+          <button type="button" data-nact="up" data-nc="${c.id}" title="上移">${NC_ACT_SVGS.up}</button>
+          <button type="button" data-nact="down" data-nc="${c.id}" title="下移">${NC_ACT_SVGS.down}</button>
+          <button type="button" class="danger" data-nact="delete" data-nc="${c.id}" title="删除">${NC_ACT_SVGS.delete}</button>
+        </span>
+      </div>
+      <div class="nc-body md">${renderMd(c.body || '')}</div>
+    </div>`;
+  }
+
+  function editHtml(c) {
+    const isNew = c.id === '__new__';
+    return `<div class="note-card nc-${c.type} nc-editing" data-nc="${c.id}">
+      <div class="nc-edit">
+        <input type="text" class="nc-edit-title" placeholder="卡片标题…" value="${escapeHtml(c.title || '')}" />
+        <textarea class="nc-edit-body" placeholder="Markdown 正文（支持 $公式$）…">${escapeHtml(c.body || '')}</textarea>
+        <div class="nc-edit-acts">
+          <button type="button" class="notes-tb-btn accent" data-nact="save-edit" data-nc="${c.id}">${isNew ? '添加' : '保存'}</button>
+          <button type="button" class="notes-tb-btn" data-nact="cancel-edit">取消</button>
+        </div>
+      </div>
+    </div>`;
+  }
+
+  /** 落盘当前 cards（PATCH 全量），同步 state.detail 与其它面板。 */
+  async function save() {
+    hint('保存中…');
+    const r = await PATCH('/api/papers/' + encodeURIComponent(paperId), { noteCards: cards });
+    if (!r || !r.ok) {
+      hint('保存失败');
+      toast((r && r.error) || '笔记保存失败', 'error');
+      return false;
+    }
+    cards = Array.isArray(r.data.noteCards) ? r.data.noteCards : cards;
+    if (state.detail && state.detail.id === paperId) state.detail.noteCards = cards;
+    syncNotePanels(paperId, cards, panel);
+    hint('已保存 · ' + new Date().toLocaleTimeString());
+    render();
+    return true;
+  }
+
+  /** 读取编辑态 DOM 并提交（保存/添加）；无编辑态时 no-op。供 save-edit 按钮与 flushPendingNotes 共用。
+   *  opts.discardEmptyNew：离开笔记 tab 的自动提交场景——空的新卡草稿直接丢弃（无内容可丢），
+   *  否则空草稿会保持编辑态 → renderDetail 守卫永远跳过重建 → 笔记 tab 被卡死（真 bug）。 */
+  async function commitOpenEditor(opts = {}) {
+    if (editingId == null) return true;
+    const host = container.querySelector('.note-card.nc-editing');
+    if (!host) {
+      editingId = null;
+      newDraft = null;
+      render();
+      return true;
+    }
+    const title = (host.querySelector('.nc-edit-title') || {}).value || '';
+    const body = (host.querySelector('.nc-edit-body') || {}).value || '';
+    if (!title.trim() && !body.trim()) {
+      if (editingId === '__new__' && opts.discardEmptyNew) {
+        editingId = null;
+        newDraft = null;
+        render();
+        return true;
+      }
+      toast('卡片标题和正文不能都为空', 'error');
+      return false;
+    }
+    const now = Date.now();
+    if (editingId === '__new__') {
+      cards.unshift({ id: newNoteCardId(), type: 'manual', title: title.trim(), body, createdAt: now, updatedAt: now });
+    } else {
+      const c = cards.find((x) => x.id === editingId);
+      if (c) {
+        c.title = title.trim();
+        c.body = body;
+        c.updatedAt = now;
+      }
+    }
+    editingId = null;
+    newDraft = null;
+    return save();
+  }
+
+  async function onAction(e) {
+    const btn = e.target.closest('[data-nact]');
+    if (!btn || !container.contains(btn)) return;
+    const act = btn.dataset.nact;
+    const id = btn.dataset.nc;
+    const idx = cards.findIndex((c) => c.id === id);
+    if (act === 'jump') {
+      const el = container.querySelector('.note-card[data-nc="' + id + '"]');
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        el.classList.remove('flash');
+        void el.offsetWidth; // 重启动画
+        el.classList.add('flash');
+      }
+      return;
+    }
+    if (act === 'add') {
+      if (editingId != null) return;
+      editingId = '__new__';
+      newDraft = { title: '', body: '' };
+      render();
+      const t = container.querySelector('.nc-edit-title');
+      if (t) t.focus();
+      return;
+    }
+    if (act === 'generate') {
+      if (busyGen) return;
+      if (cards.length && !confirm('基于全文生成六段式笔记骨架（研究问题/贡献/方法/实验/局限/可复用），插入到现有笔记开头？')) return;
+      busyGen = true;
+      render();
+      try {
+        const r = await POST('/api/papers/' + encodeURIComponent(paperId) + '/notes/generate');
+        if (r && r.ok && r.data && Array.isArray(r.data.cards) && r.data.cards.length) {
+          cards = r.data.cards.concat(cards);
+          await save();
+          toast(`已生成 ${r.data.cards.length} 张骨架卡`);
+        } else {
+          toast((r && r.error) || '骨架生成失败', 'error');
+        }
+      } catch (e2) {
+        toast('骨架生成失败：' + (e2 && e2.message), 'error');
+      }
+      busyGen = false;
+      render();
+      return;
+    }
+    if (act === 'edit' && idx >= 0) {
+      editingId = id;
+      render();
+      const ta = container.querySelector('.nc-edit-body');
+      if (ta) ta.focus();
+      return;
+    }
+    if (act === 'cancel-edit') {
+      editingId = null;
+      newDraft = null;
+      render();
+      return;
+    }
+    if (act === 'save-edit') {
+      await commitOpenEditor();
+      return;
+    }
+    if (editingId != null) return; // 编辑态下锁定其它卡操作（防重建丢输入）
+    if (act === 'delete' && idx >= 0) {
+      if (!confirm('删除这张卡片？')) return;
+      cards.splice(idx, 1);
+      await save();
+      return;
+    }
+    if ((act === 'up' || act === 'down') && idx >= 0) {
+      const j = act === 'up' ? idx - 1 : idx + 1;
+      if (j < 0 || j >= cards.length) return;
+      const tmp = cards[idx];
+      cards[idx] = cards[j];
+      cards[j] = tmp;
+      await save();
+      return;
+    }
+    if (act === 'copy' && idx >= 0) {
+      const c = cards[idx];
+      try {
+        await navigator.clipboard.writeText('## ' + displayTitle(c) + '\n\n' + (c.body || ''));
+        toast('已复制卡片 Markdown');
+      } catch {
+        toast('复制失败', 'error');
+      }
+    }
+  }
+
+  return panel;
+}
+
+function renderTabBody() {  const p = state.detail;
   const body = $('tab-body');
   // chat tab 特殊保护：流式中（busy）或用户正在输入框打字时，不重建（避免打断流式 + 抢焦点失焦）。
   const chatInput = document.getElementById('chat-input');
@@ -1106,25 +1478,11 @@ function renderTabBody() {
     body.innerHTML = `<div class="md">${renderMd(p.summary || '*（尚无总结，处理中或点击「重新总结」）*')}</div>
       <p class="save-hint" style="margin-top:18px;">由 ${escapeHtml(p.summaryModel || 'AI')} 生成${p.summaryAt ? ' · ' + new Date(p.summaryAt).toLocaleString() : ''}</p>`;
   } else if (state.tab === 'notes') {
-    body.innerHTML = `<div class="notes-grid">
-      <textarea id="notes-edit" placeholder="用 Markdown 记笔记，右侧实时预览（支持 $公式$）…">${escapeHtml(p.notes || '')}</textarea>
-      <div class="md md-preview" id="notes-preview"></div></div>
-      <p class="save-hint" id="notes-hint" style="margin-top:6px;"></p>`;
-    const te = $('notes-edit'), pv = $('notes-preview'), hint = $('notes-hint');
-    const render = () => { pv.innerHTML = renderMd(te.value); };
-    render();
-    // 绑定到模块级 notesState：切论文/切 tab 前由 flushPendingNotes 立即落盘
-    notesState = { id: p.id, el: te, dirty: false, saveTimer: null, hint };
-    te.oninput = () => {
-      render();
-      hint.textContent = '编辑中…';
-      notesState.dirty = true;
-      clearTimeout(notesState.saveTimer);
-      notesState.saveTimer = setTimeout(async () => {
-        await flushPendingNotes();
-      }, 800);
-    };
-    te.onkeydown = (e) => { if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); notesState.dirty = true; flushPendingNotes(); } };
+    // AI 笔记卡片视图（NotesPanel）：qa/skeleton/manual 卡片流，数据存 papers.noteCards
+    body.innerHTML = '<div class="notes-panel-host" id="notes-panel-host"></div>';
+    const panel = new NotesPanel($('notes-panel-host'), { showGenerate: true });
+    notesState = { id: p.id, panel };
+    panel.load(p.id);
   } else if (state.tab === 'chat') {
     renderChatTab(body, p);
   } else if (state.tab === 'info') {
@@ -1155,6 +1513,7 @@ const CHAT_REGEN_ICO = '<svg viewBox="0 0 24 24" width="14" height="14" fill="no
 const CHAT_SOURCE_ICO = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>';
 const CHAT_EDIT_ICO = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>';
 const CHAT_DELETE_ICO = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>';
+const CHAT_NOTE_ICO = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>';
 /** 把引用论文 id 渲染成只读 chip 行（历史消息回显：显示「这条问题引用了哪些论文」）。
  *  titles 从 state.papers 查；查不到的用 id 兜底。只读（无 ×），区别于输入框的可移除 chip。 */
 function extraChipsReadonlyHtml(extraIds) {
@@ -1189,6 +1548,7 @@ function chatMsgHtml(m, i, opts) {
   let actionsHtml = '';
   if (role === 'assistant') {
     const acts = [`<button class="chat-act" data-act="copy" data-mi="${i}" title="复制">${CHAT_COPY_ICO}</button>`];
+    acts.push(`<button class="chat-act" data-act="note" data-mi="${i}" title="存入笔记">${CHAT_NOTE_ICO}</button>`);
     if (opts.regenerable) acts.push(`<button class="chat-act" data-act="regen" data-mi="${i}" title="重新生成">${CHAT_REGEN_ICO}</button>`);
     acts.push(`<button class="chat-act" data-act="source" data-mi="${i}" title="显示原文">${CHAT_SOURCE_ICO}</button>`);
     acts.push(`<button class="chat-act danger" data-act="delete" data-mi="${i}" title="删除">${CHAT_DELETE_ICO}</button>`);
@@ -1199,12 +1559,15 @@ function chatMsgHtml(m, i, opts) {
   // meta 行（时间戳 + 模型徽章）
   const showMeta = m.ts || (role === 'assistant' && m.model);
   const metaHtml = showMeta
-    ? `<div class="chat-meta">${m.ts ? `<span class="chat-time">${formatChatTime(m.ts)}</span>` : ''}${role === 'assistant' && m.model ? `<span class="chat-model-badge" title="${escapeHtml(m.model)}">${escapeHtml(m.model)}</span>` : ''}</div>`
+    ? `${m.ts ? `<span class="chat-time">${formatChatTime(m.ts)}</span>` : ''}${role === 'assistant' && m.model ? `<span class="chat-model-badge" title="${escapeHtml(m.model)}">${escapeHtml(m.model)}</span>` : ''}`
     : '';
+  // 底部行：时间戳/徽章 在左，操作按钮 在右同行（旧实现把二者分两行堆叠，占纵向空间且按钮不易发现）。
+  // 始终渲染该行（即便无 meta，user 也要靠它放 edit/delete 按钮）。
+  const footHtml = `<div class="chat-foot">${metaHtml}<span class="chat-foot-spacer"></span>${actionsHtml}</div>`;
   const extraRow = role === 'user' && m.extraIds && m.extraIds.length ? extraChipsReadonlyHtml(m.extraIds) : '';
   return `<div class="chat-msg ${role}" data-mi="${i}">
     <div class="chat-role"><span class="chat-role-ico">${CHAT_ROLE_ICO[role] || CHAT_ROLE_ICO.assistant}</span><span class="chat-role-label">${role === 'user' ? '你' : 'AI'}</span></div>
-    <div class="chat-body">${extraRow}<div class="chat-bubble">${imagesHtml}<div class="chat-content">${content}</div></div>${rawHtml ? `<div class="chat-raw-wrap" hidden>${rawHtml}</div>` : ''}${metaHtml}${actionsHtml}</div>
+    <div class="chat-body">${extraRow}<div class="chat-bubble">${imagesHtml}<div class="chat-content">${content}</div></div>${rawHtml ? `<div class="chat-raw-wrap" hidden>${rawHtml}</div>` : ''}${footHtml}</div>
   </div>`;
 }
 /** 空状态：大渐变图标 + 标题 + 副标题 + 2×2 建议卡片网格 + 快捷键提示。
@@ -1334,9 +1697,12 @@ if (typeof window !== 'undefined') {
 // 向后兼容：旧 CHAT_SUGGESTIONS（reader.js 空状态卡片用）改为从预置取 prompt
 const CHAT_SUGGESTIONS = DEFAULT_CHAT_PRESETS.map((x) => x.prompt);
 
-/** 模型参数定义（浮层用）：key / 显示名 / 滑块范围或数字 / 默认值。enabled 标志决定是否发送。 */
+/** 模型参数定义（浮层用）：key / 显示名 / 类型（range滑块 / number数字 / toggle开关）/ 默认值。
+ *  thinking（GLM 协议，对象 {type:enabled|disabled}）：纯开关，不传时 GLM-5.2/5/4.6 默认开启思考，
+ *  故必须显式发 disabled 才能真正停思考——开关「关」即发 disabled。
+ *  def='enabled' 让首次使用默认开启（与 GLM 官方默认一致，思考过程对论文问答有价值）。 */
 const CHAT_PARAM_FIELDS = [
-  { key: 'thinking', label: '思考强度', kind: 'range', min: 0, max: 1, step: 0.1, def: '' },
+  { key: 'thinking', label: '深度思考', kind: 'toggle', def: 'enabled' },
   { key: 'temperature', label: '温度', kind: 'range', min: 0, max: 2, step: 0.1, def: '' },
   { key: 'topP', label: 'Top-P', kind: 'range', min: 0, max: 1, step: 0.05, def: '' },
   { key: 'maxTokens', label: '最大 token', kind: 'number', min: 0, step: 256, def: '' },
@@ -1348,21 +1714,35 @@ function getChatParams() {
   try { Object.assign(raw, JSON.parse(localStorage.getItem('chatParams') || '{}')); } catch {}
   const p = {};
   for (const f of CHAT_PARAM_FIELDS) {
+    // toggle（如 thinking）：开关开=enabled，关=disabled，始终返回（GLM 默认开启，必须显式 disabled 才停）
+    if (f.kind === 'toggle') {
+      const cell = raw[f.key];
+      const enabled = cell && typeof cell === 'object' ? !!cell.enabled : cell != null && cell !== '';
+      p[f.key] = enabled ? 'enabled' : 'disabled';
+      continue;
+    }
     const cell = raw[f.key];
-    // 兼容旧扁平：raw.thinking 是值字符串 → 视为启用
+    // 兼容旧扁平：raw.temperature 是值字符串 → 视为启用
     const enabled = cell && typeof cell === 'object' ? !!cell.enabled : cell != null && cell !== '';
     const val = cell && typeof cell === 'object' ? cell.val : cell;
-    if (!enabled || val == null || val === '') continue;
-    const num = f.kind === 'number' ? parseInt(val, 10) : Number(val);
+    if (!enabled) continue;
+    // val 为空但有 def → 启用即用默认值发送，无需手动拨滑块
+    const resolved = (val == null || val === '') ? (f.def !== '' && f.def != null ? f.def : '') : val;
+    if (resolved === '' || resolved == null) continue;
+    const num = f.kind === 'number' ? parseInt(resolved, 10) : Number(resolved);
     if (!Number.isFinite(num)) continue;
     if (f.key === 'maxTokens' && num <= 0) continue;
     p[f.key] = num;
   }
   return p;
 }
-/** 统计已启用的参数数量（浮层按钮徽章用）。 */
+/** 统计已启用的参数数量（浮层按钮徽章用）。toggle 类型（如 thinking）始终有值，不计入——
+ *  否则徽章会永远显示。徽章只反映「用户主动启用的可调参数」（温度/Top-P/maxTokens）。 */
 function countChatParams() {
-  return Object.keys(getChatParams()).length;
+  const p = getChatParams();
+  let n = 0;
+  for (const f of CHAT_PARAM_FIELDS) if (f.kind !== 'toggle' && p[f.key] != null) n++;
+  return n;
 }
 /** 接线参数浮层（按钮徽章 + 浮层内每参数：启用开关 + 滑块/数字 + 值 badge）。
  *  shellId 参数浮层根 id；btnId 触发按钮 id。reader.js 复用时传不同 id。 */
@@ -1372,12 +1752,22 @@ function wireChatParamsShell(shellId, btnId) {
   if (!shell || !btn) return;
   const raw = {};
   try { Object.assign(raw, JSON.parse(localStorage.getItem('chatParams') || '{}')); } catch {}
-  // 兼容旧扁平 → 规整为 {enabled,val}
+  // 兼容旧扁平 → 规整为 {enabled,val}。toggle（thinking）特殊：def='enabled' 作 enabled 默认
   const norm = {};
   for (const f of CHAT_PARAM_FIELDS) {
     const cell = raw[f.key];
-    if (cell && typeof cell === 'object') norm[f.key] = { enabled: !!cell.enabled, val: cell.val != null ? cell.val : f.def };
-    else norm[f.key] = { enabled: cell != null && cell !== '', val: cell != null && cell !== '' ? cell : f.def };
+    if (f.kind === 'toggle') {
+      // toggle：enabled 即取值（开/关），无独立 val。旧数据若是数值型 thinking（0–1），>0 视为开
+      let en;
+      if (cell && typeof cell === 'object') en = !!cell.enabled;
+      else if (cell != null && cell !== '') en = !(cell === 0 || cell === '0' || cell === 'disabled');
+      else en = f.def === 'enabled';
+      norm[f.key] = { enabled: en, val: f.def };
+    } else if (cell && typeof cell === 'object') {
+      norm[f.key] = { enabled: !!cell.enabled, val: cell.val != null ? cell.val : f.def };
+    } else {
+      norm[f.key] = { enabled: cell != null && cell !== '', val: cell != null && cell !== '' ? cell : f.def };
+    }
   }
   const updateBadge = () => {
     const b = btn.querySelector('.cp-badge');
@@ -1401,8 +1791,16 @@ function wireChatParamsShell(shellId, btnId) {
       const en = norm[f.key].enabled;
       card.classList.toggle('on', en);
       if (sw) sw.checked = en;
+      if (f.kind === 'toggle') {
+        // toggle：只显示「开启/关闭」状态文案
+        if (valEl) valEl.textContent = en ? '开启' : '关闭';
+        return;
+      }
       if (inp) inp.value = norm[f.key].val != null ? norm[f.key].val : f.def;
-      if (valEl) valEl.textContent = (norm[f.key].val != null && norm[f.key].val !== '') ? norm[f.key].val : '默认';
+      if (valEl) {
+        const v = norm[f.key].val != null && norm[f.key].val !== '' ? norm[f.key].val : f.def;
+        valEl.textContent = (v != null && v !== '') ? v : '默认';
+      }
       if (inp) inp.disabled = !en;
     };
     refresh();
@@ -1614,9 +2012,12 @@ function closeChatMentionPicker() {
   if (_mentionPop) { _mentionPop.style.display = 'none'; _mentionPop.hidden = true; }
   _mentionItems = []; _mentionActive = 0; _mentionCtx = null; _mentionQuery = '';
 }
+function isChatMentionPickerOpen() {
+  return !!(_mentionPop && !_mentionPop.hidden && _mentionPop.style.display && _mentionPop.style.display !== 'none');
+}
 /** 全局键盘路由：当浮层打开时，↑↓/Enter/Esc 走浮层；返回 true 表示已消费。 */
 function handleMentionKeydown(e, inputEl) {
-  if (!_mentionPop || _mentionPop.hidden || !_mentionPop.style.display || _mentionPop.style.display === 'none') return false;
+  if (!isChatMentionPickerOpen()) return false;
   if (e.key === 'ArrowDown') { e.preventDefault(); moveMentionActive(1); return true; }
   if (e.key === 'ArrowUp') { e.preventDefault(); moveMentionActive(-1); return true; }
   if (e.key === 'Enter') { e.preventDefault(); confirmMention(_mentionActive, inputEl, _mentionAtIdx); return true; }
@@ -1641,7 +2042,11 @@ if (typeof window !== 'undefined') {
   // @ 引用选择浮层（v2.7 现代化版，详情 tab + reader 抽屉共用）
   window.openChatMentionPicker = openChatMentionPicker;
   window.closeChatMentionPicker = closeChatMentionPicker;
+  window.isChatMentionPickerOpen = isChatMentionPickerOpen;
   window.handleMentionKeydown = handleMentionKeydown;
+  // AI 笔记卡片：阅读器抽屉的笔记页 + 抽屉聊天「存入笔记」复用
+  window.NotesPanel = NotesPanel;
+  window.saveQaCardToNotes = saveQaCardToNotes;
 }
 
 /** 详情「AI 聊天」tab：消息列表（user 右 / assistant 左）+ 输入框 + 发送 + 清空。
@@ -1677,7 +2082,7 @@ function renderChatTab(body, p) {
           // 流式占位：思考中（skeleton shimmer）或已收到部分 token（streaming 光标）
           const c = (m.content || '').trim();
           const reasoning = (m.reasoning || '').trim();
-          const rsHtml = reasoning ? `<div class="chat-reasoning streaming"><details open><summary>思考中…</summary><div class="chat-reasoning-body">${escapeHtml(reasoning)}</div></details></div>` : '';
+                  const rsHtml = reasoning ? `<div class="chat-reasoning streaming"><details open><summary>思考中…</summary><div class="chat-reasoning-body">${renderChatMd(reasoning, { final: false })}</div></details></div>` : '';
           if (c) {
             const node = `<div class="chat-msg assistant" data-mi="${i}" data-streaming="1"><div class="chat-role"><span class="chat-role-ico">${CHAT_ROLE_ICO.assistant}</span><span class="chat-role-label">AI</span></div><div class="chat-body"><div class="chat-bubble streaming"><div class="chat-content streaming">${renderChatMd(m.content, { final: false })}</div></div></div></div>`;
             return rsHtml ? node.replace('<div class="chat-body">', '<div class="chat-body">' + rsHtml) : node;
@@ -1693,8 +2098,14 @@ function renderChatTab(body, p) {
     : chatEmptyHtml();
   // 预置快捷提问（折叠到 popover，避免常年占用一行）
   const presets = getChatPresets();
-  // 参数浮层：每参数卡片（启用开关 + 滑块/数字 + 值 badge）
+  // 参数浮层：每参数卡片（启用开关 + 滑块/数字 + 值 badge）。toggle 类型无滑块，只有开关。
   const paramCardsHtml = CHAT_PARAM_FIELDS.map((f) => {
+    if (f.kind === 'toggle') {
+      // toggle（如 thinking）：只有开关 + 状态文案，无滑块/数字输入
+      return `<div class="pp-card toggle" data-key="${f.key}">
+        <div class="pp-card-head"><span class="pp-label">${f.label}</span><b class="pp-val">开启</b><label class="pp-switch-wrap"><input type="checkbox" class="pp-switch" /><span class="pp-track"></span></label></div>
+      </div>`;
+    }
     const inputHtml = f.kind === 'range'
       ? `<input type="range" class="pp-in" min="${f.min}" max="${f.max}" step="${f.step}" disabled />`
       : `<input type="number" class="pp-in" min="${f.min}" step="${f.step}" placeholder="不限" disabled />`;
@@ -1904,9 +2315,16 @@ function renderChatTab(body, p) {
       if (!body) return;
       let el = body.querySelector('.chat-reasoning');
       if (!el) { el = document.createElement('div'); el.className = 'chat-reasoning streaming'; body.insertBefore(el, body.firstChild); }
-      el.innerHTML = '<details open><summary>思考中…</summary><div class="chat-reasoning-body"></div></details>';
+      // 仅在 details 首次创建时定结构；后续 token 增量只刷新 body，避免重建打断用户手动折叠
+      if (!el.querySelector('.chat-reasoning-body')) {
+        el.innerHTML = '<details open><summary>思考中…</summary><div class="chat-reasoning-body"></div></details>';
+      }
       const rb = el.querySelector('.chat-reasoning-body');
-      if (rb) rb.textContent = accumulatedReasoning;
+      if (rb) {
+        rb.innerHTML = renderChatMd(accumulatedReasoning, { final: false }); // 思考内容也渲染 markdown
+        // 思考体有独立的 max-height+overflow，必须滚它自己，否则超长时新 token 不可见（像卡住）
+        rb.scrollTop = rb.scrollHeight;
+      }
       const ll = document.getElementById('chat-list'); if (ll) ll.scrollTop = ll.scrollHeight;
     };
     myClose = streamChatFetch(p.id, message, {
@@ -1953,7 +2371,7 @@ function renderChatTab(body, p) {
                   const rEl = document.createElement('div');
                   rEl.className = 'chat-reasoning';
                   rEl.innerHTML = `<details><summary><span class="rs-label">思考过程</span><span class="rs-duration">思考了 ${dur} 秒</span></summary><div class="chat-reasoning-body"></div></details>`;
-                  rEl.querySelector('.chat-reasoning-body').textContent = accumulatedReasoning;
+                  rEl.querySelector('.chat-reasoning-body').innerHTML = renderChatMd(accumulatedReasoning, { final: true });
                   newBody.insertBefore(rEl, newBody.firstChild);
                 }
               }
@@ -2103,6 +2521,15 @@ function wireChatExtras(p, list, input, doSend) {
       const text = msg ? (msg.content || '') : '';
       if (navigator.clipboard) navigator.clipboard.writeText(text).then(() => toast('已复制')).catch(() => toast('复制失败', 'error'));
       else toast('剪贴板不可用', 'error');
+    } else if (act.dataset.act === 'note') {
+      // 存入笔记：该回答 + 前溯最近 user 消息作问题 → 问答卡（拷贝语义，删聊天不删卡）
+      const msg = (p.chat || [])[mi];
+      if (!msg) return;
+      let q = '';
+      for (let k = mi - 1; k >= 0; k--) {
+        if ((p.chat || [])[k] && p.chat[k].role === 'user') { q = p.chat[k].content || ''; break; }
+      }
+      saveQaCardToNotes(p.id, { question: q, answer: msg.content || '', mi });
     } else if (act.dataset.act === 'regen') {
       doRegenerate();
     } else if (act.dataset.act === 'source') {
@@ -2148,12 +2575,12 @@ function doRegenerate() {
   const list = document.getElementById('chat-list');
   if (!list) return;
   if (chatState && chatState.busy) { toast('请等当前回答完成', 'error'); return; }
-  // 移除 DOM 最后两条（user+assistant）
+  // 只移除 DOM 最后一条 assistant（保留 user 问题可见：重新生成期间用户仍看得到自己的问题；
+  // 服务端会弹整轮重推 user+assistant，onDone 用权威 chat 替换 assistant 后索引自然对齐）。
+  // 历史版本连 user 一起移除，但 onDone 只补 assistant → 问题从视图里消失直到下次全量刷新（bug）。
   const msgs = [...list.querySelectorAll('.chat-msg')];
-  const lastUser = [...msgs].reverse().find((m) => m.classList.contains('user'));
   const lastAssistant = [...msgs].reverse().find((m) => m.classList.contains('assistant'));
   if (lastAssistant) lastAssistant.remove();
-  if (lastUser) lastUser.remove();
   // 触发 regenerate 发送（skipUserMsg：不重复追加 user，服务端从历史取）
   doSendFromInput && doSendFromInput({ regenerate: true, skipUserMsg: true });
 }
@@ -4147,6 +4574,9 @@ function bind() {
       }
     }
     if (e.key === 'Escape') {
+      // 内层（@ 引用浮层 / 聊天抽屉 / 批注选中 / 框选模式）已消费的 Esc 不再关阅读器，
+      // 保证分层退出：@浮层 → 聊天抽屉 → 批注选中 → 阅读器。
+      if (e.defaultPrevented) return;
       if ($('reader-view').classList.contains('active') && reader) reader.close();
       $('folder-modal').classList.remove('active');
       $('import-modal').classList.remove('active');

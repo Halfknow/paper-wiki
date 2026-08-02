@@ -144,3 +144,78 @@ test('buildPaperFilename 长标题截断（含 .pdf 总长 ≤ 180）', () => {
   assert.ok(fn.endsWith('.pdf'));
   assert.ok(fn.length <= 180, 'filename 总长应受限, 实际=' + fn.length);
 });
+
+// ==================== 追加：sha1OfFile / 相似度边界 / 文件名边界 / 宽松 JSON ====================
+
+test('sha1OfFile：与 crypto 参考值一致；文件不存在时 rejects', async () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const os = require('node:os');
+  const crypto = require('node:crypto');
+  const { sha1OfFile } = require('../src/core/util');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pwsha-'));
+  try {
+    const f = path.join(dir, 'a.bin');
+    const content = 'PaperWiki sha1 测试内容 with mixed content';
+    fs.writeFileSync(f, content, 'utf8');
+    const expect = crypto.createHash('sha1').update(content, 'utf8').digest('hex');
+    assert.strictEqual(await sha1OfFile(f), expect, '流式 sha1 应与一次性计算一致');
+    await assert.rejects(() => sha1OfFile(path.join(dir, 'nope.bin')), '缺失文件应 reject');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('titleSimilarity 边界：都空→1、一空一非空→0', () => {
+  assert.strictEqual(titleSimilarity('', ''), 1);
+  assert.strictEqual(titleSimilarity(null, ''), 1, 'null 归一为空串');
+  assert.strictEqual(titleSimilarity('', 'Some Title'), 0);
+  assert.strictEqual(titleSimilarity('Some Title', ''), 0);
+});
+
+test('buildPaperFilename：arxivId 含 /（老格式）→ 净化为 _；空作者姓回退', () => {
+  // 无标题 → 回退 arxivId；老格式 cs.AI/0701001 的 / 被替换为 _
+  assert.strictEqual(buildPaperFilename({ title: '', arxivId: 'cs.AI/0701001' }), 'cs.AI_0701001.pdf');
+  // 空字符串作者被过滤 → 无 namePart
+  assert.strictEqual(
+    buildPaperFilename({ authors: [''], year: 2024, title: 'Solo Work', arxivId: 'x' }),
+    '2024 - Solo Work.pdf',
+  );
+  // 纯空白作者：trim 后无 surname → namePart 为空，同样回退
+  assert.strictEqual(
+    buildPaperFilename({ authors: ['   '], year: 2024, title: 'Solo Work', arxivId: 'x' }),
+    '2024 - Solo Work.pdf',
+  );
+});
+
+test('cleanFilenameToTitle：arxiv_ 前缀、et al 变体、年份区间', () => {
+  assert.strictEqual(cleanFilenameToTitle('arxiv_2023_My Cool Paper.pdf'), 'My Cool Paper');
+  assert.strictEqual(cleanFilenameToTitle('Smith et al. - My Paper.pdf'), 'My Paper');
+  assert.strictEqual(cleanFilenameToTitle('Smith et al - Title Here.pdf'), 'Title Here');
+  assert.strictEqual(cleanFilenameToTitle('2020-2021 Annual Report.pdf'), 'Annual Report');
+});
+
+test('parseJsonLenient：括号配平截掉尾部垃圾；完全非法时抛错', () => {
+  const { parseJsonLenient } = require('../src/core/util');
+  // 直接 parse 成功路径
+  assert.deepStrictEqual(parseJsonLenient('{"a":1}'), { a: 1 });
+  // 尾部 chunked 残留（\r\n0\r\n\r\n）→ 配平截断
+  assert.deepStrictEqual(parseJsonLenient('{"a":1}\r\n0\r\n\r\n'), { a: 1 });
+  // Google 翻译风格数组 + 尾部垃圾
+  assert.deepStrictEqual(parseJsonLenient('[[["译文","src"]]]xyz trailing'), [[['译文', 'src']]]);
+  // 字符串内含括号不影响配平
+  assert.deepStrictEqual(parseJsonLenient('{"a":"} not end"}garbage'), { a: '} not end' });
+  // 完全无 JSON → 抛错
+  assert.throws(() => parseJsonLenient('no json here'), /JSON 解析失败/);
+});
+
+test('decodeChunked：正常 chunked 解码、截断保护、非 chunked 直通', () => {
+  const { decodeChunked } = require('../src/core/util');
+  // 标准 chunked body
+  assert.strictEqual(decodeChunked('4\r\nWiki\r\n5\r\npedia\r\n0\r\n\r\n'), 'Wikipedia');
+  // 声明长度大于实际 → 截断保护：取剩余数据后停止
+  assert.strictEqual(decodeChunked('5\r\nWik'), 'Wik');
+  // 非 chunked（无十六进制头）→ 原样返回
+  assert.strictEqual(decodeChunked('plain body'), 'plain body');
+  assert.strictEqual(decodeChunked('{"a":1}'), '{"a":1}');
+});

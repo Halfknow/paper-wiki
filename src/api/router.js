@@ -12,6 +12,7 @@ const {
 } = require('../services/ai');
 const { sha1OfFile, parseArxivUrl, buildPaperFilename, proxyFetchJson } = require('../core/util');
 const { normalizeAnnotations } = require('../core/annotations');
+const { normalizeNoteCards } = require('../core/notes');
 const { parseSearchQuery, applyMetadataQuery } = require('../core/search-query');
 const arxiv = require('../services/arxiv');
 const pkg = require('../../package.json');
@@ -128,7 +129,7 @@ function summaryView(p) {
     addedAt: p.addedAt,
     updatedAt: p.updatedAt,
     hasSummary: !!p.summary,
-    hasNotes: !!p.notes,
+    hasNotes: !!(p.notes || (Array.isArray(p.noteCards) && p.noteCards.length)),
     summaryExcerpt: p.summary ? p.summary.slice(0, 160) : '',
     conceptCount: (p.conceptIds || []).length,
   };
@@ -140,6 +141,7 @@ function detailView(p) {
     ...summaryView(p),
     summary: p.summary || '',
     notes: p.notes || '',
+    noteCards: normalizeNoteCards(p.noteCards),
     abstract: p.abstract || '',
     fulltextChars: p.fulltextChars || 0,
     conceptIds: p.conceptIds || [],
@@ -534,6 +536,7 @@ function createApiRouter(ctx) {
       const patch = JSON.parse(body || '{}');
       const allowed = [
         'notes',
+        'noteCards',
         'starred',
         'rating',
         'readStatus',
@@ -549,6 +552,8 @@ function createApiRouter(ctx) {
         'summaryAt',
       ];
       for (const k of allowed) if (k in patch) p[k] = patch[k];
+      // 笔记卡片：写入边界归一化（形状/限量/补 id 时间戳），防客户端写坏 jsonb
+      if ('noteCards' in patch) p.noteCards = normalizeNoteCards(patch.noteCards);
       // 星级评分（0-5）与 starred 互为镜像，rating 为准；兼容旧的 starred 布尔。
       if ('rating' in patch) {
         p.rating = Math.max(0, Math.min(5, Math.round(Number(patch.rating) || 0)));
@@ -635,6 +640,21 @@ function createApiRouter(ctx) {
       return ok(res, r);
     }
 
+    // POST /api/papers/:id/notes/generate —— AI 生成结构化笔记骨架卡（不落盘，返回 cards 由前端插入）
+    const notesGenAction = /^\/api\/papers\/([\w.-]+)\/notes\/generate$/.exec(pathname);
+    if (notesGenAction && method === 'POST') {
+      const id = notesGenAction[1];
+      if (!store.papers[id]) return fail(res, 404, 'Not found');
+      if (!scanner.generateNoteCards) return fail(res, 501, 'scanner.generateNoteCards unavailable');
+      try {
+        const r = await scanner.generateNoteCards(spaceId, id);
+        if (r.error) return fail(res, 422, r.error);
+        return ok(res, r);
+      } catch (e) {
+        return fail(res, 502, 'AI 生成失败：' + (e && e.message));
+      }
+    }
+
     // /api/papers/:id/chat  与论文对话（注入全文上下文 + 历史多轮）
     //   GET  —— 流式 SSE（EventSource；?message= 带问题）。事件 token/done/fail（discover 同款模式）
     //   POST —— 非流式 JSON（body {message}），向后兼容
@@ -690,9 +710,10 @@ function createApiRouter(ctx) {
         });
         // 模型参数：从 query 读取（前端 UI 调节后透传），白名单 + 类型校验
         const chatParams = {};
-        if (q.thinking != null) {
-          const v = Number(q.thinking);
-          if (Number.isFinite(v)) chatParams.thinking = v;
+        // thinking：GLM 对象格式 {type:"enabled"|"disabled"}。前端透传字符串 enabled/disabled，
+        // 这里转对象。关键：GLM-5.2/5/4.6 默认即开启思考，故「关」必须显式发 disabled 才能真正停思考。
+        if (q.thinking === 'enabled' || q.thinking === 'disabled') {
+          chatParams.thinking = { type: q.thinking };
         }
         if (q.temperature != null) {
           const v = Number(q.temperature);
@@ -770,7 +791,11 @@ function createApiRouter(ctx) {
       // chatParams + model 白名单（与 GET /chat 同规则）
       const chatParams = {};
       const cpSrc = op.chatParams || {};
-      for (const k of ['thinking', 'temperature', 'topP']) {
+      // thinking：对象格式 {type:"enabled"|"disabled"}（与 GET /chat 一致，GLM 默认开启故 disabled 才停）
+      if (cpSrc.thinking === 'enabled' || cpSrc.thinking === 'disabled') {
+        chatParams.thinking = { type: cpSrc.thinking };
+      }
+      for (const k of ['temperature', 'topP']) {
         if (cpSrc[k] != null && Number.isFinite(Number(cpSrc[k]))) chatParams[k] = Number(cpSrc[k]);
       }
       if (cpSrc.maxTokens != null && Number.isFinite(parseInt(cpSrc.maxTokens, 10)))

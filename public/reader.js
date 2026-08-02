@@ -161,8 +161,35 @@ import '/vendor/pdfjs-viewer.js';
           }
           return;
         }
-        if (this.isTypingTarget(e.target || document.activeElement)) return;
+        // Esc 分层关闭（必须放在 typing 提前 return 之前）：
+        // 框选截图 → @ 引用浮层（输入框自己关）→ 聊天抽屉 → 批注选中/文本浮层 → 阅读器（app.js 兜底）
         if (e.key === 'Escape') {
+          // 框选截图模式最优先：取消选区（框选正是从抽屉里发起的，抽屉此时必开着）
+          if (this._visionOverlay) {
+            e.preventDefault();
+            e.stopImmediatePropagation();
+            this.endVisionSelect();
+            return;
+          }
+          const typing = this.isTypingTarget(e.target || document.activeElement);
+          // 焦点在输入框且 @ 浮层开着：交给输入框的 handleMentionKeydown 关浮层；
+          // 它会 preventDefault，app.js 全局处理器据此跳过，不会误关阅读器。
+          if (typing && window.isChatMentionPickerOpen && window.isChatMentionPickerOpen()) return;
+          // 笔记卡编辑态：先提交编辑（ Esc 分层：卡片编辑器 > 抽屉 > 阅读器），不关抽屉
+          if (this._notesPanel && this._notesPanel.hasOpenEditor && this._notesPanel.hasOpenEditor()) {
+            e.preventDefault();
+            e.stopImmediatePropagation();
+            this._notesPanel.commitOpenEditor();
+            return;
+          }
+          // 聊天抽屉开着：先关抽屉（连带关大纲/@浮层/参数浮层），不波及阅读器
+          if (this._chatOpen) {
+            this.toggleChat(false);
+            e.preventDefault();
+            e.stopImmediatePropagation();
+            return;
+          }
+          if (typing) return;
           const hadAnnotationSelection = !!(this.uiManager && this.uiManager.hasSelection);
           const hadTextPopup = !!(this._pop && !this._pop.hidden);
           this.hideSelectionPopup();
@@ -176,6 +203,7 @@ import '/vendor/pdfjs-viewer.js';
           }
           return;
         }
+        if (this.isTypingTarget(e.target || document.activeElement)) return;
         if (e.key !== 'Delete' && e.key !== 'Backspace') return;
         e.preventDefault();                              // 吞掉，避免 Backspace 触发浏览器后退
         if (this.curTool !== 'cursor') {
@@ -215,6 +243,13 @@ import '/vendor/pdfjs-viewer.js';
       this.elChatInput = document.getElementById('reader-chat-input');
       this.elChatSend = document.getElementById('reader-chat-send');
       if (!this.elChatBtn || !this.elChatDrawer) return;
+      // pdf.js UIManager 的 KeyboardManager（window 冒泡阶段注册）只豁免 <input type=text|number>，
+      // 不豁免 textarea：当有批注编辑器处于选中/编辑态时，会抢走抽屉里 textarea 的
+      // Ctrl+A（变成「全选 PDF 高亮」）/ Delete / Backspace / 方向键并 stopEvent 吞掉默认行为，
+      // 表现为「聊天输入框无法删除、Ctrl+A 选中 PDF 高亮」。
+      // 在抽屉冒泡阶段统一 stopPropagation：textarea 默认行为（输入/删除/全选/移动光标）不受影响；
+      // Esc 分层由 document capture 阶段的 _onKey 先行处理，也不受影响。
+      this.elChatDrawer.addEventListener('keydown', (e) => { e.stopPropagation(); });
       // 点击与拖动共用一按钮：拖动过则吞掉随后的 click（见 wireFabDrag），否则切抽屉。
       this.elChatBtn.onclick = () => {
         if (this._fabJustDragged) { this._fabJustDragged = false; return; }
@@ -295,6 +330,91 @@ import '/vendor/pdfjs-viewer.js';
       this.wireDrawerSplitter();
       // FAB 纵向拖动 + 位置持久化
       this.wireFabDrag();
+      // 「聊天 | 笔记」segmented + 笔记侧栏（AI 笔记，复用 app.js NotesPanel）
+      this.wireDrawerSeg();
+      // pin 按钮（钉住抽屉）+ 点击 PDF 关闭未钉住的抽屉
+      this.injectPinButton();
+      this.wirePdfClickClose();
+    }
+    /** pin 按钮：钉住后点击 PDF 不再关闭抽屉（Esc/关闭键/关阅读器仍可关）。
+     *  状态持久化 localStorage('pw-reader-chat-pin')。 */
+    injectPinButton() {
+      if (this.elPinBtn || !this.elChatDrawer) return;
+      const actions = this.elChatDrawer.querySelector('.rcd-actions');
+      const closeBtn = this.elChatDrawer.querySelector('#reader-chat-close');
+      if (!actions || !closeBtn) return;
+      const btn = document.createElement('button');
+      btn.className = 'chat-outline-btn rcd-pin-btn';
+      btn.id = 'rcd-pin-btn';
+      btn.type = 'button';
+      btn.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 17v5"/><path d="M9 10.8a2 2 0 0 1-1.1 1.8l-1.8.9A2 2 0 0 0 5 15.2V16h14v-.8a2 2 0 0 0-1.1-1.7l-1.8-.9A2 2 0 0 1 15 10.8V5a2 2 0 0 0-2-2h-2a2 2 0 0 0-2 2z"/></svg><span>钉住</span>';
+      actions.insertBefore(btn, closeBtn);
+      this.elPinBtn = btn;
+      this._chatPinned = localStorage.getItem('pw-reader-chat-pin') === '1';
+      this._updatePinBtn();
+      btn.onclick = () => {
+        this._chatPinned = !this._chatPinned;
+        localStorage.setItem('pw-reader-chat-pin', this._chatPinned ? '1' : '0');
+        this._updatePinBtn();
+        this.setStatus(this._chatPinned ? '已钉住：点击 PDF 不再关闭抽屉' : '已取消钉住');
+      };
+    }
+    _updatePinBtn() {
+      if (!this.elPinBtn) return;
+      this.elPinBtn.classList.toggle('pinned', !!this._chatPinned);
+      this.elPinBtn.title = this._chatPinned ? '已钉住（点 PDF 不关闭），点击取消钉住' : '钉住抽屉（点 PDF 不再关闭）';
+    }
+    /** 点击 PDF 区域关闭未钉住的抽屉。
+     *  排除：划词选区浮窗/翻译面板/框选遮罩（它们有自己的交互），以及刚完成文本选择的 click
+     *  （划线准备提问/批注时不关）。钉住（pin）时整段不生效。 */
+    wirePdfClickClose() {
+      if (this._pdfClickCloseWired || !this.wrap) return;
+      this._pdfClickCloseWired = true;
+      this.wrap.addEventListener('click', (e) => {
+        if (!this._chatOpen || this._chatPinned) return;
+        if (e.target.closest('.vision-select-overlay, .reader-sel-pop, .reader-tr-panel')) return;
+        const sel = document.getSelection();
+        if (sel && !sel.isCollapsed && this.viewerEl && this.viewerEl.contains(sel.anchorNode)) return;
+        this.toggleChat(false);
+      });
+    }
+    /** 「聊天 | 笔记」切换行 + 笔记视图容器（注入 rcd-head 之后）。
+     *  显隐走 CSS（.notes-mode 类）：聊天区（list/quotes/composer）隐藏，笔记视图显示。
+     *  笔记面板复用 app.js 暴露的 NotesPanel（与详情 tab 笔记页同一实现，数据经 syncNotePanels 双向同步）。 */
+    wireDrawerSeg() {
+      if (this.elSegRow || !this.elChatDrawer) return;
+      const head = this.elChatDrawer.querySelector('.rcd-head');
+      if (!head) return;
+      const segRow = document.createElement('div');
+      segRow.className = 'rcd-seg-row';
+      segRow.innerHTML = '<div class="rcd-seg"><button type="button" data-seg="chat" class="active">聊天</button><button type="button" data-seg="notes">笔记</button></div>';
+      head.insertAdjacentElement('afterend', segRow);
+      this.elSegRow = segRow;
+      segRow.addEventListener('click', (e) => {
+        const b = e.target.closest('button[data-seg]');
+        if (b) this.setDrawerSeg(b.dataset.seg);
+      });
+      const notesView = document.createElement('div');
+      notesView.className = 'rcd-notes-view';
+      segRow.insertAdjacentElement('afterend', notesView);
+      this.elNotesView = notesView;
+      const W = window;
+      if (W.NotesPanel) {
+        this._notesPanel = new W.NotesPanel(notesView, { showGenerate: true });
+        W._readerNotesPanel = this._notesPanel; // 供 app.js syncNotePanels 跨面板同步
+      }
+      this._drawerSeg = 'chat';
+    }
+    setDrawerSeg(seg) {
+      this._drawerSeg = seg === 'notes' ? 'notes' : 'chat';
+      this.elChatDrawer.classList.toggle('notes-mode', this._drawerSeg === 'notes');
+      if (this.elSegRow) {
+        this.elSegRow.querySelectorAll('button[data-seg]').forEach((b) => b.classList.toggle('active', b.dataset.seg === this._drawerSeg));
+      }
+      // 切到笔记页：仅在论文变了（或首次）时拉取；之后的新鲜度靠 syncNotePanels 同步
+      if (this._drawerSeg === 'notes' && this._notesPanel && this.paper && this._notesPanel.paperId !== this.paper.id) {
+        this._notesPanel.load(this.paper.id);
+      }
     }
     /** 接线模型切换：composer 按钮 + 头部徽章，复用 app.js 暴露的 toggleModelSwitcher。 */
     wireModelSwitcher() {
@@ -387,8 +507,8 @@ import '/vendor/pdfjs-viewer.js';
       });
       // 点遮罩空白处（非拖拽）取消
       overlay.addEventListener('click', (e) => { if (e.target === overlay) this.endVisionSelect(); });
-      // Esc 取消
-      this._visionKey = (e) => { if (e.key === 'Escape') { this.endVisionSelect(); } };
+      // Esc 取消（吞掉事件，避免冒泡到 app.js 连带关掉阅读器）
+      this._visionKey = (e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopImmediatePropagation(); this.endVisionSelect(); } };
       document.addEventListener('keydown', this._visionKey, true);
     }
     endVisionSelect() {
@@ -814,6 +934,29 @@ import '/vendor/pdfjs-viewer.js';
         this.renderChatList((r.data && r.data.chat) || []);
       } catch { /* ignore */ }
     }
+    /** 切换论文时重置聊天抽屉：中止流式、清空消息列表/草稿/划线引用/@chips/附图 chips，
+     *  并清掉 dataset.loaded 一次性标记（否则新论文历史永不加载）。
+     *  抽屉当前开着则立即拉取新论文历史（此时 this.paper 已是新论文）。 */
+    _resetChatState() {
+      if (this._chatClose) { try { this._chatClose(); } catch {} this._chatClose = null; }
+      this._chatBusy = false;
+      this._chatQuotes = []; this.renderQuotes();
+      this._chatExtraIds = []; this.renderExtraIdsRow();
+      this._chatImages = []; this.renderAttachChips();
+      this.setSending(false);
+      if (this.elChatInput) { this.elChatInput.value = ''; this.elChatInput.disabled = false; this.autoResizeInput(); }
+      this.updateSendEnabled();
+      if (this.elChatList) {
+        delete this.elChatList.dataset.loaded;
+        this.elChatList.innerHTML = this.chatEmptyHtml();
+        if (this._chatOpen) {
+          this.elChatList.dataset.loaded = '1';
+          this.loadChatHistory();
+        }
+      }
+      // 笔记侧栏：换论文后若正停在笔记页则立即重载（停在聊天页则下次切笔记页时按 paperId 不匹配自动重载）
+      if (this._notesPanel && this.paper && this._drawerSeg === 'notes') this._notesPanel.load(this.paper.id);
+    }
     renderChatList(msgs) {
       if (!this.elChatList) return;
       if (!msgs.length) {
@@ -885,6 +1028,25 @@ import '/vendor/pdfjs-viewer.js';
             if (navigator.clipboard && text) navigator.clipboard.writeText(text).then(() => this.setStatus('已复制')).catch(() => {});
           } else if (act.dataset.act === 'regen') {
             this.regenerate();
+          } else if (act.dataset.act === 'note') {
+            // 存入笔记：GET 最新 chat（this.paper.chat 可能滞后，沿用 copy 的 freshness 考量），
+            // 取该回答 + 前溯最近 user 作问题 → 问答卡（拷贝语义）。走 app.js 的 window 桥。
+            if (!this.paper) return;
+            try {
+              const r = await fetch(sp('/api/papers/' + encodeURIComponent(this.paper.id))).then((x) => x.json());
+              const chat = (r.data && r.data.chat) || [];
+              const msg = chat[mi];
+              if (!msg) { this.setStatus('消息不存在', true); return; }
+              let q = '';
+              for (let k = mi - 1; k >= 0; k--) {
+                if (chat[k] && chat[k].role === 'user') { q = chat[k].content || ''; break; }
+              }
+              const W = window;
+              const okSave = W.saveQaCardToNotes
+                ? await W.saveQaCardToNotes(this.paper.id, { question: q, answer: msg.content || '', mi })
+                : false;
+              this.setStatus(okSave ? '已存入笔记' : '存入笔记失败', !okSave);
+            } catch { this.setStatus('存入笔记失败', true); }
           } else if (act.dataset.act === 'source') {
             // 切换显示原文 ⇄ 渲染态
             const node = act.closest('.chat-msg');
@@ -1150,7 +1312,11 @@ import '/vendor/pdfjs-viewer.js';
       // 透传模型参数（复用 app.js 暴露的 getChatParams）
       const cp = (W.getChatParams && W.getChatParams()) || {};
       for (const k of ['thinking', 'temperature', 'topP', 'maxTokens']) {
-        if (cp[k] != null && cp[k] !== '' && !Number.isNaN(cp[k])) params.set(k, String(cp[k]));
+        const v = cp[k];
+        if (v == null || v === '') continue;
+        // thinking 是字符串（enabled/disabled），其余是数值
+        if (k === 'thinking') { if (v === 'enabled' || v === 'disabled') params.set(k, v); continue; }
+        if (!Number.isNaN(v)) params.set(k, String(v));
       }
       // Phase 2 模型切换：透传选中模型（复用 app.js 暴露的 getSelectedModel）
       const selModel = W.getSelectedModel ? W.getSelectedModel() : '';
@@ -1193,7 +1359,9 @@ import '/vendor/pdfjs-viewer.js';
       const W = window;
       const cp = (W.getChatParams && W.getChatParams()) || {};
       const chatParams = {};
-      for (const k of ['thinking', 'temperature', 'topP']) {
+      // thinking 透传字符串（router 转对象），其余为数值
+      if (cp.thinking === 'enabled' || cp.thinking === 'disabled') chatParams.thinking = cp.thinking;
+      for (const k of ['temperature', 'topP']) {
         if (cp[k] != null && cp[k] !== '' && !Number.isNaN(cp[k])) chatParams[k] = Number(cp[k]);
       }
       if (cp.maxTokens != null && cp.maxTokens !== '' && !Number.isNaN(cp.maxTokens)) chatParams.maxTokens = parseInt(cp.maxTokens, 10);
@@ -1292,7 +1460,12 @@ import '/vendor/pdfjs-viewer.js';
     appendChat(m) { this.appendChatById('reader-chat-list', m); }
 
     async open(paper, readProgress, annotations) {
+      // 换论文：重置聊天抽屉。reader 是单例（app.js 只 new 一次），#reader-chat-list 等
+      // DOM 跨论文复用——不重置会残留上一篇的消息/草稿/chips，且 dataset.loaded 一次性
+      // 标记会让新论文的聊天历史永不加载（表现为「chat 没有历史记录/串台」）。
+      const switchingPaper = !this.paper || this.paper.id !== paper.id;
       this.paper = paper;
+      if (switchingPaper) this._resetChatState();
       // 文字清晰度（综合 SO 高赞方案的完整技术，核心是「过采样 + 高质量降采样」缺一不可）：
       //   ① pdf.js 的 OutputScale 直接读 window.devicePixelRatio 决定 canvas 内部分辨率。
       //     双页模式每页 CSS 显示仅 ~675px，论文密集小字若 canvas 也只 675px(1:1) 会发糊。

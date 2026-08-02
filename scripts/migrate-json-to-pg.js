@@ -75,7 +75,9 @@ async function migrateJsonToPg(legacyDataDir, repo, opts = {}) {
     if (fs.existsSync(sp.storePath)) {
       const store = await loadStore(sp.storePath);
       for (const p of Object.values(store.papers || {})) {
-        p.filename = p.filename || (p.filepath ? path.basename(p.filepath) : null);
+        // basename 兼容 Windows 路径分隔符：迁移脚本跑在 Linux 容器里，path.basename 不认
+        // 旧数据（Windows 时代）的 D:\... 反斜杠绝对路径 → 先把 \ 归一成 / 再取 basename。
+        p.filename = p.filename || (p.filepath ? path.basename(String(p.filepath).replace(/\\/g, '/')) : null);
         delete p.filepath; // 绝对路径丢弃：v3 由 papersDir+filename 运行时派生
         p.fulltextPath = null;
       }

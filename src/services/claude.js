@@ -17,11 +17,12 @@ function runClaude(prompt, opts = {}) {
   const timeoutMs = opts.timeoutMs ?? 60000;
   const cwd = opts.cwd;
   const cmd = opts.cmd || 'claude';
+  const spawnImpl = opts.spawnImpl || spawn; // 可注入 spawn 实现，便于单测
   return new Promise((resolve) => {
     let child;
     try {
       // --output-format json：claude 输出单行 JSON {result, ...}，便于稳定取 result 字段
-      child = spawn(cmd, ['-p', '--output-format', 'json', prompt], {
+      child = spawnImpl(cmd, ['-p', '--output-format', 'json', prompt], {
         cwd,
         stdio: ['ignore', 'pipe', 'pipe'],
         windowsHide: true,

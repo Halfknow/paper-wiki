@@ -338,10 +338,22 @@ function parseSearchQuery(input) {
 // 求值：把 parsed 应用到论文列表
 // ============================================================================
 
+/** 笔记 haystack：旧 notes 文本 + noteCards 卡片的 title/body 合并（笔记卡片化后两处都要能搜到）。 */
+function notesHaystackText(p) {
+  const parts = [String((p && p.notes) || '')];
+  if (Array.isArray(p && p.noteCards)) {
+    for (const c of p.noteCards) {
+      if (!c || typeof c !== 'object') continue;
+      parts.push(String(c.title || ''), String(c.body || ''));
+    }
+  }
+  return parts.join('\n').toLowerCase();
+}
+
 /** 构建论文的「全局 haystack」（裸词在此匹配）。返回小写字符串数组（每字段一个），便于 AND。 */
 function globalHaystack(p) {
   const parts = [];
-  for (const f of GLOBAL_FIELDS) parts.push(String((p && p[f]) || ''));
+  for (const f of GLOBAL_FIELDS) parts.push(f === 'notes' ? notesHaystackText(p) : String((p && p[f]) || ''));
   if (Array.isArray(p && p.tags)) parts.push(p.tags.join(' '));
   if (Array.isArray(p && p.topics)) parts.push(p.topics.join(' '));
   return parts.map((s) => s.toLowerCase());
@@ -355,6 +367,7 @@ function fieldHaystack(p, f) {
   if (f === 'tag') return [(p && Array.isArray(p.tags) ? p.tags : []).map((t) => String(t).toLowerCase()).join(' ')];
   if (f === 'topic')
     return [(p && Array.isArray(p.topics) ? p.topics : []).map((t) => String(t).toLowerCase()).join(' ')];
+  if (f === 'notes') return [notesHaystackText(p)];
   return [String((p && p[f]) || '').toLowerCase()];
 }
 
@@ -398,6 +411,12 @@ function matchField(p, f, entries) {
   const excludes = entries.filter((e) => e.exclude);
   // 排除项：任一命中即 false
   for (const e of excludes) {
+    // 特约定：value='.' 表示「字段非空」（高级面板 hasNotes 生成 notes:.）——子串匹配 '.' 字面值
+    // 会漏掉不含点号的内容（如纯中文笔记），语义必须是「非空」而非「含点」
+    if (e.value === '.') {
+      if (hay.some((h) => h.length > 0)) return false;
+      continue;
+    }
     const v = e.value.toLowerCase();
     const hit = hasCjk(v) ? hay.some((h) => h.includes(v)) : hay.some((h) => h.includes(v));
     if (hit) return false;
@@ -405,6 +424,10 @@ function matchField(p, f, entries) {
   if (!wants.length) return true; // 仅排除项，已处理
   // 想要项 OR
   for (const e of wants) {
+    if (e.value === '.') {
+      if (hay.some((h) => h.length > 0)) return true;
+      continue;
+    }
     const v = e.value.toLowerCase();
     const hit = hay.some((h) => h.includes(v));
     if (hit) return true;
