@@ -4,6 +4,14 @@
 
 ## [Unpublished]
 
+### Fixed — 批注（便签/手写）保存丢失全链路修复（v3.8）
+
+用户报告「除了高亮，便签和手写在 PDF 退出后不会保存」。e2e 逐层埋点（pdf.js UIManager / PaperReader 原型 / PATCH 抓包）挖出三个叠加根因：
+
+- **pdf.js AnnotationStorage 粘性修改标记**：`onSetModified` 只在「上次 `resetModified()` 之后的第一次修改」触发（`#Qe` 置位后不再重复触发），而 reader 从未复位——打开含既有批注的论文时，回显反序列化就会把标记置位（且被 suppress 跳过保存），之后整个会话的批注操作全部静默。修复三处：`saveAnnotations` 成功后 `resetModified()`；`restorePageAnnotations` 完成后复位；`saveAnnotations(force=true)`（关阅读器）绕过 dirty 硬门以存储为准兜底（无变化时服务端 hash-diff 零写放大）。
+- **serializeAnnotations 单点故障**：`annotationStorage.serializable` 全量 getter 里任何一条编辑器序列化抛错 → 整个 getter 抛错 → 静默返回 null → 所有批注（含高亮）都无法落盘。改为 `getAll()` 逐条序列化 + 错误隔离（坏条目跳过并 `console.warn` + 状态栏提示，其余正常保存）。
+- **e2e 覆盖**：新增 `tests/e2e/annotations.spec.js`——手写/便签「创建 → 退出 → 库存 → 重开回显」全链路（便签用无批注新论文隔离，避免点中已有编辑器是选中而非新建）。
+
 ### Added — 元数据回填与 arXiv 补全管线（v3.7）
 
 - **存量回填**：`scripts/backfill-metadata.js`（dry-run 默认 / `--apply` 写库）修复迁移期遗留的元数据缺失——A. 已有 arxivId 精确查；B. 文件名 ID 提取 + 标题校验；C. 多候选标题搜索（清洗全程 / 去作者前缀块 / 英美拼写变体；整句短语 → 关键词 AND → 标题互包含验收）；D. 全文首页标题候选。只填缺失字段，`metaSource='arxiv-backfill'` 可审计。本次执行：**91 篇补回 year、14 篇补回 authors**（剩余 15 篇为书籍/演示/博客等非 arXiv 内容，确认无误判）。

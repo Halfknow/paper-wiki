@@ -350,6 +350,14 @@ arXiv 导入 (POST /api/import { url, meta? }):
 ]、必须先于 KaTeX 否则 <span> 阻断匹配）。改渲染
     管线勿删此兜底；所有 Markdown 展示都经 renderMd 单一入口。
 
+36. **批注保存三件套（v3.8 根因链）**：① pdf.js AnnotationStorage 的 `onSetModified` 是**粘性**的
+   （只在 resetModified 后第一次修改触发）——`saveAnnotations` 成功后必须 `resetModified()`，
+   `restorePageAnnotations` 完成也必须复位（否则回显置位后整会话静默）；② `serializeAnnotations`
+   禁用 `annotationStorage.serializable` 全量 getter（单条坏数据全灭），用 `getAll()` 逐条序列化 +
+   错误隔离；③ 关阅读器的 `saveAnnotations(force=true)` 绕过 dirty 硬门兜底（hash-diff 使无变化
+   PATCH 零成本）。手写/便签编辑器在 edit mode 期间不入库，提交（deselect/切工具/关闭）才序列化，
+   属 pdf.js 语义而非 bug。
+
 35. **arXiv API 查询语法三大坑（v3.7 实测）**：① `ti:"整句"` 是连续短语精确匹配（长标题/弯引号易 0 命中）；
    ② `ti:词 AND ti:词` 里任何停用词项把整查清零（`AND ti:Is` → 0）；③ `language/models/data` 高频词
    作 ti: 项召回过宽。需要标题搜索时按 `scripts/backfill-metadata.js` 的三级兜底写：整句 → 去停用词

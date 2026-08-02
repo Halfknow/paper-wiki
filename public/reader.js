@@ -2458,20 +2458,36 @@ import '/vendor/pdfjs-viewer.js';
         const doc = this.doc;
         if (!doc || !doc.annotationStorage) return null;
         this.flushAnnotationEditorsToStorage();
-        const serial = doc.annotationStorage.serializable;
-        if (!serial || !serial.map) return { items: [], updatedAt: Date.now() };
+        // 不直接用 annotationStorage.serializable（全量序列化 getter，单条坏数据会让整个
+        // getter 抛错 → 静默返回 null → 所有批注都无法保存的静默故障点）。
+        // 改为逐条序列化 + 错误隔离：坏条目跳过并告警，其余条目正常落盘。
+        const all = doc.annotationStorage.getAll() || {};
         const items = [];
-        for (const [id, val] of serial.map) {
-          items.push(repairAnnotationValue({ id, ...val }));
+        let skipped = 0;
+        for (const [id, v] of Object.entries(all)) {
+          try {
+            const sv = v && typeof v.serialize === 'function' ? v.serialize() : v;
+            if (sv) items.push(repairAnnotationValue({ id, ...sv }));
+            else skipped++;
+          } catch (e) {
+            skipped++;
+            console.warn('[PaperWiki] 批注序列化失败（跳过该条）', id, e && e.message);
+          }
         }
+        if (skipped) this.setStatus('⚠ ' + skipped + ' 条批注数据损坏已跳过', true);
         if (!items.length) return { items: [], updatedAt: Date.now() };
-        return { items, hash: serial.hash || '', updatedAt: Date.now() };
+        let hash = '';
+        try { hash = (doc.annotationStorage.serializable && doc.annotationStorage.serializable.hash) || ''; } catch {}
+        return { items, hash, updatedAt: Date.now() };
       } catch { return null; }
     }
 
     async saveAnnotations(force = false) {
       if (!this.paper || !this.doc) return;
-      if (!this._annotationsDirty) return;
+      // force（关阅读器）时绕过 dirty 硬门：pdf.js AnnotationStorage 的修改标记是粘性的
+      // （见下方 resetModified 注释），中途任何一环漏置 dirty 时，关阅读器仍能以存储为准兜底落盘。
+      // 无变化时 PATCH 内容一致，服务端 hash-diff 不产生写放大，代价为零。
+      if (!this._annotationsDirty && !force) return;
       const now = Date.now();
       // 2 秒限频仅防高频拖拽产生的抖动写入；close() 时 force=true 绕过，保证最后一次落盘不丢。
       // 窗口内不丢弃而是推迟重试：否则"删除/快速编辑"紧跟一次保存时会被吞，要等下次操作才落盘。
@@ -2482,6 +2498,10 @@ import '/vendor/pdfjs-viewer.js';
       try {
         await this.onSaveAnnotations(this.paper.id, payload);
         this._annotationsDirty = false;
+        // 复位 pdf.js 的粘性修改标记：AnnotationStorage 的 onSetModified 只在「上次 resetModified 之后
+        // 的第一次修改」触发（#Qe 置位后不再重复触发）。不复位的话，一次修改之后本会话内所有后续
+        // 批注操作（含新类型）都不再触发保存——正是「第二笔手写/便签不保存」的根因之一。
+        try { this.doc.annotationStorage.resetModified(); } catch {}
         // 给一个可见的「已保存」反馈，避免用户怀疑高亮没存住（呼应刚修的保存丢失 bug）
         const n = (payload && payload.items && payload.items.length) || 0;
         this.setStatus(n ? ('✓ 批注已保存（' + n + '）') : '✓ 批注已清空');
@@ -2537,6 +2557,9 @@ import '/vendor/pdfjs-viewer.js';
         }
       } finally {
         this._suppressAnnotationDirty = false;
+        // 回灌存储批注的 setValue 会把 #Qe 置位（粘性标记），必须复位，
+        // 否则开卷后用户的第一笔批注不触发 onSetModified（整个会话保存链静默）。
+        try { this.doc && this.doc.annotationStorage && this.doc.annotationStorage.resetModified(); } catch {}
       }
       if (allOk) this._annotByPage.delete(pageIndex);
     }
