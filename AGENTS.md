@@ -19,10 +19,20 @@
 src/                   后端源码（v3.2 分层：core 纯逻辑 / db 持久化 / services 业务 / api 路由）
   server.js            HTTP 入口/装配：createDb→migrate（fail-fast）→ repo → manager → scanner
                         + 静态/PDF/vendor 路由 + 每日 JSON 快照备份 + 优雅关停
-  api/
-    router.js  ★       REST 路由（原 lib/api.js）：spaces/health/papers/search/tags/topics/folders/
-                        concepts/settings/stats/import/discover；ctx={manager,scanner,globalConfig}；
-                        每路由 resolveSpace(q)；?space= 隔离；papersDir 改绑 preview/apply
+  api/                 REST 路由（v3.15 路由表化：原先 createApiRouter 里约 1800 行的 if 链已拆散）
+    router.js  ★       装配层（167 行）：构造 ctx（ok/fail/resolveSpace/概念地图后台任务）→
+                        注册 14 个领域模块共 74 条路由 → 匹配分发。仍导出 summaryView/detailView
+    route-table.js ★   声明式路由表（纯函数）：.get/.post/... + match(method, pathname)。
+                        参数段字符集 [\w.-]+ 与旧正则逐字一致、不 decodeURIComponent、
+                        静态段优先于参数段、重复注册抛错。单测 tests/api-route-table.test.js
+    views.js   ★       只读视图与共享 store 助手（summaryView/detailView/aiSettingsView/
+                        channelView/maskKey/deletePapersCleanup…），原在 router.js 顶部
+    routes/    ★       各导出 register(t, ctx)，handler 签名统一
+                        async ({ req, res, body, q, params, spaceId, space, store, save }) => {}
+                        spaces（{space:false}，不解析空间）/ system / search / papers / chat /
+                        ingest / discover / taxonomy / settings / settings-ai / translate /
+                        concepts / concept-maps / formulas
+                        空间上下文由 dispatcher 统一解析，各 handler 不再自己 resolveSpace(q)
   core/                纯逻辑，零 IO 依赖（可独立单测）
     store.js   ★       数据模型 v2 纯逻辑（emptyStore/migrateStore/normalizePaper/merge*）+
                         文件版 loadStore/saveStore（仅迁移脚本用）+ backupStoreObject（PG→JSON 快照）
@@ -52,18 +62,45 @@ src/                   后端源码（v3.2 分层：core 纯逻辑 / db 持久�
     discover.js ★      按主题发现：检索计划(claude→网关→原始)/多轴召回/引用量/复合排序/去重
     claude.js  ★       spawn `claude -p` 子进程（永不抛错，失败回退网关）
     parser.js          pdfjs-dist 全文提取（Node 端，无 DOM worker）
-public/                零构建前端（原生 ESM，浏览器直接加载）
-  index.html           三栏布局 + 空间切换器 + 阅读器 + 概念/提示词视图 + 各模态
-  app.js     ★         主逻辑：路由/列表/详情/收藏夹/概念/多选/导入/空间切换/全文检索/高级搜索
-  reader.js  ★         pdf.js PDFViewer 阅读器（双页/批注/缩放/续读/AI 抽屉）
-  search-dsl.js ★      高级搜索面板（DSL 双向同步）
+public/                零构建前端（原生 ESM，浏览器直接加载；无打包器，改完刷新即生效）
+  index.html           三栏布局 + 空间切换器 + 阅读器 + 概念/提示词视图 + 各模态。零 inline onclick，
+                        全部事件在 js/bind.js 接线
+  app.js     ★         入口，47 行：只做 bind() + 布局恢复 + 启动序列（loadSpaces → router.start）
+  js/        ★         v3.15 模块化：原 app.js 7070 行按领域拆成 37 个模块（声明体逐字迁移）
+    core/
+      router.js  ★     路由器。纯函数层 matchRoute/buildPath/parseQuery/stringifyQuery/normalizePath
+                        （静态段优先、参数 URL 解码、省略默认值）+ createRouter（popstate、站内
+                        <a href> 拦截、enter/leave 生命周期、force 重入）。单测 frontend-router.test.js
+      routes.js  ★     路由表 + filterToQuery/queryToFilter（库视图筛选 ↔ query 编码）
+      nav.js     ★     路由实例与导航助手：routeHandlers（各视图 enter/leave）、router、
+                        gotoPaperRoute/gotoLibraryRoute、syncFilterToUrl
+      api.js           sp（?space= 注入）/ jget / POST / PUT / PATCH / DEL / safeGet
+      state.js         全局单例 state + notesState/chatState（含跨模块写入口 set_*）
+      dom.js  format.js  markdown.js  stream.js  ui-kit.js
+    library/           refresh sidebar list filters bulk folders
+    detail/            detail notes-panel tab-body chat-view chat-tab info-tab reader-host
+    concepts/  formulas/
+    settings/          settings channels prompts collect taxonomy
+    spaces/            spaces dir-wizard
+    search/            advanced suggest help saved
+    views/             view-switch layout
+    bind.js            全局事件接线（805 行，唯一仍偏大的模块）
+  reader.js  ★         pdf.js PDFViewer 阅读器（双页/批注/缩放/续读/AI 抽屉）。本轮未拆
+  search-dsl.js ★      高级搜索 DSL 解析（classic script，非 ESM）
   styles.css ★         Indigo 主题
 scripts/               运维脚本：scan-once（CLI 扫描）/ migrate-json-to-pg（旧数据迁移，幂等）/
                         backfill-metadata（arXiv 元数据回填，dry-run 默认）/
                         e2e-bootstrap（e2e 种子）/ backup-pg.sh（pg_dump）
-tests/                 node --test 单测（全量 580 例，pg-mem 无需真实 PG；chat-ui/notes-panel/regression-ui 用
-                        jsdom 驱动真实 app.js，共享 helpers/ui.js 的 bootUi；helpers/slow.js 慢文件守卫——
-                        npm test 默认跳过 >5s 文件，test:full 全量）+ e2e（Playwright 7 例，需 dev PG）
+tests/                 node --test 单测（全量 650 例，pg-mem 无需真实 PG）：
+                        · 纯函数层（毫秒级，不进慢文件守卫）：api-route-table / frontend-router /
+                          spa-fallback / search-query / util / store …
+                        · jsdom UI 层：chat-ui / notes-panel / regression-ui / search-ui / formulas-ui /
+                          conceptmaps-ui / settings-channels-ui / dialog-ui / routing-ui，
+                          共享 helpers/ui.js 的 bootUi（加载真实 index.html + app.js + 假后端）
+                        · helpers/slow.js 慢文件守卫——npm test 默认跳过 >5s 文件，test:full 全量
+                        · helpers/boot-loader.mjs：ESM resolve 钩子，让 `?boot=N` 沿依赖图传播，
+                          使同一进程内可多次 bootUi（routing-ui 每个用例一个独立初始 URL）
+                        + e2e（Playwright 7 例，需 dev PG）
 docs/                  设计文档（superpowers/specs+plans）+ TODO + 调研报告
 Dockerfile / docker-compose.yml / .env(.example)   部署（app+postgres；PAPERS_ROOT bind mount）
 config.json(.example)  业务配置（AI 网关等；根目录，compose 只读挂载）
@@ -244,6 +281,33 @@ arXiv 导入 (POST /api/import { url, meta? }):
 **批注持久化**（reader.js ↔ api.js ↔ annotations.js）：前端 `annotationStorage.onSetModified` → 防抖 serialize（`doc.annotationStorage.serializable.map`）→ PATCH `{annotations:{items}}` → api.js 经 `annotations.normalizeAnnotations` 归一化后存 store。回显：open 时拿 detailView.annotations → loadAnnotations 按 pageIndex 分组 → pagerendered 后 `getPageView(i).annotationEditorLayer.annotationEditorLayer.deserialize(item)`。
 
 ## 关键约定 / 陷阱（改代码前必读）
+
+0. **路由（v3.15）**——前端 History API 干净 URL，后端声明式路由表。改动前必读这几条：
+
+   - **前端加视图 = 加路由**。在 `public/js/core/routes.js` 的路由表里加一条 `{ name, pattern,
+     enter, leave? }`，并在 `core/nav.js` 的 `routeHandlers` 里实现 enter。不要再写
+     「点按钮直接 showView()」——那样刷新就丢状态。
+   - **`/paper/:id` 与 `/paper/:id/:tab` 语义不同**：前者是「选中论文」，**总是重拉详情**
+     （`fresh: true`）；后者是「切 tab」，同一篇**不重拉**——否则会打断进行中的聊天流式输出
+     和笔记内联编辑。改这两条 enter 时务必保持这个区分。
+   - **`/paper` 用单数**：`/papers/` 前缀已被 `src/server.js` 占用于 PDF 原文静态服务（带 Range），
+     不可冲突。
+   - **筛选状态回写 URL 只在 `library/refresh.js` 的 `refresh()` 里一处收口**（`syncFilterToUrl()`）。
+     新增筛选控件只要最终调到 refresh() 就自动进 URL，不要各自写 setQuery。
+     `_routerSyncing` 在路由 enter 期间抑制回写，防「query→filter→query」自激。
+   - **`?space=` 是全局保留参数**，路由器（`keepParams`）跨所有导航自动携带；优先级
+     URL > localStorage > 服务端 active。空间不存在时 `loadSpaces()` 会回退 active——这是有意的。
+   - **新增前端路由要同步看 `src/server.js` 的 `isAppRoute()`**：保留前缀 `/api/ /papers/ /vendor/`
+     与「末段带扩展名」走原逻辑，其余无扩展名路径回 index.html。判定有单测 spa-fallback.test.js。
+   - **后端加接口 = 在 `src/api/routes/<域>.js` 里 `t.get('/api/xxx', handler)`**，不要回到 if 链。
+     参数段字符集固定 `[\w.-]+`（与旧正则一致，`%XX` 编码路径继续 404）；静态段优先于参数段，
+     所以 `/api/concepts/map` 不会被 `/api/concepts/:name` 吃掉，与注册顺序无关。
+     同 (method, pattern) 重复注册直接抛错。
+   - **前端模块间不能直接给别人的 `let` 赋值**（ESM import 是只读绑定）。宿主模块导出
+     `set_xxx(v)`，消费侧调 setter——现有的有 `set_chatState` / `set_notesState` / `set_reader` /
+     `set_channelsState` 等。
+   - **jsdom 测试里同一文件多次 `bootUi` 需要 `helpers/boot-loader.mjs`**（已自动注册）：
+     ESM 按 URL 缓存，不让 `?boot=N` 沿依赖图传播的话，第二次 boot 会复用首次的模块实例。
 
 1. **`deps.saveStore` 是单参闭包**：`saveStore: (store) => manager.saveSpaceStore(id, store)`。
    scanner 必须调 `deps.saveStore(store)`（**一个参数**）。历史上曾误写成两参把 storePath 字符串当 store 写坏全库。已加单测防回归。

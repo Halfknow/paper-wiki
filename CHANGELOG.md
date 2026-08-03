@@ -4,6 +4,35 @@
 
 ## [Unpublished]
 
+### Changed — 路由化重构：前端 History API 路由 + app.js 拆 37 模块 + 后端路由表（v3.15）
+
+**动机**：`public/app.js` 已达 7070 行 / 366KB，改一处聊天输入框的行为要把约 180k tokens 灌进
+上下文，基于 agent 的开发难以为继。根因不只是文件长——**整个前端零 URL 路由**（`location.*` /
+`history.*` / `popstate` 命中数为 0），视图靠 `showView()` 切 `display:none`，既没有天然的模块
+边界，也无法深链 / 分享 / 前进后退。后端同构：`createApiRouter` 里是一条约 1800 行的
+`if (pathname === X && method === Y)` 长链。
+
+- **前端路由（History API + 服务端 SPA fallback）**：`/library`（筛选编码在 query）、
+  `/paper/:id[/:tab]`、`/reader/:id`、`/concepts[/maps[/:id]]`、`/formulas`、`/settings/:tab`。
+  刷新停在当前页、链接可分享、前进后退可用。`?space=` 成为全局保留参数跨导航自动携带。
+  纯函数层（matchRoute/buildPath/parseQuery/stringifyQuery）与有状态层（popstate、站内链接
+  拦截、enter/leave 生命周期）分离。`src/server.js` 新增 `isAppRoute()` 决定哪些路径回
+  index.html，保留 `/api/ /papers/ /vendor/` 与带扩展名的静态文件。
+- **app.js 7070 → 47 行**：按领域拆成 37 个模块进 `public/js/**`（core / library / detail /
+  concepts / formulas / settings / spaces / search / views / bind）。声明体逐字迁移，只补
+  import/export；import 图由自由标识符分析推导。
+- **后端路由表化**：`router.js` 2123 → 167 行，只剩装配；新增 `route-table.js`（纯函数匹配，
+  静态段优先于参数段，参数字符集与旧正则逐字一致）、`views.js`（只读视图与共享 store 助手）、
+  `routes/*.js` 14 个领域模块共 74 条路由。空间上下文由 dispatcher 统一解析。
+  **对外 HTTP 契约零变化**——`tests/api.test.js` 一行未改仍 90/90 全绿。
+- **测试**：全量 596 → 650 例。新增 `api-route-table`（12，纯函数）、`spa-fallback`（7，纯函数）、
+  `frontend-router`（18，纯函数）、`routing-ui`（17，jsdom 深链/前进后退/筛选 query 往返/
+  space 透传）。现有 8 个 jsdom UI 测试 71 例**零改动**通过。
+  `tests/helpers/ui.js` 增加 `initialPath` 与 back/forward；新增 `helpers/boot-loader.mjs`
+  （ESM resolve 钩子传播 `?boot=N`，使同进程可多次 bootUi）。
+- **顺带修掉的测试桩缺陷**：`/api/tags` 桩返回裸字符串，而真实契约是 `[{name,count}]`，
+  导致 `renderFilters` 把用户选中的标签全剪掉（定位 URL 筛选还原时暴露）。
+
 ### Changed — 概念总览图改名「概念地图」+ 后台生成任务化 + 提示词开放设置（v3.14）
 
 **根因（生成慢且看似失败）**：概念地图走**非流式** `callChat`（v3.12 只把超时放宽到 10 分钟）——单文件 HTML 大产出在思考型模型（Kimi k3 等）上常需**数十分钟**（实测该端点 200 字输出约 12.7s），10 分钟 total 预算必超；且非流式请求首字节前完全静默，会被网关/中间代理的空闲超时掐断。双重夹击下制品永远落不了库（生产库 0 制品）。
