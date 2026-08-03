@@ -4,4 +4,6 @@
 
 export const $ = (id) => document.getElementById(id);
 
-export const PALETTE = window.READER_PALETTE || ['#4f46e5', '#7c3aed', '#0891b2', '#d97706', '#db2777', '#2563eb', '#16a34a', '#475569'];
+// 主题调色板（v3.16 单一真相源迁到此；原 reader.js 经 window.READER_PALETTE 注入，
+// 时序靠「赌 reader 先加载」不可靠。现 reader.js 反向 import 此常量）。
+export const PALETTE = ['#4f46e5', '#7c3aed', '#0891b2', '#d97706', '#db2777', '#2563eb', '#16a34a', '#475569'];

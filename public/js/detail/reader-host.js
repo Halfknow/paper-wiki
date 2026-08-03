@@ -8,10 +8,10 @@ import { flushPendingNotes, state } from '../core/state.js';
 import { toast } from '../core/ui-kit.js';
 import { reader, set_reader, syncLocalAnnotations } from './info-tab.js';
 import { refresh } from '../library/refresh.js';
+import { PaperReader } from '/reader.js';
 
 // 打开前总是拉一次 detailView：summaryView 不含 annotations，且刚保存后的详情缓存也可能是旧的。
 export async function openReader(paper) {
-  if (!window.PaperReader) { toast('阅读器尚未加载', 'error'); return; }
   try {
     const { data: full } = await jget('/api/papers/' + encodeURIComponent(paper.id));
     if (full) {
@@ -20,7 +20,7 @@ export async function openReader(paper) {
     }
   } catch (e) { /* 拉取失败不阻塞阅读，只是可能无法回显最新批注 */ }
   if (!reader) {
-    set_reader(new window.PaperReader({
+    set_reader(new PaperReader({
       view: $('reader-view'),
       canvasWrap: $('reader-canvas-wrap'),
       back: $('reader-back'),

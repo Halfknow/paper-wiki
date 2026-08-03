@@ -1,27 +1,23 @@
 // PDF 阅读器：基于 pdfjs-dist 官方 PDFViewer，自带文本层/批注编辑层。
-// 暴露全局 window.PaperReader，供 app.js 调用。
+// v3.16：拆去 IIFE，改为标准 ESM export class PaperReader，reader-host.js 直接 import。
 //
 // 加载顺序（零构建）：先 import build（注册 globalThis.pdfjsLib），
 // 再 import viewer（注册 globalThis.pdfjsViewer，依赖 pdfjsLib）。
 import '/vendor/pdfjs.js';
 import '/vendor/pdfjs-viewer.js';
 
-(function () {
-  const pdfjsLib = globalThis.pdfjsLib;
-  const pdfjsViewer = globalThis.pdfjsViewer;
+const pdfjsLib = globalThis.pdfjsLib;
+const pdfjsViewer = globalThis.pdfjsViewer;
 
-  /** 空间注入器：把 ?space=<active> 加到 /api/ 和 /papers/ URL。
-   *  app.js 在加载后会设 window.sp；这里取引用（调用时读取，避免加载顺序问题）。
-   *  reader 直接 fetch /api/papers/:id 与打开 /papers/<file>，必须带 space 避免串空间。 */
-  const sp = (url) => (typeof window !== 'undefined' && typeof window.sp === 'function' ? window.sp(url) : url);
+/** 空间注入器：把 ?space=<active> 加到 /api/ 和 /papers/ URL。
+ *  app.js 在加载后会设 window.sp；这里取引用（调用时读取，避免加载顺序问题）。
+ *  reader 直接 fetch /api/papers/:id 与打开 /papers/<file>，必须带 space 避免串空间。 */
+const sp = (url) => (typeof window !== 'undefined' && typeof window.sp === 'function' ? window.sp(url) : url);
 
-  // 配置 worker（只配一次）
-  try { pdfjsLib.GlobalWorkerOptions.workerSrc = '/vendor/pdfjs.worker.js'; } catch {}
+// 配置 worker（只配一次）
+try { pdfjsLib.GlobalWorkerOptions.workerSrc = '/vendor/pdfjs.worker.js'; } catch {}
 
-  // 供 app.js 复用的文件夹/主题调色板
-  window.READER_PALETTE = ['#4f46e5', '#7c3aed', '#0891b2', '#d97706', '#db2777', '#2563eb', '#16a34a', '#475569'];
-
-  const { AnnotationEditorType, AnnotationEditorParamsType, PixelsPerInch } = pdfjsLib;
+const { AnnotationEditorType, AnnotationEditorParamsType, PixelsPerInch } = pdfjsLib;
   const { PDFViewer, SimpleLinkService, EventBus, SpreadMode } = pdfjsViewer;
 
   // PDF 点 → CSS 像素换算（96/72≈1.333）。pdf.js 渲染时按 currentScale * R 计算实际像素，
@@ -89,7 +85,7 @@ import '/vendor/pdfjs-viewer.js';
   // 具体工具由运行时 setTool 切换；高亮/便签/手写三类都在 UIManager 就绪后可用。
   const ANNOT_EDITOR_INIT_MODE = AnnotationEditorType.NONE;
 
-  class PaperReader {
+  export class PaperReader {
     constructor(opts) {
       Object.assign(this, opts);
       // 统一把 opts 里的 DOM 引用映射成 this.el* 命名（app.js 传的字段名无 el 前缀）
@@ -2639,5 +2635,5 @@ import '/vendor/pdfjs-viewer.js';
     }
   }
 
-  window.PaperReader = PaperReader;
-})();
+  // 向后兼容：reader-host.js 改为静态 import PaperReader 后此行可删（v3.16 过渡期保留）。
+  if (typeof window !== 'undefined') window.PaperReader = PaperReader;
