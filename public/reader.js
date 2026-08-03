@@ -20,6 +20,7 @@ import {
   wireChatActions,
   applySendingUi as sharedApplySendingUi,
   updateSendEnabled as sharedUpdateSendEnabled,
+  fileToCompressedDataURL,
 } from '/js/detail/chat-view.js';
 import { streamChatFetch } from '/js/core/stream.js';
 
@@ -477,39 +478,15 @@ const { AnnotationEditorType, AnnotationEditorParamsType, PixelsPerInch } = pdfj
         });
       }
     }
-    /** 把图片 Blob/File 转 dataURL（长边限 1568 压缩）后加入 _chatImages + 刷新 chip。 */
-    addImageFile(file) {
-      const reader = new FileReader();
-      reader.onload = () => {
-        const dataURL = String(reader.result || '');
-        if (!dataURL) return;
-        this.compressImageDataUrl(dataURL, 1568).then((compressed) => {
-          this._chatImages.push(compressed);
-          this.renderAttachChips();
-          this.setStatus('已添加图片，输入问题后发送（视觉问答）');
-          this.toggleChat(true);
-        });
-      };
-      reader.readAsDataURL(file);
-    }
-    /** dataURL 图片长边 > maxEdge 时按比例缩到 maxEdge（PNG/JPEG 重编码），否则原样返回。
-     *  防系统截图分辨率过高导致 base64 撑大 papers.json。 */
-    compressImageDataUrl(dataURL, maxEdge) {
-      return new Promise((resolve) => {
-        const img = new Image();
-        img.onload = () => {
-          const w = img.naturalWidth, h = img.naturalHeight;
-          if (Math.max(w, h) <= maxEdge) return resolve(dataURL); // 无需压缩
-          const k = maxEdge / Math.max(w, h);
-          const outW = Math.round(w * k), outH = Math.round(h * k);
-          const c = document.createElement('canvas');
-          c.width = outW; c.height = outH;
-          c.getContext('2d').drawImage(img, 0, 0, outW, outH);
-          try { resolve(c.toDataURL('image/png')); } catch { resolve(dataURL); }
-        };
-        img.onerror = () => resolve(dataURL); // 解码失败原样返回
-        img.src = dataURL;
-      });
+    /** 把图片 Blob/File 转 dataURL（长边限 1568 压缩）后加入 _chatImages + 刷新 chip。
+     *  v3.16：压缩逻辑复用 chat-view.js 的 compressImageDataUrl/fileToCompressedDataURL（与详情 tab 共用）。 */
+    async addImageFile(file) {
+      const compressed = await fileToCompressedDataURL(file, 1568);
+      if (!compressed) return;
+      this._chatImages.push(compressed);
+      this.renderAttachChips();
+      this.setStatus('已添加图片，输入问题后发送（视觉问答）');
+      this.toggleChat(true);
     }
     /** 接线右上角「抽取公式」按钮：调 /formulas/candidates（跟随设置页引擎）→ 弹候选勾选浮层
      *  → 确认后 /formulas/merge 入库。 */

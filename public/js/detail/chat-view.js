@@ -287,6 +287,41 @@ export function updateSendEnabled(sb, ip, { busy, allowSend } = {}) {
   sb.disabled = empty;
 }
 
+/** dataURL 图片长边 > maxEdge 时按比例缩到 maxEdge（PNG 重编码），否则原样返回。
+ *  防系统截图分辨率过高导致 base64 撑大 papers.json（对齐 OpenAI 视觉建议 1568px）。
+ *  v3.16：reader 抽屉与详情 tab 视觉问答共用——原 reader.js 独有，现抽到此。 */
+export function compressImageDataUrl(dataURL, maxEdge) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const w = img.naturalWidth, h = img.naturalHeight;
+      if (Math.max(w, h) <= maxEdge) return resolve(dataURL); // 无需压缩
+      const k = maxEdge / Math.max(w, h);
+      const outW = Math.round(w * k), outH = Math.round(h * k);
+      const c = document.createElement('canvas');
+      c.width = outW; c.height = outH;
+      c.getContext('2d').drawImage(img, 0, 0, outW, outH);
+      try { resolve(c.toDataURL('image/png')); } catch { resolve(dataURL); }
+    };
+    img.onerror = () => resolve(dataURL); // 解码失败原样返回
+    img.src = dataURL;
+  });
+}
+
+/** 把 File/Blob 转 dataURL（长边限 1568 压缩）。视觉问答图片入口共用。 */
+export function fileToCompressedDataURL(file, maxEdge = 1568) {
+  return new Promise((resolve) => {
+    const fr = new FileReader();
+    fr.onload = () => {
+      const dataURL = String(fr.result || '');
+      if (!dataURL) return resolve('');
+      compressImageDataUrl(dataURL, maxEdge).then(resolve);
+    };
+    fr.onerror = () => resolve('');
+    fr.readAsDataURL(file);
+  });
+}
+
 /** 读取聊天模型参数（从 localStorage）。仅返回 enabled=true 且有值的字段（后端只收启用的）。
  *  存储结构 chatParams = { thinking:{enabled,val}, temperature:{...}, ... }；向后兼容旧扁平结构。 */
 export function getChatParams() {

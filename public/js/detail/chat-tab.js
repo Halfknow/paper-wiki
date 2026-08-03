@@ -9,7 +9,7 @@ import { renderChatMd, truncateChatTitle } from '../core/markdown.js';
 import { chatState, set_chatState, state } from '../core/state.js';
 import { streamChatFetch } from '../core/stream.js';
 import { toast } from '../core/ui-kit.js';
-import { CHAT_PARAM_FIELDS, CHAT_ROLE_ICO, chatEmptyHtml, chatMsgHtml, closeChatMentionPicker, getChatPresets, getSelectedModel, handleMentionKeydown, handleMentionTrigger, openChatMentionPicker, wireChatActions, wireChatParamsShell, toggleModelSwitcher, applySendingUi as sharedApplySendingUi, autoResizeInput as sharedAutoResizeInput, updateSendEnabled as sharedUpdateSendEnabled } from './chat-view.js';
+import { CHAT_PARAM_FIELDS, CHAT_ROLE_ICO, chatEmptyHtml, chatMsgHtml, closeChatMentionPicker, getChatPresets, getSelectedModel, handleMentionKeydown, handleMentionTrigger, openChatMentionPicker, wireChatActions, wireChatParamsShell, toggleModelSwitcher, applySendingUi as sharedApplySendingUi, autoResizeInput as sharedAutoResizeInput, updateSendEnabled as sharedUpdateSendEnabled, fileToCompressedDataURL } from './chat-view.js';
 import { renderDetail, saveQaCardToNotes } from './detail.js';
 
 /** 详情「AI 聊天」tab：消息列表（user 右 / assistant 左）+ 输入框 + 发送 + 清空。
@@ -27,11 +27,12 @@ export function renderChatTab(body, p) {
   // 关键：若旧论文有进行中的流式请求，必须先关闭 EventSource（否则旧流继续往新 tab 灌 token → 串论文 + 重连）。
   if (!chatState || chatState.id !== p.id) {
     if (chatState && chatState.closeStream) { try { chatState.closeStream(); } catch {} }
-    set_chatState({ id: p.id, draft: '', busy: false, reqId: 0, closeStream: null, extraIds: [], editingMi: null });
+    set_chatState({ id: p.id, draft: '', busy: false, reqId: 0, closeStream: null, extraIds: [], editingMi: null, chatImages: [] });
     closeChatMentionPicker(); // 切论文时关 @ 浮层（避免 stale textarea 引用）
     toggleChatOutline(false); // 切论文时关大纲浮窗（条目已失效）
   }
   if (!Array.isArray(chatState.extraIds)) chatState.extraIds = [];
+  if (!Array.isArray(chatState.chatImages)) chatState.chatImages = []; // v3.16 视觉问答附图
   const msgs = Array.isArray(p.chat) ? p.chat.slice() : [];
   // 流式进行中（busy）时，把「正在生成的 assistant 占位」追加到消息列表末尾，
   // 这样定时 refresh() 重建 #chat-list 时不会丢失占位（占位不在 p.chat 里，是 doSend 直接 append 的）。
@@ -91,12 +92,16 @@ export function renderChatTab(body, p) {
       <button class="scroll-bottom-btn" id="chat-scroll-bottom" title="滚动到底部" aria-label="滚动到底部"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M19 12l-7 7-7-7"/></svg></button>
       <div class="chat-composer" id="chat-composer">
         <div class="chat-composer-context" id="chat-mentions-row"></div>
+        <div class="chat-attach-row" id="chat-attach-row" hidden></div>
         <textarea id="chat-input" rows="1" placeholder="问问 AI 关于这篇论文…  @ 引用其它论文">${escapeHtml(chatState.draft || '')}</textarea>
         <div class="chat-composer-footer">
           <div class="chat-composer-left">
             <button class="chat-tool-btn" id="chat-presets-btn" type="button" title="快捷提问">
               <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L3 14h9l-1 8 10-12h-9z"/></svg>
               <span>快捷</span>
+            </button>
+            <button class="chat-tool-btn icon-only" id="chat-attach-btn" type="button" title="添加图片（视觉问答）">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="M21 15l-5-5L5 21"/></svg>
             </button>
             <button class="chat-tool-btn icon-only" id="chat-params-btn" type="button" title="模型参数">
               <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>
@@ -131,6 +136,9 @@ export function renderChatTab(body, p) {
   updateSendEnabled();
   // 渲染当前 @ 引用 chip 行
   renderExtraIdsRow();
+  // v3.16 视觉问答：附图 chip 行 + 图片按钮 + 粘贴图片
+  renderAttachRow();
+  wireAttachInput(input);
   // 模型参数浮层：接线 + 徽章计数
   wireChatParamsShell('chat-params-pop', 'chat-params-btn');
   wireParamsToggle('chat-params-btn', 'chat-params-pop');
@@ -161,6 +169,60 @@ export function renderChatTab(body, p) {
       };
     });
   }
+  /** v3.16 视觉问答：渲染 chatState.chatImages 的缩略图 chip 行（输入框上方，与 @ 引用同行区下方）。
+   *  与 reader 抽屉的 renderAttachChips 同形——发送后清空、点 × 移除。 */
+  function renderAttachRow() {
+    const row = document.getElementById('chat-attach-row');
+    if (!row) return;
+    row.hidden = !chatState.chatImages.length;
+    if (!chatState.chatImages.length) { row.innerHTML = ''; return; }
+    row.innerHTML = chatState.chatImages.map((src, idx) =>
+      `<span class="chat-attach-chip" data-idx="${idx}"><img src="${escapeHtml(src)}" alt="附图" /><button class="ca-x" data-idx="${idx}" type="button" aria-label="移除图片">×</button></span>`
+    ).join('');
+    row.querySelectorAll('.ca-x').forEach((x) => {
+      x.onclick = () => {
+        const i = Number(x.dataset.idx);
+        chatState.chatImages.splice(i, 1);
+        renderAttachRow();
+        updateSendEnabled();
+      };
+    });
+  }
+  /** v3.16 视觉问答：接线「图片」按钮 + 输入框粘贴图片。
+   *  - 点按钮 → 隐藏 file input（accept=image/*，多选）；
+   *  - 输入框 Ctrl+V 粘贴剪贴板图片。
+   *  两入口都转 dataURL（长边限 1568 压缩）push 进 chatState.chatImages。 */
+  function wireAttachInput(inputEl) {
+    const attachBtn = $('chat-attach-btn');
+    const fileInput = document.createElement('input');
+    fileInput.type = 'file'; fileInput.accept = 'image/*'; fileInput.multiple = true; fileInput.style.display = 'none';
+    fileInput.addEventListener('change', () => {
+      const files = fileInput.files ? Array.from(fileInput.files) : [];
+      Promise.all(files.map((f) => fileToCompressedDataURL(f, 1568))).then((urls) => {
+        for (const u of urls) if (u) chatState.chatImages.push(u);
+        fileInput.value = '';
+        renderAttachRow();
+        updateSendEnabled();
+      });
+    });
+    document.body.appendChild(fileInput);
+    if (attachBtn) attachBtn.onclick = () => fileInput.click();
+    if (inputEl) {
+      inputEl.addEventListener('paste', (e) => {
+        const items = e.clipboardData && e.clipboardData.items;
+        if (!items) return;
+        let added = false;
+        const pending = [];
+        for (const it of items) {
+          if (it.kind === 'file' && it.type && it.type.startsWith('image/')) {
+            const blob = it.getAsFile();
+            if (blob) { pending.push(fileToCompressedDataURL(blob, 1568)); added = true; }
+          }
+        }
+        if (added) { e.preventDefault(); Promise.all(pending).then((urls) => { for (const u of urls) if (u) chatState.chatImages.push(u); renderAttachRow(); updateSendEnabled(); }); }
+      });
+    }
+  }
   // @ 触发器：5 步检测逻辑已抽到 chat-view.js 的 handleMentionTrigger（与 reader 共用），
   // 此处只传 ctx（excludeId / selectedIds / onPick 写 chatState）。
   function triggerMention(inputEl, paper) {
@@ -187,9 +249,12 @@ export function renderChatTab(body, p) {
     if (!message && !regenerate) return;
     // 当前引用（编辑重发时沿用被编辑 user 的 extraIds）
     const extraIds = regenerate ? [] : (editMi != null ? (extractExtraIdsFromMsg(editMi) || chatState.extraIds.slice()) : chatState.extraIds.slice());
+    // v3.16 视觉问答附图（发送后清空 chip）
+    const sendImages = regenerate ? [] : chatState.chatImages.slice();
     // 乐观入位：先存草稿=空、busy=true，再清输入框（顺序关键：状态先于 UI，避免刷新间隙丢消息）
     if (!regenerate) { chatState.draft = ''; input.value = ''; autoResizeInput(input); }
     if (!regenerate && editMi == null) { chatState.extraIds = []; renderExtraIdsRow(); } // 正常发送后清引用
+    if (!regenerate) { chatState.chatImages = []; renderAttachRow(); } // 附图已发送，清空 chip
     chatState.editingMi = null;
     chatState.busy = true;
     const myReqId = ++chatState.reqId;
@@ -210,6 +275,7 @@ export function renderChatTab(body, p) {
     if (!opts.skipUserMsg) {
       const userMsg = { role: 'user', content: message };
       if (extraIds.length) userMsg.extraIds = extraIds;
+      if (sendImages.length) userMsg.images = sendImages; // v3.16 视觉问答附图回显
       p.chat = [...(p.chat || []), userMsg];
       appendChatMsgById('chat-list', userMsg);
     }
@@ -290,6 +356,7 @@ export function renderChatTab(body, p) {
     myClose = streamChatFetch(p.id, message, {
       regenerate,
       extraIds: extraIds.length ? extraIds : undefined,
+      images: sendImages.length ? sendImages : undefined, // v3.16 视觉问答：非空走 POST /chat/vision
       onToken: (t, kind) => {
         const stale = !chatState || chatState.id !== p.id || chatState.reqId !== myReqId;
         if (stale) { try { myClose(); } catch {} return; }
@@ -375,7 +442,9 @@ export function renderChatTab(body, p) {
   }
   /** 发送键空输入禁用（非 busy 时）。busy 时由 setBusyUI 控制（保持可点 = 停止）。 */
   function updateSendEnabled() {
-    sharedUpdateSendEnabled(document.getElementById('chat-send'), document.getElementById('chat-input'), { busy: chatState && chatState.busy });
+    // 有附图时也允许发送（视觉问答：图片即提问内容，文本可空）——对齐 reader 的 allowSend 旁路
+    const allowSend = !!(chatState && chatState.chatImages && chatState.chatImages.length);
+    sharedUpdateSendEnabled(document.getElementById('chat-send'), document.getElementById('chat-input'), { busy: chatState && chatState.busy, allowSend });
   }
   /** 从 p.chat[mi] 取 extraIds（编辑重发沿用引用）。 */
   function extractExtraIdsFromMsg(mi) {
