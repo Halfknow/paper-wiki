@@ -1,18 +1,30 @@
 // PDF 阅读器：基于 pdfjs-dist 官方 PDFViewer，自带文本层/批注编辑层。
 // v3.16：拆去 IIFE，改为标准 ESM export class PaperReader，reader-host.js 直接 import。
+//        退役 window 桥——直接 import 主 bundle 的 chat/markdown/notes 模块（无循环依赖）。
 //
 // 加载顺序（零构建）：先 import build（注册 globalThis.pdfjsLib），
 // 再 import viewer（注册 globalThis.pdfjsViewer，依赖 pdfjsLib）。
 import '/vendor/pdfjs.js';
 import '/vendor/pdfjs-viewer.js';
+import { sp } from '/js/core/api.js';
+import { state } from '/js/core/state.js';
+import { renderMd, renderChatMd, truncateChatTitle } from '/js/core/markdown.js';
+import { NotesPanel } from '/js/detail/notes-panel.js';
+import { saveQaCardToNotes } from '/js/detail/detail.js';
+import {
+  CHAT_ROLE_ICO, chatMsgHtml, chatEmptyHtml, getChatPresets,
+  getSelectedModel, toggleModelSwitcher,
+  CHAT_PARAM_FIELDS, getChatParams, wireChatParamsShell,
+  openChatMentionPicker, closeChatMentionPicker, isChatMentionPickerOpen,
+  handleMentionKeydown, handleMentionTrigger, searchPapersForMention,
+  wireChatActions,
+  applySendingUi as sharedApplySendingUi,
+  updateSendEnabled as sharedUpdateSendEnabled,
+} from '/js/detail/chat-view.js';
+import { streamChatFetch } from '/js/core/stream.js';
 
 const pdfjsLib = globalThis.pdfjsLib;
 const pdfjsViewer = globalThis.pdfjsViewer;
-
-/** 空间注入器：把 ?space=<active> 加到 /api/ 和 /papers/ URL。
- *  app.js 在加载后会设 window.sp；这里取引用（调用时读取，避免加载顺序问题）。
- *  reader 直接 fetch /api/papers/:id 与打开 /papers/<file>，必须带 space 避免串空间。 */
-const sp = (url) => (typeof window !== 'undefined' && typeof window.sp === 'function' ? window.sp(url) : url);
 
 // 配置 worker（只配一次）
 try { pdfjsLib.GlobalWorkerOptions.workerSrc = '/vendor/pdfjs.worker.js'; } catch {}
@@ -163,7 +175,7 @@ const { AnnotationEditorType, AnnotationEditorParamsType, PixelsPerInch } = pdfj
           const typing = this.isTypingTarget(e.target || document.activeElement);
           // 焦点在输入框且 @ 浮层开着：交给输入框的 handleMentionKeydown 关浮层；
           // 它会 preventDefault，app.js 全局处理器据此跳过，不会误关阅读器。
-          if (typing && window.isChatMentionPickerOpen && window.isChatMentionPickerOpen()) return;
+          if (typing && isChatMentionPickerOpen()) return;
           // 笔记卡编辑态：先提交编辑（ Esc 分层：卡片编辑器 > 抽屉 > 阅读器），不关抽屉
           if (this._notesPanel && this._notesPanel.hasOpenEditor && this._notesPanel.hasOpenEditor()) {
             e.preventDefault();
@@ -298,9 +310,8 @@ const { AnnotationEditorType, AnnotationEditorParamsType, PixelsPerInch } = pdfj
       }
       if (this.elChatInput) {
         this.elChatInput.onkeydown = (e) => {
-          const W = window;
           // @ 引用浮层打开时：↑↓ 导航 / Enter 选中 / Esc 关闭（共享 handleMentionKeydown）
-          if (W.handleMentionKeydown && W.handleMentionKeydown(e, this.elChatInput)) { e.preventDefault(); return; }
+          if (handleMentionKeydown && handleMentionKeydown(e, this.elChatInput)) { e.preventDefault(); return; }
           if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); this.closeMentionPop(); this.sendChat(); }
         };
         // 输入框自动增高（1~8 行）+ 发送键空输入禁用 + @ 触发器（实时筛选）
@@ -388,11 +399,8 @@ const { AnnotationEditorType, AnnotationEditorParamsType, PixelsPerInch } = pdfj
       notesView.className = 'rcd-notes-view';
       segRow.insertAdjacentElement('afterend', notesView);
       this.elNotesView = notesView;
-      const W = window;
-      if (W.NotesPanel) {
-        this._notesPanel = new W.NotesPanel(notesView, { showGenerate: true });
-        W._readerNotesPanel = this._notesPanel; // 供 app.js syncNotePanels 跨面板同步
-      }
+      this._notesPanel = new NotesPanel(notesView, { showGenerate: true });
+      window._readerNotesPanel = this._notesPanel; // 供 app.js syncNotePanels 跨面板同步
       this._drawerSeg = 'chat';
     }
     setDrawerSeg(seg) {
@@ -410,10 +418,9 @@ const { AnnotationEditorType, AnnotationEditorParamsType, PixelsPerInch } = pdfj
     wireModelSwitcher() {
       this.elModelBtn = document.getElementById('rcd-model-btn');
       this.elModelPill = document.getElementById('rcd-model-pill');
-      const W = window;
       const refresh = () => {
-        const sel = W.getSelectedModel ? W.getSelectedModel() : '';
-        const def = (W.pwState && W.pwState.aiModels && W.pwState.aiModels.default) || '默认模型';
+        const sel = getSelectedModel();
+        const def = (state.aiModels && state.aiModels.default) || '默认模型';
         const m = sel || def;
         if (this.elModelBtn) { const n = this.elModelBtn.querySelector('.cm-name'); if (n) n.textContent = m; }
         if (this.elModelPill) { this.elModelPill.textContent = m; this.elModelPill.title = m; }
@@ -422,7 +429,7 @@ const { AnnotationEditorType, AnnotationEditorParamsType, PixelsPerInch } = pdfj
       if (this.elModelBtn) {
         this.elModelBtn.onclick = (e) => {
           e.stopPropagation();
-          if (W.toggleModelSwitcher) W.toggleModelSwitcher(this.elModelBtn);
+          toggleModelSwitcher(this.elModelBtn);
           // 切换后稍延迟刷新（toggleModelSwitcher 内部 localStorage 写入是同步的，但为保险起见）
           setTimeout(refresh, 0);
           setTimeout(refresh, 300); // 用户选择后
@@ -533,7 +540,7 @@ const { AnnotationEditorType, AnnotationEditorParamsType, PixelsPerInch } = pdfj
       let count = 0;
       if (id) {
         try {
-          const r = await fetch(window.sp('/api/' + kind + 's?paper=' + encodeURIComponent(id))).then((x) => x.json());
+          const r = await fetch(sp('/api/' + kind + 's?paper=' + encodeURIComponent(id))).then((x) => x.json());
           count = (r && r.data && Array.isArray(r.data)) ? r.data.length : (r && Array.isArray(r.data) ? r.data.length : 0);
         } catch {}
       }
@@ -559,7 +566,7 @@ const { AnnotationEditorType, AnnotationEditorParamsType, PixelsPerInch } = pdfj
       this.setStatus('加载本篇' + label + '…');
       let r;
       try {
-        r = await fetch(window.sp('/api/' + kind + 's?paper=' + encodeURIComponent(id))).then((x) => x.json());
+        r = await fetch(sp('/api/' + kind + 's?paper=' + encodeURIComponent(id))).then((x) => x.json());
       } catch (e) { this.setStatus('加载失败：' + (e && e.message), true); return; }
       this.setStatus('');
       const items = (r && Array.isArray(r.data)) ? r.data : [];
@@ -579,7 +586,7 @@ const { AnnotationEditorType, AnnotationEditorParamsType, PixelsPerInch } = pdfj
       this.setStatus('正在抽取本篇' + label + '…（' + (mode === 'replace' ? '替换模式' : '追加') + '，约需 30 秒-3 分钟）');
       let r;
       try {
-        r = await fetch(window.sp('/api/papers/' + encodeURIComponent(id) + '/' + kind + 's/candidates'), {
+        r = await fetch(sp('/api/papers/' + encodeURIComponent(id) + '/' + kind + 's/candidates'), {
           method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
         }).then((x) => x.json());
       } catch (e) {
@@ -689,7 +696,7 @@ const { AnnotationEditorType, AnnotationEditorParamsType, PixelsPerInch } = pdfj
           try {
             const body = { items: chosen };
             if (mode === 'replace') body.mode = 'replace';
-            const r = await fetch(window.sp('/api/papers/' + encodeURIComponent(paperId) + '/' + kind + 's/merge'), {
+            const r = await fetch(sp('/api/papers/' + encodeURIComponent(paperId) + '/' + kind + 's/merge'), {
               method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
             }).then((x) => x.json());
             if (r && r.ok) { this.setStatus('已' + (mode === 'replace' ? '替换' : '加入') + ' ' + (r.data && r.data.added != null ? r.data.added : chosen.length) + ' 个' + label); close(); }
@@ -732,9 +739,8 @@ const { AnnotationEditorType, AnnotationEditorParamsType, PixelsPerInch } = pdfj
       const composer = this.elChatDrawer.querySelector('#reader-chat-composer');
       if (!composer || composer.dataset.injected === '1') return;
       composer.dataset.injected = '1';
-      const W = window;
       // 预置浮层（折叠式，点 #rcd-presets-btn 展开）
-      const presets = (W.getChatPresets && W.getChatPresets()) || [];
+      const presets = getChatPresets() || [];
       const pop = document.createElement('div');
       pop.className = 'chat-presets-pop rcd-presets-pop';
       pop.id = 'rcd-presets-pop';
@@ -780,12 +786,11 @@ const { AnnotationEditorType, AnnotationEditorParamsType, PixelsPerInch } = pdfj
       if (!ids.length) { row.innerHTML = ''; return; }
       const esc = (s) => String(s || '').replace(/[<>&"]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]));
       row.innerHTML = ids.map((id) => {
-        const W = window;
         // 标题从 window 查（reader 无 state.papers），查不到用 id
         let title = id;
-        const found = W.searchPapersForMention && W.searchPapersForMention('', this.paper && this.paper.id);
+        const found = searchPapersForMention('', this.paper && this.paper.id);
         if (found) { const m = found.find((x) => x.id === id); if (m && m.title) title = m.title; }
-        const tc = W.truncateChatTitle ? W.truncateChatTitle(title, 20) : title.slice(0, 20);
+        const tc = truncateChatTitle(title, 20);
         return `<span class="extra-chip" title="${esc(title)}"><svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>${esc(tc)}<button class="extra-chip-x" data-eid="${esc(id)}" type="button" aria-label="移除引用">×</button></span>`;
       }).join('');
     }
@@ -794,9 +799,7 @@ const { AnnotationEditorType, AnnotationEditorParamsType, PixelsPerInch } = pdfj
       // 5 步检测逻辑已抽到 chat-view.js（与详情 tab 共用），此处只传 ctx。
       const input = this.elChatInput;
       if (!input || !this.paper) return;
-      const W = window;
-      if (!W.handleMentionTrigger) return;
-      W.handleMentionTrigger(input, {
+      handleMentionTrigger(input, {
         excludeId: this.paper.id,
         selectedIds: this._chatExtraIds || [],
         onPick: (id) => {
@@ -808,12 +811,10 @@ const { AnnotationEditorType, AnnotationEditorParamsType, PixelsPerInch } = pdfj
         },
       });
     }
-    closeMentionPop() { const W = window; if (W.closeChatMentionPicker) W.closeChatMentionPicker(); }
+    closeMentionPop() { closeChatMentionPicker(); }
     /** 注入参数浮层按钮（composer-right 内，模型按钮左侧）+ 浮层（复用 app.js 的 wireChatParamsShell / CHAT_PARAM_FIELDS）。 */
     injectParamsButton() {
       if (this.elParamsBtn || !this.elChatDrawer) return;
-      const W = window;
-      if (!W.CHAT_PARAM_FIELDS || !W.getChatParams) return; // app.js 未就绪则跳过
       // 放到 composer-right 内、模型按钮之前（模型按钮左侧），与模型/发送同组
       const right = this.elChatDrawer.querySelector('.chat-composer-right');
       const modelBtn = this.elChatDrawer.querySelector('#rcd-model-btn');
@@ -831,7 +832,7 @@ const { AnnotationEditorType, AnnotationEditorParamsType, PixelsPerInch } = pdfj
       pop.className = 'chat-params-pop rcd-params-pop';
       pop.id = 'rcd-params-pop';
       pop.hidden = true;
-      const cards = W.CHAT_PARAM_FIELDS.map((f) => {
+      const cards = CHAT_PARAM_FIELDS.map((f) => {
         const inputHtml = f.kind === 'range'
           ? `<input type="range" class="pp-in" min="${f.min}" max="${f.max}" step="${f.step}" disabled />`
           : `<input type="number" class="pp-in" min="${f.min}" step="${f.step}" placeholder="不限" disabled />`;
@@ -841,7 +842,7 @@ const { AnnotationEditorType, AnnotationEditorParamsType, PixelsPerInch } = pdfj
       this.elChatDrawer.appendChild(pop);
       this.elParamsPop = pop;
       // 接线（复用 app.js 暴露的浮层接线逻辑）
-      if (W.wireChatParamsShell) W.wireChatParamsShell('rcd-params-pop', 'rcd-params-btn');
+      wireChatParamsShell('rcd-params-pop', 'rcd-params-btn');
       btn.addEventListener('click', (e) => { e.stopPropagation(); pop.hidden = !pop.hidden; });
       document.addEventListener('click', (e) => {
         if (!pop.hidden && !pop.contains(e.target) && e.target !== btn && !btn.contains(e.target)) pop.hidden = true;
@@ -860,18 +861,14 @@ const { AnnotationEditorType, AnnotationEditorParamsType, PixelsPerInch } = pdfj
     /** 发送键空输入禁用（流式中由 setSending 控制 morphing，此处跳过）。
      *  v3.16：复用 chat-view.js 的 updateSendEnabled（与 detail 共用），reader 多判 quotes/images 旁路。 */
     updateSendEnabled() {
-      const W = window;
-      if (W.updateSendEnabled) {
-        W.updateSendEnabled(this.elChatSend, this.elChatInput, { busy: this._chatBusy, allowSend: this.hasChatQuotes() || this.hasChatImages() });
-      }
+      sharedUpdateSendEnabled(this.elChatSend, this.elChatInput, { busy: this._chatBusy, allowSend: this.hasChatQuotes() || this.hasChatImages() });
     }
     hasChatQuotes() { return Array.isArray(this._chatQuotes) && this._chatQuotes.length > 0; }
     hasChatImages() { return Array.isArray(this._chatImages) && this._chatImages.length > 0; }
     /** morphing 发送键：busy=true 变红方块停止图标；false 恢复箭头。
      *  v3.16：复用 chat-view.js 的 applySendingUi（与 detail 共用，SVG/title 全同）。 */
     setSending(busy) {
-      const W = window;
-      if (W.applySendingUi) W.applySendingUi(this.elChatSend, busy);
+      sharedApplySendingUi(this.elChatSend, busy);
     }
     /** FAB（#reader-chat）纵向拖动：贴右侧、可拖到任意纵向位置，不随页面滚动变化。
      *  与点击共用一按钮：位移 > 4px 才进入拖动，拖动过的本次指针序列会吞掉随后的 click。
@@ -1096,10 +1093,9 @@ const { AnnotationEditorType, AnnotationEditorParamsType, PixelsPerInch } = pdfj
         return;
       }
       // 用 chat-view.js 暴露的全宽扁平消息渲染（含 markdown/公式/时间戳/操作按钮）
-      const W = window;
       const html = msgs.map((m, i) => {
         const regenerable = i === msgs.length - 1 && m.role === 'assistant';
-        return W.chatMsgHtml(m, i, { regenerable });
+        return chatMsgHtml(m, i, { regenerable });
       }).join('');
       this.elChatList.innerHTML = html;
       this.elChatList.scrollTop = this.elChatList.scrollHeight;
@@ -1107,7 +1103,7 @@ const { AnnotationEditorType, AnnotationEditorParamsType, PixelsPerInch } = pdfj
     }
     /** 空状态：复用 chat-view.js 的 chatEmptyHtml（app 启动时已挂 window，reader 总在其后打开）。 */
     chatEmptyHtml() {
-      return window.chatEmptyHtml();
+      return chatEmptyHtml();
     }
     /** 接线抽屉的滚动FAB + 消息操作（复制/重新生成/编辑/删除/显示原文）+ 代码块复制/展开。
      *  FAB 现在是 .rcd-input-row 的静态兄弟节点（脱离滚动流、浮在输入框上方），
@@ -1137,8 +1133,7 @@ const { AnnotationEditorType, AnnotationEditorParamsType, PixelsPerInch } = pdfj
       // dataset.wired 守卫一次性绑定（renderChatList 每次重渲会重入 wireDrawerExtras）。
       if (!list.dataset.wired) {
         list.dataset.wired = '1';
-        const W = window;
-        W.wireChatActions(list, {
+        wireChatActions(list, {
           paperId: this.paper && this.paper.id,
           getMsg: (mi) => (this.paper && this.paper.chat && this.paper.chat[mi]) || null,
           // GET 鲜活 chat：reader 的 this.paper.chat 可能滞后（首次发送前为空），note/delete 用最新值
@@ -1244,12 +1239,11 @@ const { AnnotationEditorType, AnnotationEditorParamsType, PixelsPerInch } = pdfj
         this.appendChatById('reader-chat-list', userMsg);
       }
       // 占位 assistant 消息：skeleton shimmer（带 req 标记，首 token 后逐字 renderMd 重渲）
-      const W = window;
       const placeholder = document.createElement('div');
       placeholder.className = 'chat-msg assistant';
       placeholder.dataset.req = '1';
-      const roleHtml = W.CHAT_ROLE_ICO
-        ? `<div class="chat-role"><span class="chat-role-ico">${W.CHAT_ROLE_ICO.assistant}</span><span class="chat-role-label">AI</span></div><div class="chat-body"><div class="chat-bubble thinking-skeleton"><div class="chat-content thinking"><span class="sk-line"></span><span class="sk-line"></span><span class="sk-line"></span></div></div></div>`
+      const roleHtml = CHAT_ROLE_ICO
+        ? `<div class="chat-role"><span class="chat-role-ico">${CHAT_ROLE_ICO.assistant}</span><span class="chat-role-label">AI</span></div><div class="chat-body"><div class="chat-bubble thinking-skeleton"><div class="chat-content thinking"><span class="sk-line"></span><span class="sk-line"></span><span class="sk-line"></span></div></div></div>`
         : '<div class="chat-body"><div class="chat-bubble thinking-skeleton"><div class="chat-content thinking"><span class="sk-line"></span><span class="sk-line"></span><span class="sk-line"></span></div></div></div>';
       placeholder.innerHTML = roleHtml;
       const phList = document.getElementById('reader-chat-list');
@@ -1263,7 +1257,7 @@ const { AnnotationEditorType, AnnotationEditorParamsType, PixelsPerInch } = pdfj
         const livePh = document.querySelector('#reader-chat-list .chat-msg.assistant[data-req="1"]');
         return livePh ? livePh.querySelector('.chat-bubble') : null;
       };
-      const renderMdSafe = (md, final) => (W.renderChatMd ? W.renderChatMd(md, { final: !!final }) : (W.renderMd ? W.renderMd(md) : (md || '').replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c])).replace(/\n/g, '<br/>')));
+      const renderMdSafe = (md, final) => renderChatMd(md, { final: !!final });
       // 智能「跟随底部」：用户向上滚阅读时，新 token 不再把视图拽到底；滚回底部附近则恢复跟随。
       const listEl = document.getElementById('reader-chat-list');
       let stickBottom = true;
@@ -1320,9 +1314,9 @@ const { AnnotationEditorType, AnnotationEditorParamsType, PixelsPerInch } = pdfj
         }
       };
 
-      // v3.16：streamChatFetch/streamVisionFetch 已迁入 core/stream.js 并挂 window 桥，
+      // v3.16：streamChatFetch/streamVisionFetch 已迁入 core/stream.js（import 直接调用），
       // 与详情 tab 共用同一套实现（含视觉问答 images 分发）。
-      myClose = window.streamChatFetch(myPaperId, message, {
+      myClose = streamChatFetch(myPaperId, message, {
         regenerate,
         extraIds: extraIds.length ? extraIds : undefined,
         images: useVision ? sendImages : undefined,
@@ -1344,9 +1338,8 @@ const { AnnotationEditorType, AnnotationEditorParamsType, PixelsPerInch } = pdfj
           // 重渲最后一条 assistant 为定型结构（含时间戳 + 复制 + 重新生成按钮），补全流式占位缺失的字段
           if (data && data.reply != null) {
             accumulated = data.reply;
-            const W = window;
             const livePh = document.querySelector('#reader-chat-list .chat-msg.assistant[data-req="1"]');
-            if (livePh && W.chatMsgHtml && this.paper.chat && this.paper.chat.length) {
+            if (livePh && this.paper.chat && this.paper.chat.length) {
               const lastMsg = this.paper.chat[this.paper.chat.length - 1];
               // 流式占位气泡没有 data-mi（appendChild 时未赋），其正确索引即末位——
               // 占位总在列表最后，data.chat 是服务端权威数组，lastMsg 必在 chat.length-1。
@@ -1354,7 +1347,7 @@ const { AnnotationEditorType, AnnotationEditorParamsType, PixelsPerInch } = pdfj
               const mi = this.paper.chat.length - 1;
               const hadReasoning = !!accumulatedReasoning;
               const tmp = document.createElement('div');
-              tmp.innerHTML = W.chatMsgHtml(lastMsg, mi, { regenerable: true });
+              tmp.innerHTML = chatMsgHtml(lastMsg, mi, { regenerable: true });
               if (tmp.firstElementChild) {
                 livePh.replaceWith(tmp.firstElementChild);
                 // 思考过程：完成后自动收起 + 显示「思考了 X 秒」
@@ -1417,8 +1410,8 @@ const { AnnotationEditorType, AnnotationEditorParamsType, PixelsPerInch } = pdfj
       if (lastAssistant) lastAssistant.remove();
       this.sendChat({ regenerate: true, skipUserMsg: true });
     }
-    // v3.16：streamChatFetch / streamVisionFetch 已迁入 core/stream.js（与详情 tab 共用）。
-    // reader 经 window.streamChatFetch 桥调用（sendChat 内），不再各保留一份副本。
+    // v3.16：streamChatFetch / streamVisionFetch 已迁入 core/stream.js（与详情 tab 共用），
+    // reader 经 import 直接调用（不再各保留一份副本）。
     /** 按 elementId 实时重查目标节点追加消息（绝不用 stale 闭包引用）。
      *  reader 抽屉虽无 10s 定时刷新，但切换论文/重开抽屉会清空 list，故同样用实时重查保稳健。
      *  全宽扁平结构：用 chat-view.js 的 chatMsgHtml（含 markdown/角色/时间戳）。 */
@@ -1428,7 +1421,7 @@ const { AnnotationEditorType, AnnotationEditorParamsType, PixelsPerInch } = pdfj
       const empty = list.querySelector('.rcd-empty, .chat-empty');
       if (empty) empty.remove();
       const mi = list.querySelectorAll('.chat-msg').length;
-      const html = window.chatMsgHtml(m, mi);
+      const html = chatMsgHtml(m, mi);
       list.insertAdjacentHTML('beforeend', html);
       list.scrollTop = list.scrollHeight;
     }
@@ -2185,7 +2178,6 @@ const { AnnotationEditorType, AnnotationEditorParamsType, PixelsPerInch } = pdfj
      *  可关闭、可复制；滚轮/翻页/缩放时自动收起（同选区浮窗生命周期）。 */
     showTranslatePanel(rect, text, opts) {
       this.cancelTranslate(true);                     // 先关掉上一个（强制，含钉住态：新翻译替换旧钉住面板）
-      const W = window;
       const cfg = this._translateCfg || { targetLang: 'zh-CN' };
       const langName = ({ 'zh-CN': '简体中文', 'zh-TW': '繁体中文', en: '英文', ja: '日文', ko: '韩文', fr: '法文', de: '德文' })[cfg.targetLang] || cfg.targetLang;
       const external = !!(opts && opts.external);
@@ -2208,7 +2200,7 @@ const { AnnotationEditorType, AnnotationEditorParamsType, PixelsPerInch } = pdfj
       this._trAccumulated = '';
       this._trPinned = false;          // 新翻译默认未钉住（showTranslatePanel 开头已 cancelTranslate 旧面板）
       const content = panel.querySelector('.rtp-content');
-      const renderMdSafe = (md) => (W.renderMd ? W.renderMd(md) : (md || '').replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c])).replace(/\n/g, '<br/>'));
+      const renderMdSafe = (md) => renderMd(md);
       const escPlain = (s) => s.replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c])).replace(/\n/g, '<br/>');
       // 定位（复用 showSelectionPopup 的策略：优先选区上方，空间不足放下方）
       const pw = 360, ph = 160;
@@ -2635,5 +2627,4 @@ const { AnnotationEditorType, AnnotationEditorParamsType, PixelsPerInch } = pdfj
     }
   }
 
-  // 向后兼容：reader-host.js 改为静态 import PaperReader 后此行可删（v3.16 过渡期保留）。
-  if (typeof window !== 'undefined') window.PaperReader = PaperReader;
+  // v3.16：reader-host.js 已改为静态 import { PaperReader }，window.PaperReader 桥退役删除。

@@ -182,7 +182,7 @@ function formatTokens(n) {
 
 /** 模型切换下拉（详情 tab + reader 抽屉共用，锚定到触发按钮上方）。
  *  window.toggleModelSwitcher 暴露给 reader.js 复用。 */
-function toggleModelSwitcher(btn) {
+export function toggleModelSwitcher(btn) {
   if (!btn) return;
   const existing = document.querySelector('.chat-model-pop');
   if (existing) { existing.remove(); return; } // 再次点击 = 关闭
@@ -239,12 +239,8 @@ function toggleModelSwitcher(btn) {
   }, 0);
 }
 
-if (typeof window !== 'undefined') {
-  window.toggleModelSwitcher = toggleModelSwitcher;
-  window.getSelectedModel = getSelectedModel;
-  window.loadAiModels = loadAiModels;
-  window.pwState = state; // reader.js 读 state.aiModels（模型列表/默认）用
-}
+// v3.16：reader.js 改为直接 import 本模块的 toggleModelSwitcher/getSelectedModel/
+// loadAiModels，window 桥暴露块已退役删除。（app.js 走 import；state 经 reader import）
 
 // 向后兼容：旧 CHAT_SUGGESTIONS（reader.js 空状态卡片用）改为从预置取 prompt
 const CHAT_SUGGESTIONS = DEFAULT_CHAT_PRESETS.map((x) => x.prompt);
@@ -406,7 +402,7 @@ export function wireChatParamsShell(shellId, btnId) {
  *  - 空 query：返回最近添加的论文（按 addedAt 倒序），让用户开 @ 就能看到候选。
  *  - 限 10 条。返回 {id,title,authors,year,status,tags,topics} 供浮层渲染。
  *  供输入框 @ 触发器 + reader.js（经 window 桥）复用。 */
-function searchPapersForMention(query, excludeId, selectedIds) {
+export function searchPapersForMention(query, excludeId, selectedIds) {
   const q = String(query || '').trim().toLowerCase();
   const sel = Array.isArray(selectedIds) ? new Set(selectedIds) : null;
   const list = (state.papers || []).filter((x) => x.id !== excludeId && !(sel && sel.has(x.id)));
@@ -720,7 +716,7 @@ export function closeChatMentionPicker() {
   _mentionItems = []; _mentionActive = 0; _mentionCtx = null; _mentionQuery = '';
 }
 
-function isChatMentionPickerOpen() {
+export function isChatMentionPickerOpen() {
   return !!(_mentionPop && !_mentionPop.hidden && _mentionPop.style.display && _mentionPop.style.display !== 'none');
 }
 
@@ -735,39 +731,11 @@ export function handleMentionKeydown(e, inputEl) {
 }
 
 // 暴露给 reader.js（ESM，无法 import 本文件）：抽屉 AI 对话复用同一份全宽扁平渲染 + 辅助函数。
-if (typeof window !== 'undefined') {
-  window.formatChatTime = formatChatTime;
-  // 阅读器框选补录公式后「查看公式清单」用（v3.9）
-  window.showFormulas = (...a) => showFormulas(...a);
-  window.CHAT_ROLE_ICO = CHAT_ROLE_ICO;
-  window.chatMsgHtml = chatMsgHtml;
-  window.chatEmptyHtml = chatEmptyHtml;
-  window.CHAT_SUGGESTIONS = CHAT_SUGGESTIONS;
-  window.getChatParams = getChatParams;
-  window.getChatPresets = getChatPresets;
-  window.CHAT_PARAM_FIELDS = CHAT_PARAM_FIELDS;
-  window.wireChatParamsShell = wireChatParamsShell;
-  window.searchPapersForMention = searchPapersForMention;
-  window.extraChipsReadonlyHtml = extraChipsReadonlyHtml;
-  window.truncateChatTitle = truncateChatTitle;
-  // @ 引用选择浮层（v2.7 现代化版，详情 tab + reader 抽屉共用）
-  window.handleMentionTrigger = handleMentionTrigger;
-  window.openChatMentionPicker = openChatMentionPicker;
-  window.closeChatMentionPicker = closeChatMentionPicker;
-  window.isChatMentionPickerOpen = isChatMentionPickerOpen;
-  window.handleMentionKeydown = handleMentionKeydown;
-  // 聊天消息操作接线（v3.16 详情 tab + reader 抽屉共用）
-  window.wireChatActions = wireChatActions;
-  // 聊天输入 UI 小工具（v3.16 共用）
-  window.applySendingUi = applySendingUi;
-  window.autoResizeInput = autoResizeInput;
-  window.updateSendEnabled = updateSendEnabled;
-  // AI 笔记卡片：阅读器抽屉的笔记页 + 抽屉聊天「存入笔记」复用
-  window.NotesPanel = NotesPanel;
-  window.saveQaCardToNotes = saveQaCardToNotes;
-}
+// v3.16：reader.js 改为直接 import 本模块，以上 window 桥暴露块已退役删除。
+// （原暴露 chatMsgHtml/chatEmptyHtml/CHAT_ROLE_ICO/getChatParams/.../NotesPanel/saveQaCardToNotes
+//   等 ~20 个符号给 reader 用，现 reader 经 import 取用，无其他消费者）
 
-// 跨模块可变绑定的写入口（ESM import 是只读绑定，外部模块不能直接赋值）。
+// 跨模块可变绑定的写出口（ESM import 是只读绑定，外部模块不能直接赋值）。
 export function set_chatPresetsOverride(v) {
   chatPresetsOverride = v;
 }

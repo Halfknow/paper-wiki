@@ -2,8 +2,6 @@
 //
 // 自 public/app.js 拆出（v3.15 模块化重构）——声明体原样迁移，仅补 import/export。
 
-import { sp } from './api.js';
-import { $ } from './dom.js';
 import { fixCjkStrong } from './format.js';
 
 export function renderMd(md) {
@@ -69,12 +67,6 @@ export function renderChatMd(md, opts) {
     return html; // DOMParser 失败回退原样
   }
 }
-
-// 暴露给 reader.js（ESM 模块，无法 import 本文件）：抽屉 AI 对话复用同一份 markdown+公式渲染。
-if (typeof window !== 'undefined') { window.renderMd = renderMd; window.renderChatMd = renderChatMd; }
-
-// 暴露空间注入器给 reader.js：reader 直接 fetch /api/papers/:id 等，需带 ?space= 避免串空间。
-if (typeof window !== 'undefined') window.sp = sp;
 
 /** 截取问答大纲条目标题：去首尾空白/换行，按字符截断到 max 字符 + 省略号（供 AI 对话大纲用）。 */
 export function truncateChatTitle(s, max = 24) {

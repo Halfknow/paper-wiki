@@ -9,7 +9,7 @@ import { renderChatMd, truncateChatTitle } from '../core/markdown.js';
 import { chatState, set_chatState, state } from '../core/state.js';
 import { streamChatFetch } from '../core/stream.js';
 import { toast } from '../core/ui-kit.js';
-import { CHAT_PARAM_FIELDS, CHAT_ROLE_ICO, chatEmptyHtml, chatMsgHtml, closeChatMentionPicker, getChatPresets, getSelectedModel, handleMentionKeydown, handleMentionTrigger, openChatMentionPicker, wireChatActions, wireChatParamsShell, applySendingUi as sharedApplySendingUi, autoResizeInput as sharedAutoResizeInput, updateSendEnabled as sharedUpdateSendEnabled } from './chat-view.js';
+import { CHAT_PARAM_FIELDS, CHAT_ROLE_ICO, chatEmptyHtml, chatMsgHtml, closeChatMentionPicker, getChatPresets, getSelectedModel, handleMentionKeydown, handleMentionTrigger, openChatMentionPicker, wireChatActions, wireChatParamsShell, toggleModelSwitcher, applySendingUi as sharedApplySendingUi, autoResizeInput as sharedAutoResizeInput, updateSendEnabled as sharedUpdateSendEnabled } from './chat-view.js';
 import { renderDetail, saveQaCardToNotes } from './detail.js';
 
 /** 详情「AI 聊天」tab：消息列表（user 右 / assistant 左）+ 输入框 + 发送 + 清空。
@@ -141,7 +141,7 @@ export function renderChatTab(body, p) {
   });
   // 模型切换按钮（Phase 1 仅占位 toast，Phase 2 接入实际下拉）
   const modelBtn = $('chat-model-btn');
-  if (modelBtn) modelBtn.onclick = (e) => { e.stopPropagation(); if (typeof window.toggleModelSwitcher === 'function') window.toggleModelSwitcher(modelBtn); else toast('模型切换即将上线（Phase 2）', 'info'); };
+  if (modelBtn) modelBtn.onclick = (e) => { e.stopPropagation(); toggleModelSwitcher(modelBtn); };
   /** 渲染当前 chatState.extraIds 的可移除 chip 行（输入框上方）。 */
   function renderExtraIdsRow() {
     const row = document.getElementById('chat-mentions-row');
