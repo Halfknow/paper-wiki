@@ -15,11 +15,18 @@ const { JSDOM } = require('jsdom');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+let bootSeq = 0; // 见 bootUi 里的 ESM 缓存穿透
+
 function jsonRes(data, ok = true) {
   return { ok: true, status: 200, headers: { get: () => 'application/json' }, json: async () => ({ ok, data }) };
 }
 function errRes(status) {
-  return { ok: false, status, headers: { get: () => 'application/json' }, json: async () => ({ ok: false, error: 'err ' + status }) };
+  return {
+    ok: false,
+    status,
+    headers: { get: () => 'application/json' },
+    json: async () => ({ ok: false, error: 'err ' + status }),
+  };
 }
 
 /** 假 EventSource：构造时按 URL 参数推进指定论文的 chat，异步发 token + done。
@@ -64,7 +71,7 @@ function makeBackend({ listItems, details, routes = {}, chatReply = '这是 AI �
     listItems,
     details,
     patches: [], // [{id, body}]
-    posts: [],   // [{path, body?}]
+    posts: [], // [{path, body?}]
     esUrls: [],
     clipWrites: [],
     chatReply,
@@ -80,7 +87,17 @@ function makeBackend({ listItems, details, routes = {}, chatReply = '这是 AI �
     if (p === '/api/spaces') {
       return jsonRes({
         activeSpaceId: 'default',
-        spaces: [{ id: 'default', name: 'LLM', papersDir: 'LLM', createdAt: 1, scanIntervalMinutes: 5, lastScanAt: 0, paperCount: listItems.length }],
+        spaces: [
+          {
+            id: 'default',
+            name: 'LLM',
+            papersDir: 'LLM',
+            createdAt: 1,
+            scanIntervalMinutes: 5,
+            lastScanAt: 0,
+            paperCount: listItems.length,
+          },
+        ],
       });
     }
     if (p === '/api/papers' && method === 'GET') return jsonRes(listItems);
@@ -96,17 +113,32 @@ function makeBackend({ listItems, details, routes = {}, chatReply = '这是 AI �
         d.noteCards = (Array.isArray(body.noteCards) ? body.noteCards : []).map((c, i) => ({
           id: c.id || 'nc-srv' + i,
           type: ['qa', 'skeleton', 'manual'].includes(c.type) ? c.type : 'manual',
-          title: String(c.title || ''), body: String(c.body || ''),
+          title: String(c.title || ''),
+          body: String(c.body || ''),
           ...(c.meta && typeof c.meta === 'object' ? { meta: c.meta } : {}),
-          createdAt: c.createdAt || 100, updatedAt: c.updatedAt || 100,
+          createdAt: c.createdAt || 100,
+          updatedAt: c.updatedAt || 100,
         }));
       }
       return jsonRes(d);
     }
-    if (p === '/api/tags') return jsonRes(['llm']);
-    if (p === '/api/topics') return jsonRes(['NLP']);
+    // 真实形状是 [{name, count}]（见 src/api/routes/taxonomy.js）——renderFilters 用 t.name
+    // 剔除失效标签，桩若返回裸字符串会把用户选中的标签全剪掉（v3.15 定位 URL 筛选还原时发现）。
+    if (p === '/api/tags') {
+      const counts = {};
+      for (const it of listItems) for (const t of it.tags || []) counts[t] = (counts[t] || 0) + 1;
+      const names = new Set([...Object.keys(counts), 'llm']);
+      return jsonRes([...names].map((name) => ({ name, count: counts[name] || 0 })));
+    }
+    if (p === '/api/topics') {
+      const counts = {};
+      for (const it of listItems) for (const t of it.topics || []) counts[t] = (counts[t] || 0) + 1;
+      const names = new Set([...Object.keys(counts), 'NLP']);
+      return jsonRes([...names].map((name) => ({ name, count: counts[name] || 0 })));
+    }
     if (p === '/api/folders') return jsonRes([]);
-    if (p === '/api/stats') return jsonRes({ ready: 1, total: 1, processing: 0, error: 0, concepts: 0, starred: 0, unread: 1 });
+    if (p === '/api/stats')
+      return jsonRes({ ready: 1, total: 1, processing: 0, error: 0, concepts: 0, starred: 0, unread: 1 });
     if (p === '/api/ai/models') return jsonRes({ models: [{ id: 'm' }], default: 'm', source: 'config' });
     return errRes(404);
   };
@@ -116,12 +148,14 @@ function makeBackend({ listItems, details, routes = {}, chatReply = '这是 AI �
 
 /** 启动 app：返回 { dom, window, document, backend, $, sleep, intervalFns }。
  *  intervalFns：app 的 setInterval 回调捕获（unref 不挂进程），供测试手动触发轮询。 */
-async function bootUi({ listItems, details, routes, chatReply } = {}) {
+async function bootUi({ listItems, details, routes, chatReply, initialPath } = {}) {
   const backend = makeBackend({ listItems: listItems || [], details: details || {}, routes, chatReply });
   const html = fs
     .readFileSync(path.join(__dirname, '..', '..', 'public', 'index.html'), 'utf8')
     .replace(/<script[\s\S]*?<\/script>/g, ''); // 剥离 vendor script，手动 import app.js
-  const dom = new JSDOM(html, { url: 'http://localhost/', pretendToBeVisual: true });
+  // initialPath：模拟「直接打开/刷新某个深链」（v3.15 前端路由）。不传则从 / 进入，
+  // 路由器会 replaceState 到 /library —— 与旧行为（启动即库视图）一致，故存量用例无需改动。
+  const dom = new JSDOM(html, { url: 'http://localhost' + (initialPath || '/'), pretendToBeVisual: true });
   const w = dom.window;
   globalThis.window = w;
   globalThis.document = w.document;
@@ -144,12 +178,17 @@ async function bootUi({ listItems, details, routes, chatReply } = {}) {
   // （如 search-ui.test.js 里 globalThis.prompt = () => '注意力论文'）。
   const dlgStub = {
     confirm: (msg, opts) => Promise.resolve((globalThis.confirm || (() => true))(msg, opts)),
-    prompt: (msg, opts) => Promise.resolve(typeof globalThis.prompt === 'function' ? globalThis.prompt(msg, opts && opts.value) : null),
+    prompt: (msg, opts) =>
+      Promise.resolve(typeof globalThis.prompt === 'function' ? globalThis.prompt(msg, opts && opts.value) : null),
     alert: () => Promise.resolve(true),
   };
   globalThis.PWDialog = w.PWDialog = dlgStub;
   Object.defineProperty(w.navigator, 'clipboard', {
-    value: { writeText: async (t) => { backend.clipWrites.push(t); } },
+    value: {
+      writeText: async (t) => {
+        backend.clipWrites.push(t);
+      },
+    },
     configurable: true,
   });
   w.Element.prototype.scrollIntoView = function () {
@@ -168,9 +207,28 @@ async function bootUi({ listItems, details, routes, chatReply } = {}) {
     if (t && t.unref) t.unref();
     return t;
   };
-  await import(pathToFileURL(path.join(__dirname, '..', '..', 'public', 'app.js')).href);
-  // 等 boot（loadSpaces + refresh）渲染列表
-  for (let i = 0; i < 100 && !w.document.querySelector('.paper-item'); i++) await sleep(20);
+  // 缓存穿透：ESM 按 URL 缓存，同一进程内第二次 import 同一路径不会重新执行 app.js
+  // （表现为「第二个 bootUi 起不来，body.dataset.view 一直 undefined」）。
+  // 加唯一 query 让每次 bootUi 都拿到全新的模块实例——同文件多次 boot 才成立（如 routing-ui）。
+  bootSeq += 1;
+  await import(pathToFileURL(path.join(__dirname, '..', '..', 'public', 'app.js')).href + '?boot=' + bootSeq);
+  // 等 boot（loadSpaces + router.start → 路由 enter → refresh）渲染完。
+  // 库视图等 .paper-item；非库视图深链（/settings/ai、/concepts）没有列表，等 body.dataset.view。
+  // 注意不能只等 dataset.view——showView() 是同步的，先于 refresh() 的异步渲染，会抢跑。
+  const booted = () => {
+    const v = w.document.body.dataset.view;
+    return !!w.document.querySelector('.paper-item') || (!!v && v !== 'library');
+  };
+  for (let i = 0; i < 100 && !booted(); i++) await sleep(20);
+  /** 浏览器后退，并等路由重新渲染完（jsdom 的 popstate 是异步派发的）。 */
+  const back = async (ms = 60) => {
+    w.history.back();
+    await sleep(ms);
+  };
+  const forward = async (ms = 60) => {
+    w.history.forward();
+    await sleep(ms);
+  };
   return {
     dom,
     window: w,
@@ -178,6 +236,10 @@ async function bootUi({ listItems, details, routes, chatReply } = {}) {
     backend,
     intervalFns,
     sleep,
+    back,
+    forward,
+    path: () => w.location.pathname,
+    url: () => w.location.pathname + w.location.search,
     $: (id) => w.document.getElementById(id),
   };
 }

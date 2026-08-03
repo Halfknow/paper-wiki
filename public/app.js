@@ -1,3 +1,6 @@
+import { createAppRouter, filterToQuery, queryToFilter, LIB_QUERY_DEFAULTS, PAPER_TABS } from './js/core/routes.js';
+import { buildPath } from './js/core/router.js';
+
 const api = async (p, opt) => {
   const r = await fetch(sp(p), opt);
   if (r.headers.get('content-type', '').includes('application/json')) return r.json();
@@ -393,6 +396,10 @@ async function refresh() {
   if (f.starred) params.set('starred', '1');
   if (f.sort) params.set('sort', f.sort);
 
+  // 筛选状态回写 URL（v3.15）：所有筛选变更最终都汇到 refresh()，在此一处收口，
+  // 避免在十几个筛选控件里各写一遍。refresh 尾部有多个 early return，故放在这里。
+  syncFilterToUrl();
+
   // 接口级降级：每个请求独立成功/失败，单个接口（尤其 papers 列表）失败时保留旧数据，
   // 而不是整页清空或卡死。safeGet 把网络错误吞成 {ok:false}，这里再据分派。
   const results = await Promise.all([
@@ -551,7 +558,10 @@ function setView(patch) {
   if (patch.folder !== undefined || patch.mode !== undefined || patch.starred !== undefined) {
     // 选中具体视图时，重置这些维度
   }
-  refresh();
+  // 侧栏项可能在概念/公式/设置视图下点击 → 统一导航回库视图并把筛选写进 URL
+  const cur = router.current();
+  if (cur && ['library', 'paper', 'paper-tab'].includes(cur.name)) refresh();
+  else gotoLibraryRoute();
 }
 
 // ---- 列表 ----
@@ -622,7 +632,7 @@ function renderFulltextResults(ul) {
       <div class="pt"><span class="dot ${statusDot(p)}"></span>${title}</div>
       <div class="pm"><span>${meta}</span><span class="mini-metric">${p.matches >= 50 ? '50+' : p.matches} 处命中</span></div>
       <div class="ft-snips">${(p.snippets || []).map((sn) => `<div class="ft-snip">${sn}</div>`).join('')}</div>`;
-    li.onclick = () => select(p.id);
+    li.onclick = () => gotoPaperRoute(p.id);
     ul.appendChild(li);
   }
 }
@@ -711,8 +721,8 @@ function renderList() {
         <div class="chips">${topics}${tags}</div>
         ${progress != null ? `<div class="progress-row"><div class="progress-bar"><i style="width:${progress}%"></i></div><span title="${escapeHtml('读到 ' + progress + '%' + contHint)}">${progress}%</span></div>` : ''}`;
     }
-    li.onclick = () => state.pickMode ? togglePick(p.id) : select(p.id);
-    li.ondblclick = () => openReader(p);
+    li.onclick = () => state.pickMode ? togglePick(p.id) : gotoPaperRoute(p.id);
+    li.ondblclick = () => router.navigate(buildPath('/reader/:id', { id: p.id }), { keepQuery: true });
     // 拖入收藏夹：draggable 起拖时把 id 集（多选=全部选中、否则=本篇）写入 dataTransfer。
     li.draggable = true;
     li.addEventListener('dragstart', (e) => {
@@ -957,12 +967,13 @@ const CHECK_SVG = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" s
 const UNCHECK_SVG = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="#94a3b8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="4"/></svg>';
 
 // ---- 详情 ----
-async function select(id) {
+async function select(id, tab) {
   await flushPendingNotes(); // 切论文前，先把旧论文的待存笔记落盘，避免丢失最后 800ms 输入
   state.current = id;
   const { data: p } = await jget('/api/papers/' + encodeURIComponent(id));
   state.detail = p;
-  state.tab = 'summary';
+  // tab 由路由决定（/paper/:id/:tab）；直接调用时仍默认总结页
+  state.tab = PAPER_TABS.includes(tab) ? tab : 'summary';
   renderList();
   renderDetail();
 }
@@ -1039,7 +1050,7 @@ function renderDetail() {
       <div class="tab ${state.tab === 'info' ? 'active' : ''}" data-tab="info">信息</div>
     </div>
     <div id="tab-body" style="padding-top:14px;"></div>`;
-  $('b-open-pdf').onclick = () => openReader(p);
+  $('b-open-pdf').onclick = () => router.navigate(buildPath('/reader/:id', { id: p.id }), { keepQuery: true });
   // 星级评分控件：点击设为 N 星，再点同一颗清零；hover 预览；键盘 ← → 调节、0 清除。
   (function () {
     const rate = $('rate');
@@ -1114,11 +1125,9 @@ function renderDetail() {
       toast(r.error || '删除失败', 'error');
     }
   };
-  d.querySelectorAll('.tab').forEach((t) => t.onclick = () => {
-    if (state.tab !== t.dataset.tab) flushPendingNotes(); // 离开笔记 tab 前落盘
-    state.tab = t.dataset.tab;
-    renderDetail();
-  });
+  // tab 切换走路由（/paper/:id/:tab），使「刷新停在聊天页」「后退回总结页」成立。
+  // 落盘 + state.tab + renderDetail 由 enterPaper 统一处理。
+  d.querySelectorAll('.tab').forEach((t) => t.onclick = () => gotoPaperRoute(p.id, t.dataset.tab));
   renderTabBody();
 }
 
@@ -2917,7 +2926,7 @@ function showView(name) {
 }
 
 // ---- 概念清单视图 ----
-async function showConcepts() {
+async function showConcepts(view) {
   const { data } = await jget('/api/concepts');
   state.concepts = data || [];
   // 概念 Markdown 下载链接带当前空间（静态 <a href> 不经 sp()，这里手动注入）
@@ -2927,7 +2936,7 @@ async function showConcepts() {
   try { const s = await jget('/api/settings'); state.conceptMaps = (s && s.data && s.data.conceptMaps) || []; } catch { state.conceptMaps = []; }
   showView('concepts');
   renderConcepts();
-  switchConceptView(_conceptView); // 应用持久化的视图（清单/地图），内部按需 renderConceptMaps
+  switchConceptView(view || _conceptView); // 路由指定的视图优先于 localStorage 记忆的上次选择
   // 有生成中的制品 → 继续轮询（比如上次生成中切走了页面，后台任务仍在跑）
   if ((state.conceptMaps || []).some((m) => m.status === 'generating')) _startConceptMapPolling();
 }
@@ -3583,8 +3592,7 @@ async function editFormula(f) {
  *  论文被当前筛选/搜索排除时列表里没有对应项，仅打开详情，不报错。 */
 async function gotoPaper(id) {
   if (!id) return;
-  showLibrary();
-  await select(id);
+  await router.navigate(buildPath('/paper/:id', { id }));
   const el = document.querySelector('.paper-list .paper-item[data-id="' + CSS.escape(id) + '"]');
   if (el) {
     el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
@@ -3723,17 +3731,15 @@ function showLibrary() { showView('library'); }
  *  空间不变（与 switchSpace 的清场逻辑区分）。 */
 function goHome() {
   if (reader && $('reader-view').classList.contains('active')) reader.close();
-  if (document.body.dataset.view !== 'library') showLibrary();
-  state.current = null;
-  state.detail = null;
   state.selected = new Set();
   state.pickMode = false;
   state.filter = { q: '', status: '', readStatus: '', tags: [], topics: [], tagOp: 'or', topicOp: 'or', starred: false, folder: '', mode: '', sort: state.filter.sort };
   $('search').value = '';
   syncAdvancedPanelFromDsl('');
   if (state.ft) { state.ft = null; }
-  refresh();
-  renderDetail();
+  // 导航到干净的 /library（sort 不是默认值时才进 query）——清空 current/detail 与重拉数据
+  // 都由 enterLibrary 完成，这里不再手工 refresh + renderDetail。
+  router.navigate('/library', { query: filterToQuery(state.filter) });
 }
 
 // ---- 设置中心（迁移并扩展原 prompt-view） ----
@@ -5201,8 +5207,7 @@ function taxBatchMerge() {
 function taxJumpToLibrary(kind, name) {
   if (kind === 'tag') state.filter.tags = [name];
   else state.filter.topics = [name];
-  showLibrary();
-  refresh();
+  gotoLibraryRoute(); // 筛选写进 URL：/library?tags=xxx，可分享可后退
   toast('已按' + taxLabel(kind) + '「' + name + '」筛选');
 }
 
@@ -5663,12 +5668,12 @@ function bind() {
       if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); goHome(); }
     });
   }
-  $('btn-concepts').onclick = showConcepts;
-  $('btn-concepts-close').onclick = showLibrary;
+  $('btn-concepts').onclick = () => router.navigate(_conceptView === 'maps' ? '/concepts/maps' : '/concepts', { force: true }); // 记忆上次子视图
+  $('btn-concepts-close').onclick = () => router.navigate('/library', { keepQuery: true });
   $('concept-q').oninput = renderConcepts;
   // 公式清单视图（v3.9，与概念视图同构）
-  $('btn-formulas').onclick = showFormulas;
-  $('btn-formulas-close').onclick = showLibrary;
+  $('btn-formulas').onclick = () => router.navigate('/formulas', { force: true });
+  $('btn-formulas-close').onclick = () => router.navigate('/library', { keepQuery: true });
   $('formula-q').oninput = renderFormulas;
   document.querySelectorAll('#formula-layout button').forEach((b) => {
     b.onclick = () => {
@@ -5702,15 +5707,15 @@ function bind() {
   });
   // 视图切换（清单/总览图），持久化用户选择
   document.querySelectorAll('#concept-view button').forEach((b) => {
-    b.onclick = () => switchConceptView(b.dataset.view);
+    b.onclick = () => router.navigate(b.dataset.view === 'maps' ? '/concepts/maps' : '/concepts');
   });
 
   // 设置中心（统一从左下角「设置」进入）
-  $('btn-settings').onclick = () => openSettings('overview'); // 左下角「设置」→ 概览
-  $('btn-settings-close').onclick = showLibrary;
+  $('btn-settings').onclick = () => router.navigate('/settings/overview', { force: true }); // 左下角「设置」→ 概览
+  $('btn-settings-close').onclick = () => router.navigate('/library', { keepQuery: true });
   // 设置 tab 导航
   document.querySelectorAll('.settings-nav-item').forEach((el) => {
-    el.onclick = () => settingsSwitchTab(el.dataset.tab);
+    el.onclick = () => router.navigate(buildPath('/settings/:tab', { tab: el.dataset.tab }));
   });
   // AI 接口
   $('btn-ai-save').onclick = saveAiConfig;
@@ -6019,11 +6024,11 @@ function bind() {
       const curIdx = state.papers.findIndex((p) => p.id === state.current);
       const move = (d) => {
         const next = state.papers[Math.max(0, Math.min(state.papers.length - 1, (curIdx < 0 ? 0 : curIdx) + d))];
-        if (next && next.id !== state.current) select(next.id);
+        if (next && next.id !== state.current) gotoPaperRoute(next.id);
       };
       if (e.key === 'ArrowDown') { e.preventDefault(); move(1); return; }
       if (e.key === 'ArrowUp') { e.preventDefault(); move(-1); return; }
-      if (e.key === 'Enter' && state.current) { e.preventDefault(); openReader(state.papers.find((p) => p.id === state.current)); return; }
+      if (e.key === 'Enter' && state.current) { e.preventDefault(); router.navigate(buildPath('/reader/:id', { id: state.current }), { keepQuery: true }); return; }
       if (e.key.toLowerCase() === 's' && state.current) {
         const cp = state.papers.find((p) => p.id === state.current);
         // 星标：无评分↔5 星来回切（兼容旧「收藏」语义）
@@ -6034,11 +6039,15 @@ function bind() {
       // 内层（@ 引用浮层 / 聊天抽屉 / 批注选中 / 框选模式）已消费的 Esc 不再关阅读器，
       // 保证分层退出：@浮层 → 聊天抽屉 → 批注选中 → 阅读器。
       if (e.defaultPrevented) return;
-      if ($('reader-view').classList.contains('active') && reader) reader.close();
+      // 阅读器有自己的路由（/reader/:id）：Esc 退回上一页，由 leave 钩子关闭阅读器
+      if ($('reader-view').classList.contains('active')) {
+        if (router.current() && router.current().name === 'reader') window.history.back();
+        else if (reader) reader.close();
+      }
       $('folder-modal').classList.remove('active');
       $('import-modal').classList.remove('active');
       $('discover-modal').classList.remove('active');
-      if (document.body.dataset.view === 'settings') showLibrary();
+      if (document.body.dataset.view === 'settings') router.navigate('/library', { keepQuery: true });
     }
   });
 }
@@ -6118,8 +6127,9 @@ async function switchSpace(id) {
   state.filter = { q: '', status: '', readStatus: '', tags: [], topics: [], tagOp: 'or', topicOp: 'or', starred: false, folder: '', mode: '', sort: state.filter.sort };
   $('search').value = '';
   renderSpaceSwitcher();
-  await refresh();
-  renderDetail();
+  // 空间进 URL（?space=<id>，路由器跨导航自动携带）：链接可分享到正确空间。
+  // 同时回到干净的 /library——上一空间的论文 id 在新空间不存在，停在 /paper/:id 会 404。
+  await router.navigate('/library', { query: { space: id } });
   toast('已切换到空间：' + ((state.spaces.find((s) => s.id === id) || {}).name || ''), 'info');
 }
 
@@ -6937,13 +6947,113 @@ loadSettingsData().then(() => { setTimeout(positionSavedSearches, 100); }).catch
 // 暴露给调试/reader 复用
 window.PaperWikiSearchGUI = { triggerSearch, toggleAdvancedPanel, syncAdvancedPanelFromDsl, positionSavedSearches };
 
+// ============================================================================
+// 路由（v3.15）——History API 干净 URL，服务端 SPA fallback 见 src/server.js isAppRoute
+// ============================================================================
+// 此前整个前端没有 URL 路由：视图靠 showView() 切 display:none，刷新永远回库视图，
+// 无法深链/分享/前进后退。现在每个视图都有 URL，库视图的筛选状态编码在 query 里。
+//
+// 数据流是单向的：
+//   用户操作 → router.navigate(...) → 路由 enter → 改 state → 渲染
+//   筛选变更 → refresh() → syncFilterToUrl() → replaceState（不产生历史记录）
+// _routerSyncing 在 enter 期间抑制回写，避免「query→filter→query」自激循环。
+
+let _routerSyncing = false;
+
+/** 把当前 state.filter 回写到 URL query（仅库/详情路由；同址时 setQuery 自身早退）。 */
+function syncFilterToUrl() {
+  if (_routerSyncing || typeof router === 'undefined' || !router) return;
+  const cur = router.current();
+  if (!cur || !['library', 'paper', 'paper-tab'].includes(cur.name)) return;
+  router.setQuery(filterToQuery(state.filter), { defaults: LIB_QUERY_DEFAULTS });
+}
+
+/** 库视图公共入场：query → state.filter → 拉数据。paper 路由复用它。 */
+async function enterLibraryShell(query) {
+  _routerSyncing = true;
+  state.filter = { ...state.filter, ...queryToFilter(query) };
+  const s = $('search');
+  if (s) s.value = state.filter.q || '';
+  if (!state.filter.q) state.ft = null; // 退出全文检索模式
+  showLibrary();
+  try {
+    await refresh();
+  } finally {
+    _routerSyncing = false;
+  }
+}
+
+const routeHandlers = {
+  onError: (e) => toast((e && e.message) || '页面加载失败', 'error'),
+  redirect: (p) => router.navigate(p, { replace: true }),
+
+  enterLibrary: async ({ query }) => {
+    await enterLibraryShell(query);
+    if (state.current) {
+      await flushPendingNotes();
+      state.current = null;
+      state.detail = null;
+      renderList();
+    }
+    renderDetail();
+  },
+
+  enterPaper: async ({ id, tab, query, fresh }) => {
+    await enterLibraryShell(query);
+    if (fresh || state.current !== id || !state.detail) {
+      await select(id, tab);
+    } else if (state.tab !== tab) {
+      await flushPendingNotes();
+      state.tab = tab;
+      renderDetail();
+    }
+  },
+
+  // 深链 /reader/:id：先把库视图数据拉起来（关阅读器后底下不是空列表），再开阅读器。
+  // openReader 内部会 GET 完整论文，故列表里没有时传 { id } 占位即可。
+  enterReader: async ({ id, query }) => {
+    await enterLibraryShell(query);
+    if (state.current !== id) await select(id, 'summary');
+    await openReader(state.papers.find((p) => p.id === id) || state.detail || { id });
+  },
+  leaveReader: () => {
+    if (reader && $('reader-view').classList.contains('active')) reader.close();
+  },
+
+  enterConcepts: async ({ view, mapId }) => {
+    await showConcepts(view);
+    if (mapId) await viewConceptMap(mapId);
+  },
+  leaveConcepts: () => _stopConceptMapPolling(),
+
+  enterFormulas: () => showFormulas(),
+
+  enterSettings: ({ tab }) => openSettings(tab),
+};
+
+const router = createAppRouter(routeHandlers);
+
+/** 导航到某篇论文（保留当前筛选 query，便于返回列表时状态不丢）。 */
+function gotoPaperRoute(id, tab) {
+  router.navigate(tab ? buildPath('/paper/:id/:tab', { id, tab }) : buildPath('/paper/:id', { id }), {
+    keepQuery: true,
+  });
+}
+/** 回到库视图，并把 state.filter 写进 URL（侧栏/标签跳转用）。 */
+function gotoLibraryRoute() {
+  router.navigate('/library', { query: filterToQuery(state.filter) });
+}
+
 bind();
 applyListWidth(state.listWidth);
 setSidebarCollapsed(state.sidebarCollapsed); // 应用上次记忆的侧栏状态
-// 启动：先加载空间（确定 state.space），再 refresh（基于当前空间拉数据）
+// 启动：先加载空间（确定 state.space；URL 的 ?space= 优先于 localStorage），
+// 再由路由器解析当前 URL 渲染对应视图（取代过去无条件 refresh() 进库视图）。
 (async () => {
+  const urlSpace = new URLSearchParams(window.location.search).get('space');
+  if (urlSpace) state.space = urlSpace;
   await loadSpaces();
-  refresh();
+  await router.start();
   // 后台拉取聊天预置覆盖（store.settings.chatPresets），失败静默用内置默认
   loadSettingsData().catch(() => {});
   // 后台拉取可用模型列表（Phase 2 模型切换器），失败静默用默认占位

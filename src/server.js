@@ -200,9 +200,7 @@ async function main() {
       // 静态前端：前端源码（html/js/css）禁缓存，避免浏览器用旧 JS 导致改动不生效（本地开发工具，资源极小）
       // SPA fallback：/library、/paper/:id、/settings/ai 等前端路由在磁盘上没有对应文件，
       // 回 index.html 让前端路由器接管（否则刷新/分享深链会 404）。
-      const fp = isAppRoute(pathname)
-        ? path.join(PUBLIC_DIR, 'index.html')
-        : path.join(PUBLIC_DIR, pathname);
+      const fp = isAppRoute(pathname) ? path.join(PUBLIC_DIR, 'index.html') : path.join(PUBLIC_DIR, pathname);
       if (!fp.startsWith(PUBLIC_DIR)) {
         res.writeHead(400);
         return res.end('Bad path');
