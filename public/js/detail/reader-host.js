@@ -8,7 +8,7 @@ import { flushPendingNotes, state } from '../core/state.js';
 import { toast } from '../core/ui-kit.js';
 import { reader, set_reader, syncLocalAnnotations } from './info-tab.js';
 import { refresh } from '../library/refresh.js';
-import { PaperReader } from '/reader.js';
+import { PaperReader } from '../../reader.js';
 
 // 打开前总是拉一次 detailView：summaryView 不含 annotations，且刚保存后的详情缓存也可能是旧的。
 export async function openReader(paper) {

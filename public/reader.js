@@ -6,11 +6,11 @@
 // 再 import viewer（注册 globalThis.pdfjsViewer，依赖 pdfjsLib）。
 import '/vendor/pdfjs.js';
 import '/vendor/pdfjs-viewer.js';
-import { sp } from '/js/core/api.js';
-import { state } from '/js/core/state.js';
-import { renderMd, renderChatMd, truncateChatTitle } from '/js/core/markdown.js';
-import { NotesPanel } from '/js/detail/notes-panel.js';
-import { saveQaCardToNotes } from '/js/detail/detail.js';
+import { sp } from './js/core/api.js';
+import { state } from './js/core/state.js';
+import { renderMd, renderChatMd, truncateChatTitle } from './js/core/markdown.js';
+import { NotesPanel } from './js/detail/notes-panel.js';
+import { saveQaCardToNotes } from './js/detail/detail.js';
 import {
   CHAT_ROLE_ICO, chatMsgHtml, chatEmptyHtml, getChatPresets,
   getSelectedModel, toggleModelSwitcher,
@@ -21,11 +21,11 @@ import {
   applySendingUi as sharedApplySendingUi,
   updateSendEnabled as sharedUpdateSendEnabled,
   fileToCompressedDataURL,
-} from '/js/detail/chat-view.js';
-import { streamChatFetch } from '/js/core/stream.js';
+} from './js/detail/chat-view.js';
+import { streamChatFetch } from './js/core/stream.js';
 
-const pdfjsLib = globalThis.pdfjsLib;
-const pdfjsViewer = globalThis.pdfjsViewer;
+const pdfjsLib = globalThis.pdfjsLib || {}; // 测试环境无 pdfjsLib 时给空对象避免解构抛错
+const pdfjsViewer = globalThis.pdfjsViewer || {};
 
 // 配置 worker（只配一次）
 try { pdfjsLib.GlobalWorkerOptions.workerSrc = '/vendor/pdfjs.worker.js'; } catch {}
@@ -96,7 +96,8 @@ const { AnnotationEditorType, AnnotationEditorParamsType, PixelsPerInch } = pdfj
   // 初始编辑器模式用 NONE：保证 UIManager 被创建（isValidAnnotationEditorMode 要求单一值，
   // 组合位掩码如 FREETEXT|HIGHLIGHT|INK=27 会被判为非法导致 UIManager 不建）。
   // 具体工具由运行时 setTool 切换；高亮/便签/手写三类都在 UIManager 就绪后可用。
-  const ANNOT_EDITOR_INIT_MODE = AnnotationEditorType.NONE;
+  // （AnnotationEditorType 缺失=测试环境无 pdfjs，给 0 兜底；PaperReader 实例化才真正需要）
+  const ANNOT_EDITOR_INIT_MODE = (AnnotationEditorType && AnnotationEditorType.NONE) || 0;
 
   export class PaperReader {
     constructor(opts) {

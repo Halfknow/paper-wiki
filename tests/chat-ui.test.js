@@ -141,6 +141,12 @@ const $ = (id) => dom.window.document.getElementById(id);
 
 before(async () => {
   resetDetail();
+  // 注册 boot-loader resolve 钩子（把 /vendor/* 绝对路径映射到空 stub，
+  // 让 reader-host→reader.js 的 pdfjs 副作用 import 在 jsdom 不崩）。
+  // 此文件自包含 bootUi（不依赖 helpers/ui.js），需自行注册。
+  try {
+    require('node:module').register(pathToFileURL(path.join(__dirname, 'helpers', 'boot-loader.mjs')).href);
+  } catch { /* 重复注册或 Node < 20.6 忽略 */ }
   const html = fs
     .readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8')
     .replace(/<script[\s\S]*?<\/script>/g, ''); // 剥离 vendor script，手动 import app.js
