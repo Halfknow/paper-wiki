@@ -22,7 +22,8 @@ jobs:
       - name: Format check
         run: npm run format:check
       - name: Unit tests
-        run: npm test
+        # CI 全量（PW_FULL_TESTS=1 放行 jsdom UI / scanner 等慢速用例；本地 npm test 默认跳过）
+        run: npm run test:full
 
   pg-smoke:
     name: PG Integration Smoke

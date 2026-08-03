@@ -3,6 +3,9 @@
 //  2. refresh 轮询重建保护——updatedAt 不变不重建详情（「标题/总结无法选中复制」根因修复）
 //  3. @ 引用浮层 Esc 分层——Esc 只关浮层不波及底层（stopPropagation 语义锁定）
 
+const { guardSlowFile } = require('./helpers/slow');
+if (guardSlowFile('regression-ui')) return;
+
 const { test, before } = require('node:test');
 const assert = require('node:assert');
 const { bootUi } = require('./helpers/ui');

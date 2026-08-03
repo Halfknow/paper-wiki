@@ -5,7 +5,7 @@
 
 ## 这是什么
 
-一个**薄**的 Web 服务：扫描论文目录 `*.pdf` → 提取全文 → 查 arXiv 补元数据 → 用 OpenAI 兼容接口生成总结/标签/主题/概念/公式，并提供一个 Indigo 主题 SPA（列表 + 详情 tab + 独立 PDF 阅读器 + 批注 + 概念/公式清单 + 总览图制品 + 提示词编辑）。另有**按主题发现**：输入主题 → LLM 生成 arXiv 检索式 → 多轴召回 + 引用量复合排序 → 勾选导入（SSE 流式进度）。公式抽取引擎可在 AI / MinerU 间切换（v3.10）。
+一个**薄**的 Web 服务：扫描论文目录 `*.pdf` → 提取全文 → 查 arXiv 补元数据 → 用 OpenAI 兼容接口生成总结/标签/主题/概念/公式，并提供一个 Indigo 主题 SPA（列表 + 详情 tab + 独立 PDF 阅读器 + 批注 + 概念/公式清单 + 概念地图制品 + 提示词编辑）。另有**按主题发现**：输入主题 → LLM 生成 arXiv 检索式 → 多轴召回 + 引用量复合排序 → 勾选导入（SSE 流式进度）。公式抽取引擎可在 AI / MinerU 间切换（v3.10）。
 
 - **零构建前端**：原生 ESM，浏览器直接加载 `public/`。
 - **PostgreSQL 持久化（v3）**：全部结构化数据 + 论文全文入 PG（`src/db/index.js` repository，hash-diff 事务保存）；内存 store 形状仍是 v2 结构，上层逻辑无感知。PDF 文件本身仍在文件系统（Docker bind mount）。
@@ -61,8 +61,9 @@ public/                零构建前端（原生 ESM，浏览器直接加载）
 scripts/               运维脚本：scan-once（CLI 扫描）/ migrate-json-to-pg（旧数据迁移，幂等）/
                         backfill-metadata（arXiv 元数据回填，dry-run 默认）/
                         e2e-bootstrap（e2e 种子）/ backup-pg.sh（pg_dump）
-tests/                 node --test 单测（572 例，pg-mem 无需真实 PG；chat-ui/notes-panel/regression-ui 用
-                        jsdom 驱动真实 app.js，共享 helpers/ui.js 的 bootUi）+ e2e（Playwright 7 例，需 dev PG）
+tests/                 node --test 单测（全量 580 例，pg-mem 无需真实 PG；chat-ui/notes-panel/regression-ui 用
+                        jsdom 驱动真实 app.js，共享 helpers/ui.js 的 bootUi；helpers/slow.js 慢文件守卫——
+                        npm test 默认跳过 >5s 文件，test:full 全量）+ e2e（Playwright 7 例，需 dev PG）
 docs/                  设计文档（superpowers/specs+plans）+ TODO + 调研报告
 Dockerfile / docker-compose.yml / .env(.example)   部署（app+postgres；PAPERS_ROOT bind mount）
 config.json(.example)  业务配置（AI 网关等；根目录，compose 只读挂载）
@@ -117,7 +118,8 @@ backups/ logs/         运行时产物（gitignore）：JSON 快照与归档 / �
     "tagsPrompt": "...",               // 标签/主题提示词（强制 JSON）
     "formulaPrompt": "...",            // 公式抽取提示词（强制 JSON，v3.9 三级回退）
     "conceptPrompt": "...",            // 概念抽取提示词（强制 JSON，v3.10 三级回退，含 category 字段）
-    "ai": { "baseURL": "...", "apiKey": "...", "model": "...", "maxInputTokens": 32000, "timeoutMs": 120000, "taskMaxInputTokens": {...}, "maxInputChars": 24000（旧别名）, "taskMaxInputChars": {...}（旧别名） },
+    "ai": { "baseURL": "...", "apiKey": "...", "model": "...", "maxInputTokens": 32000, "timeoutMs": 120000, "taskMaxInputTokens": {...}, "maxInputChars": 24000（旧别名）, "taskMaxInputChars": {...}（旧别名）,
+            "channels": [ { "id", "name", "baseURL", "apiKey", "model", "maxInputTokens" } ], "activeChannelId": "..." },  // v3.13 渠道（陷阱 43：存在即权威，顶层三元组已迁移删除）
     "scanIntervalMinutes": 5,          // 覆盖扫描间隔（热改 → scanner.reschedule；0=关闭定时扫描）
     "arxiv": { "enabled": true, "titleSimilarityThreshold": 0.75, "minIntervalMs": 3000 },
     "discover": { "maxResults": 40, "perAxis": 25, "semanticScholar": true, "openAlex": true,
@@ -125,7 +127,9 @@ backups/ logs/         运行时产物（gitignore）：JSON 快照与归档 / �
                   "semanticScholarApiKey": "...", "weights": { "rel": 0.45, "auth": 0.35, "rec": 0.2 } },
     "translate": { "engine": "google", "targetLang": "zh-CN" },  // 划线翻译
     "formulas": { "engine": "ai", "mineruUrl": "", "namingPrompt": "" },  // v3.10 公式引擎：ai|mineru + MinerU 地址 + 命名提示词
-    "conceptMaps": [ { "id", "name", "html", "prompt", "createdAt", "updatedAt" } ],  // v3.10 概念总览图制品
+    "conceptMapPrompt": "...",          // 概念地图生成提示词（v3.14 三级回退，设置页可编辑）
+    "conceptMaps": [ { "id", "name", "html", "prompt", "status", "error", "createdAt", "updatedAt" } ],  // v3.10 概念地图制品；
+                                     // v3.14 起 status=generating|ready|error（后台任务，见数据流「概念地图」）
     "updatedAt": 0
   }
 }
@@ -234,7 +238,7 @@ arXiv 导入 (POST /api/import { url, meta? }):
 
 **公式抽取**（`scanner.extractFormulas(ids)` + processOne 步骤 6）：走 `extractFormulasViaEngine` dispatcher（引擎=ai 喂全文 / 引擎=mineru 喂 PDF filepath）；`mergeFormulas` 按 canonicalName 去重，命中只补空字段。阅读器右上角下拉菜单支持「查看本篇/追加抽取/重新抽取（replace）」，候选端点 `POST /api/papers/:id/{formulas,concepts}/candidates` 返回不入库，勾选后 `merge {items, mode?}` 入库（见陷阱 40）。
 
-**概念总览图**（`POST /api/concepts/map`，v3.10）：把概念清单喂给 `generateConceptMap`（callChat jsonMode:false）产出单文件 HTML 全览图，存 `settings.conceptMaps` 制品数组。可基于自定义 prompt 二次优化（PUT，传 prevHtml）。
+**概念地图**（`POST /api/concepts/map`，v3.10；v3.14 起**后台任务化**）：POST/PUT 立即落库 `status:'generating'` 占位制品并返回（不挂请求等 AI），`startConceptMapJob` 在后台跑 `generateConceptMap`（**callChatStream 流式**——非流式大产出首字节前静默，会被代理空闲超时掐断；30min 预算、重试 1 次、支持 signal 取消），完成/失败更新占位再落库。切页/刷新不打断生成；前端 4s 轮询 settings 元信息，`generating→ready/error` 跳变 toast。生成中「删除」=取消任务（AbortController）；僵尸 generating（服务重启丢任务句柄）读路径解析为 error；同制品生成中重复优化 409；截断（缺 `</html>`）标 error 但保留半成品。提示词三级回退：当次自定义 > `settings.conceptMapPrompt` > 内置默认。
 
 
 **批注持久化**（reader.js ↔ api.js ↔ annotations.js）：前端 `annotationStorage.onSetModified` → 防抖 serialize（`doc.annotationStorage.serializable.map`）→ PATCH `{annotations:{items}}` → api.js 经 `annotations.normalizeAnnotations` 归一化后存 store。回显：open 时拿 detailView.annotations → loadAnnotations 按 pageIndex 分组 → pagerendered 后 `getPageView(i).annotationEditorLayer.annotationEditorLayer.deserialize(item)`。
@@ -423,16 +427,46 @@ arXiv 导入 (POST /api/import { url, meta? }):
     finally 调 `setBulkBusy(false)`。`setBulkBusy` 用 CSS `.bulk-bar.bulk-busy` 类统一禁用交互（触发器/菜单/删除键），
     取代每个动作手动 disable 5 个按钮。
 
-42. **大产出 AI 调用必须覆盖单次超时（v3.12 根因修复）**：`callChat` 默认用 `config.ai.timeoutMs`（120s），
-    对「生成单文件 HTML」（概念总览图）这类大产出远远不够——超时 abort 会被当网络错误进 4 次指数退避重试
-    （每次再超时 120s），白耗 ~10 分钟后 502，制品永远落不了库。`callChat`/`callChatStream` 现支持
-    `chatParams.timeoutMs`（单次超时）与 `chatParams.maxRetries`（重试次数）覆盖；`generateConceptMap`
-    传 `{ timeoutMs: 600000, maxRetries: 1 }`。**新增长耗时 AI 调用（整页 HTML/长文档生成）时必须显式给
-    timeoutMs 预算并调小 maxRetries**，且前端 abort 兜底要 ≥ 后端超时（总览图两端都是 10 分钟）。
+42. **大产出 AI 调用必须流式 + 后台任务化（v3.12/v3.14 两轮根因修复）**：`callChat` 默认用 `config.ai.timeoutMs`（120s），
+    对「生成单文件 HTML」（概念地图）这类大产出远远不够；v3.12 给 `chatParams.timeoutMs/maxRetries` 覆盖放宽到 10 分钟仍不够——
+    思考型模型（Kimi k3）大产出需数十分钟，且**非流式请求首字节前静默会被代理空闲超时掐断**。v3.14 定式：
+    ① 生成走 `callChatStream`（思考阶段就有字节流动，连接保活；30min 预算、重试 1 次）；
+    ② 路由层后台任务化（立即返回占位 + 后台生成 + 落库，前端轮询），**勿再让 HTTP 请求挂着等大产出 AI**；
+    ③ `chatParams.signal` 支持外部取消（`AbortSignal.any` 合并超时信号；外部取消不走退避重试——`cp.signal.aborted` 守卫在退避前抛出）。
+    `callChat`/`callChatStream` 支持 `chatParams.timeoutMs`（单次超时）与 `chatParams.maxRetries`（重试次数）覆盖。
+
+43. **模型渠道是 AI 三元组的单一事实源（v3.13）**：`settings.ai.channels[]` + `activeChannelId` 存在时，
+    `applySettingsOverride` 用活跃渠道的 `baseURL/apiKey/model/maxInputTokens` **权威覆盖**旧版顶层同名字段
+    （渠道 `maxInputTokens` 空 = 跟随全局；渠道 apiKey 显式空串 = 无鉴权端点，连 config 的 key 也不回退）。
+    首次 `PUT /api/settings/ai/channels`（列表非空）会**删除**旧版顶层三元组完成迁移——勿再双写；
+    无渠道存根时 GET /api/settings 合成 id=`ch_default` 的单卡片视图（掩码 key 解析到当前生效 key）。
+    所有渠道 model 自动并入 `extraModels`（聊天白名单/listModels 候选，勿再手动同步）。
+    **temperature 锁定模型**：Kimi k3 / OpenAI o 系列 / gpt-5 只收 temperature=1，默认 0.3 会被 400
+    （`only 1 is allowed`）——callChat/callChatStream 遇 400 且报错提及 temperature 时剥掉
+    `temperature/top_p` 立即重发（不占退避额度），新增模型接入遇 400 先查这条。
+    **模型选择器别用原生 datalist**（浏览器按当前输入值过滤、显示不全）：编辑卡用自定义
+    `.chf-model-wrap` 菜单（全量/子串过滤/contextLength 徽标/键盘导航）；tokens 回填归属靠
+    `card.dataset.tokensFor`（值属于哪个模型），选中时只覆盖「空值或归属另一模型」的 tokens；
+    选中后**勿再 focus() 输入框**（focusin 监听会把菜单重新打开）。
+
+44. **JS 瀑布流重排要盯容器宽度（ResizeObserver），不能只靠 window resize（v3.14）**：公式清单的
+    JS 绝对定位 masonry 按 `grid.clientWidth` 算列数——侧栏开合/窗口从窄恢复/DevTools 开合等
+    **不改变 window 尺寸或漏发事件的容器宽度变化**，会让瀑布流按旧窄宽度算成单列（看起来像「列表」）
+    且无人纠正，懒加载新批次沿用错误列数。`_renderFormulaBatch` 里挂了 ResizeObserver 盯 grid 本体，
+    **只认宽度变化**（高度变化是重排结果而非原因，必须过滤防反馈循环），window resize 保留作兜底。
+    新增 JS 布局代码需要响应尺寸时同理：优先 ResizeObserver 盯容器本体。
 
 ## 工程化
 
-- **测试**：`npm test`（node --test，572 例，覆盖全 lib + jsdom UI（聊天/笔记面板/回归）；db/spaces/scanner/api 用 pg-mem 无需真实 PG）；
+- **测试分层（v3.13）**：`npm test` = 快速套件（默认跳过 >5s 慢文件：6 个 jsdom UI + scanner，经 `tests/helpers/slow.js`
+  的 `guardSlowFile` 整文件 skip）；`npm run test:full`（= `PW_FULL_TESTS=1`，scripts/test-full.js）= 全量 580 例。
+  **CI 固定 test:full**；本地快速迭代用 npm test（~11s），提交前跑 test:full。
+  慢根因两条：① `callChat` 真实指数退避（429/5xx 用例白等 ~30s）——已由 `__setBackoffForTests` 钩子
+  在 ai.test.js 顶部全局禁用（新增重试用例不要再写真实等待）；② Docker Desktop bind mount 上
+  `require('jsdom')` ~20s/文件（gRPC-FUSE 小文件读放大，CI 原生 fs 无此问题）——故 UI 文件默认跳过。
+  新增慢文件（>5s）时在重型 require 之前 `if (guardSlowFile('name')) return;`。
+- **测试**：`npm test`（node --test，快速套件 ~489 例）/ `npm run test:full`（580 例，覆盖全 src + jsdom UI；
+  db/spaces/scanner/api 用 pg-mem 无需真实 PG）；
   `npm run test:e2e`（Playwright，reader 渲染 + 高亮往返；需 dev PG，见下）。
 - **双 PG 设计（生产 + 测试）**：`docker-compose.yml` 同时维护两个 PG，用 profile 隔离默认行为：
   - **`postgres`（生产）**：端口 `25432` → 宿主，持久卷 `pgdata`（存真实论文），`restart: unless-stopped`。`docker compose up` 默认启动，app 容器连此（`DATABASE_URL=@postgres:5432`）。
@@ -462,7 +496,8 @@ docker compose --profile test up -d postgres-test   # 启测试 PG（端口 1543
 DATABASE_URL=postgres://paperwiki:dev@127.0.0.1:15432/paperwiki npm start
 DATABASE_URL=... npm run scan      # 只扫一次，不启 HTTP
 
-npm test                  # node --test（572 例，pg-mem + jsdom，无需真实 PG）
+npm test                  # 快速套件（~489 例，跳过 >5s 慢文件；pg-mem + 无需真实 PG）
+npm run test:full         # 全量 580 例（PW_FULL_TESTS=1，含 jsdom UI/scanner；CI 跑这个）
 npm run test:e2e          # Playwright 7 例（先 docker compose --profile test up -d postgres-test；默认连 15432，可用 E2E_DATABASE_URL 覆盖）
 npm run lint              # ESLint
 npm run format:check      # Prettier 检查
@@ -471,7 +506,7 @@ npm run format:check      # Prettier 检查
 ## 待办 / 已知限制
 
 - 概念/公式去重为纯文本归一化（normalizeTerm/normalizeCanonicalName），无语义合并提示。
-- 概念总览图（conceptMaps）的 HTML 存在 settings jsonb，制品多时 GET /api/settings 体积增大（已只回显元信息规避）。
+- 概念地图（conceptMaps）的 HTML 存在 settings jsonb，制品多时 GET /api/settings 体积增大（已只回显元信息规避）。
 - 写锁是进程内的（repository writeChain），靠单容器单进程守护；多副本部署需改造（advisory lock 等）。
 - 批注已实现保存+回显；写回 PDF（XFDF）待办。
 - pgvector 向量检索（语义相似推荐）未启用（schema 可平滑演进）；tsvector 全文检索已于 v3.1 上线。

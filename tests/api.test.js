@@ -873,6 +873,100 @@ test('PUT /api/settings/ai 持久化、白名单字段、apiKey 掩码回传不�
   server.close();
 });
 
+// ---- v3.13 多渠道（模型卡片）----
+test('GET /api/settings 无渠道存根时从生效配置合成单渠道视图', async () => {
+  const store = {
+    version: 2, tags: [], topics: [], folders: [], concepts: [], papers: {},
+    settings: { ai: { baseURL: 'http://x/v1', apiKey: 'sk-legacy', model: 'glm' } },
+  };
+  const router = createApiRouter(baseCtx(store, async () => {}, { config: { ai: {} } }));
+  const server = await startServer(router.handle);
+  const port = server.address().port;
+  const r = await call(port, 'GET', '/api/settings');
+  const ai = r.json.data.ai;
+  assert.strictEqual(ai.channels.length, 1, '旧部署合成单渠道');
+  assert.strictEqual(ai.channels[0].id, 'ch_default');
+  assert.strictEqual(ai.channels[0].baseURL, 'http://x/v1');
+  assert.strictEqual(ai.channels[0].model, 'glm');
+  assert.strictEqual(ai.channels[0].hasApiKey, true);
+  assert.strictEqual(ai.channels[0].active, true);
+  assert.strictEqual(ai.activeChannelId, 'ch_default');
+  server.close();
+});
+
+test('PUT /api/settings/ai/channels 全量替换、掩码保留 key、迁移删除旧顶层字段', async () => {
+  const store = {
+    version: 2, tags: [], topics: [], folders: [], concepts: [], papers: {},
+    settings: { ai: { baseURL: 'http://legacy/v1', apiKey: 'sk-legacylegacy', model: 'legacy-model', timeoutMs: 90000 } },
+  };
+  const router = createApiRouter(baseCtx(store, async () => {}, { config: { ai: {} } }));
+  const server = await startServer(router.handle);
+  const port = server.address().port;
+  // 保存两个渠道：ch_default 掩码回传（应保留旧生效 key），新渠道无 id（应生成）
+  const r1 = await call(port, 'PUT', '/api/settings/ai/channels', {
+    channels: [
+      { id: 'ch_default', name: '旧网关', baseURL: 'http://legacy/v1', apiKey: '********', model: 'legacy-model' },
+      { name: 'Kimi', baseURL: 'https://api.kimi.com/coding/v1', apiKey: 'sk-kimi-abc', model: 'k3', maxInputTokens: 1000000 },
+    ],
+    activeChannelId: 'ch_default',
+  });
+  assert.strictEqual(r1.status, 200);
+  const ai1 = r1.json.data.ai;
+  assert.strictEqual(ai1.channels.length, 2);
+  assert.strictEqual(store.settings.ai.channels[0].apiKey, 'sk-legacylegacy', '掩码回传保留旧生效 key');
+  const gen = store.settings.ai.channels[1];
+  assert.ok(/^ch_[0-9a-f]{8}$/.test(gen.id), '缺省 id 自动生成');
+  assert.strictEqual(gen.apiKey, 'sk-kimi-abc');
+  assert.strictEqual(gen.maxInputTokens, 1000000);
+  assert.strictEqual(ai1.activeChannelId, 'ch_default');
+  // 迁移：旧版顶层三元组删除（渠道成单一事实源），全局字段保留
+  assert.strictEqual(store.settings.ai.baseURL, undefined);
+  assert.strictEqual(store.settings.ai.apiKey, undefined);
+  assert.strictEqual(store.settings.ai.model, undefined);
+  assert.strictEqual(store.settings.ai.timeoutMs, 90000);
+  // 生效配置 = 活跃渠道
+  assert.strictEqual(ai1.baseURL, 'http://legacy/v1');
+  assert.strictEqual(ai1.model, 'legacy-model');
+  // 切换默认 → 生效配置立即切换到 Kimi（含渠道级 maxInputTokens）
+  const kimiId = gen.id;
+  const r2 = await call(port, 'PUT', '/api/settings/ai/channels', {
+    channels: [
+      { id: 'ch_default', name: '旧网关', baseURL: 'http://legacy/v1', apiKey: '********', model: 'legacy-model' },
+      { id: kimiId, name: 'Kimi', baseURL: 'https://api.kimi.com/coding/v1', apiKey: '********', model: 'k3', maxInputTokens: 1000000 },
+    ],
+    activeChannelId: kimiId,
+  });
+  assert.strictEqual(r2.status, 200);
+  const ai2 = r2.json.data.ai;
+  assert.strictEqual(ai2.baseURL, 'https://api.kimi.com/coding/v1');
+  assert.strictEqual(ai2.model, 'k3');
+  assert.strictEqual(ai2.maxInputTokens, 1000000, '渠道级 tokens 生效');
+  assert.strictEqual(store.settings.ai.channels[1].apiKey, 'sk-kimi-abc', '二次保存掩码仍保留新渠道 key');
+  assert.strictEqual(ai2.channels.find((c) => c.id === kimiId).active, true);
+  server.close();
+});
+
+test('PUT /api/settings/ai/channels 校验：缺 baseURL/model 报 400；activeChannelId 未命中回落第一个', async () => {
+  const store = { version: 2, tags: [], topics: [], folders: [], concepts: [], settings: {}, papers: {} };
+  const router = createApiRouter(baseCtx(store));
+  const server = await startServer(router.handle);
+  const port = server.address().port;
+  const bad = await call(port, 'PUT', '/api/settings/ai/channels', { channels: [{ name: 'x', model: 'm' }] });
+  assert.strictEqual(bad.status, 400);
+  const r = await call(port, 'PUT', '/api/settings/ai/channels', {
+    channels: [{ baseURL: 'http://a/v1', model: 'ma' }, { baseURL: 'http://b/v1', model: 'mb' }],
+    activeChannelId: 'ch_nope',
+  });
+  assert.strictEqual(r.status, 200);
+  assert.strictEqual(r.json.data.ai.activeChannelId, r.json.data.ai.channels[0].id, '未命中回落第一个渠道');
+  // 空列表 = 清除渠道，回落 config/旧版语义
+  const r2 = await call(port, 'PUT', '/api/settings/ai/channels', { channels: [] });
+  assert.strictEqual(r2.status, 200);
+  assert.strictEqual(store.settings.ai.channels, undefined);
+  assert.strictEqual(r2.json.data.ai.channels.length, 0, 'config 无 ai 配置时无合成渠道');
+  server.close();
+});
+
 test('PATCH /api/topics 主题重命名/删除（对齐标签 PATCH）', async () => {
   const store = {
     version: 2,
@@ -2382,3 +2476,177 @@ test('?space=no-such 容错回退 active 空间', async () => {
   server.close();
 });
 
+
+// ============================================================================
+// 概念地图后台生成任务（v3.14）：POST/PUT 立即返回占位 → 后台流式生成 → 落库
+// ============================================================================
+
+/** 伪造 OpenAI 兼容上游：按 handler 定制响应（SSE 流式）。返回 { server, url }。 */
+async function startFakeAi(handler) {
+  const server = http.createServer((req, res) => handler(req, res));
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  return { server, url: `http://127.0.0.1:${server.address().port}/v1` };
+}
+/** 立即返回完整 HTML 的 SSE 响应体 */
+function sseHtml(html) {
+  return (req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+    res.end(`data: ${JSON.stringify({ choices: [{ delta: { content: html } }] })}\n\ndata: [DONE]\n\n`);
+  };
+}
+/** 延迟 ms 才响应（模拟慢生成，用于取消/冲突测试） */
+function sseSlow(html, ms) {
+  return (req, res) => {
+    setTimeout(() => {
+      try {
+        res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+        res.end(`data: ${JSON.stringify({ choices: [{ delta: { content: html } }] })}\n\ndata: [DONE]\n\n`);
+      } catch { /* 客户端已 abort */ }
+    }, ms);
+  };
+}
+async function waitForCond(fn, ms = 4000) {
+  const t0 = Date.now();
+  for (;;) {
+    const v = await fn();
+    if (v) return v;
+    if (Date.now() - t0 > ms) throw new Error('waitForCond timeout');
+    await new Promise((r) => setTimeout(r, 50));
+  }
+}
+function conceptMapTestStore() {
+  return {
+    version: 2,
+    tags: [],
+    topics: [],
+    folders: [],
+    concepts: [{ id: 'c1', term: 'Attention', definition: 'd', category: 'model', paperIds: ['p1'], source: 'ai', createdAt: 0, updatedAt: 0 }],
+    settings: {},
+    papers: {},
+  };
+}
+
+test('POST /api/concepts/map：后台任务占位 → 完成落库 → 可取 html', async () => {
+  const ai = await startFakeAi(sseHtml('<html><body>MAP</body></html>'));
+  const store = conceptMapTestStore();
+  const config = { ai: { baseURL: ai.url, apiKey: 'k', model: 'm', timeoutMs: 4000 }, scanIntervalMinutes: 5 };
+  const router = createApiRouter(baseCtx(store, async () => {}, { config }));
+  const server = await startServer(router.handle);
+  const port = server.address().port;
+  // POST 立即返回占位（不等 AI）
+  const r = await call(port, 'POST', '/api/concepts/map', { prompt: '' });
+  assert.strictEqual(r.status, 200);
+  assert.strictEqual(r.json.ok, true);
+  assert.strictEqual(r.json.data.status, 'generating', 'POST 应立即返回 generating 占位');
+  assert.strictEqual(r.json.data.hasHtml, false);
+  const id = r.json.data.id;
+  // 后台任务完成 → settings 元信息翻 ready
+  await waitForCond(async () => {
+    const s = await call(port, 'GET', '/api/settings');
+    const m = (s.json.data.conceptMaps || []).find((x) => x.id === id);
+    return m && m.status === 'ready' ? m : null;
+  });
+  // 单个制品取回完整 html
+  const one = await call(port, 'GET', '/api/concepts/map/' + id);
+  assert.strictEqual(one.json.data.html, '<html><body>MAP</body></html>');
+  assert.strictEqual(store.settings.conceptMaps[0].status, 'ready', '落库的制品应为 ready');
+  server.close();
+  ai.server.close();
+});
+
+test('POST /api/concepts/map：输出截断（无 </html>）标 error 但保留半成品', async () => {
+  const ai = await startFakeAi(sseHtml('<html><body>UNFINISHED'));
+  const store = conceptMapTestStore();
+  const config = { ai: { baseURL: ai.url, apiKey: 'k', model: 'm', timeoutMs: 4000 }, scanIntervalMinutes: 5 };
+  const router = createApiRouter(baseCtx(store, async () => {}, { config }));
+  const server = await startServer(router.handle);
+  const port = server.address().port;
+  const r = await call(port, 'POST', '/api/concepts/map', {});
+  const id = r.json.data.id;
+  const m = await waitForCond(async () => {
+    const s = await call(port, 'GET', '/api/settings');
+    const x = (s.json.data.conceptMaps || []).find((y) => y.id === id);
+    return x && x.status !== 'generating' ? x : null;
+  });
+  assert.strictEqual(m.status, 'error', '截断产出应标 error');
+  assert.ok(m.error.includes('截断') || m.error.includes('不完整'), '错误信息应说明截断');
+  assert.strictEqual(m.hasHtml, true, '半成品 html 应保留（可查看/再优化）');
+  server.close();
+  ai.server.close();
+});
+
+test('DELETE /api/concepts/map/:id：生成中删除=取消后台任务', async () => {
+  const ai = await startFakeAi(sseSlow('<html>slow</html>', 3000));
+  const store = conceptMapTestStore();
+  const config = { ai: { baseURL: ai.url, apiKey: 'k', model: 'm', timeoutMs: 10000 }, scanIntervalMinutes: 5 };
+  const router = createApiRouter(baseCtx(store, async () => {}, { config }));
+  const server = await startServer(router.handle);
+  const port = server.address().port;
+  const r = await call(port, 'POST', '/api/concepts/map', {});
+  const id = r.json.data.id;
+  const d = await call(port, 'DELETE', '/api/concepts/map/' + id);
+  assert.strictEqual(d.json.ok, true);
+  assert.strictEqual(store.settings.conceptMaps.length, 0, '删除后制品应立即从 store 移除');
+  // 等被取消的任务收尾（abort → catch → save），确认不会复活制品
+  await new Promise((r2) => setTimeout(r2, 300));
+  assert.strictEqual(store.settings.conceptMaps.length, 0, '被取消的任务收尾后制品不得复活');
+  server.close();
+  ai.server.close();
+});
+
+test('PUT /api/concepts/map：生成中重复优化返回 409', async () => {
+  const ai = await startFakeAi(sseSlow('<html>slow</html>', 2000));
+  const store = conceptMapTestStore();
+  const config = { ai: { baseURL: ai.url, apiKey: 'k', model: 'm', timeoutMs: 10000 }, scanIntervalMinutes: 5 };
+  const router = createApiRouter(baseCtx(store, async () => {}, { config }));
+  const server = await startServer(router.handle);
+  const port = server.address().port;
+  const r = await call(port, 'POST', '/api/concepts/map', {});
+  const id = r.json.data.id;
+  const put = await call(port, 'PUT', '/api/concepts/map', { id, prompt: '改成矩阵图' });
+  assert.strictEqual(put.status, 409, '生成中的制品再次优化应 409');
+  // 清理：取消任务
+  await call(port, 'DELETE', '/api/concepts/map/' + id);
+  server.close();
+  ai.server.close();
+});
+
+test('僵尸 generating 制品（无任务句柄=服务重启）读路径解析为 error', async () => {
+  const store = conceptMapTestStore();
+  store.settings.conceptMaps = [
+    { id: 'cm_zombie', name: '概念地图', html: '', prompt: '', status: 'generating', error: '', createdAt: 1, updatedAt: 1 },
+  ];
+  const router = createApiRouter(baseCtx(store));
+  const server = await startServer(router.handle);
+  const port = server.address().port;
+  const s = await call(port, 'GET', '/api/settings');
+  const m = s.json.data.conceptMaps.find((x) => x.id === 'cm_zombie');
+  assert.strictEqual(m.status, 'error', '无任务句柄的 generating 应解析为 error（服务重启中断）');
+  assert.ok(m.error.includes('重启'));
+  server.close();
+});
+
+test('PUT /api/settings/concept-map-prompt：保存/回显/重置', async () => {
+  const store = conceptMapTestStore();
+  const router = createApiRouter(baseCtx(store));
+  const server = await startServer(router.handle);
+  const port = server.address().port;
+  const put = await call(port, 'PUT', '/api/settings/concept-map-prompt', { value: '  我的自定义地图提示词  ' });
+  assert.strictEqual(put.json.ok, true);
+  let s = await call(port, 'GET', '/api/settings');
+  assert.strictEqual(s.json.data.conceptMapPrompt, '我的自定义地图提示词');
+  assert.strictEqual(s.json.data.overrides.conceptMapPrompt, true, 'overrides 应含 conceptMapPrompt');
+  assert.ok(s.json.data.defaultConceptMapPrompt.length > 100, '内置默认应回显供参考');
+  // 空串恢复默认
+  await call(port, 'PUT', '/api/settings/concept-map-prompt', { value: '' });
+  s = await call(port, 'GET', '/api/settings');
+  assert.strictEqual(s.json.data.conceptMapPrompt, '');
+  assert.strictEqual(s.json.data.overrides.conceptMapPrompt, false);
+  // reset section 也认 conceptMapPrompt
+  await call(port, 'PUT', '/api/settings/concept-map-prompt', { value: 'x' });
+  const rst = await call(port, 'POST', '/api/settings/reset', { section: 'conceptMapPrompt' });
+  assert.strictEqual(rst.json.ok, true);
+  s = await call(port, 'GET', '/api/settings');
+  assert.strictEqual(s.json.data.conceptMapPrompt, '');
+  server.close();
+});

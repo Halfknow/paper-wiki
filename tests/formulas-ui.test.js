@@ -1,6 +1,9 @@
 // 公式清单页 UI 测试（v3.9）：jsdom 驱动真实 public/app.js + 真实 index.html。
 // 覆盖：视图切换 / KaTeX 渲染 / 符号表 / 论文胶囊跳转 / 搜索 / 排序 / 布局 / 编辑 / 删除 / 批量抽取。
 
+const { guardSlowFile } = require('./helpers/slow');
+if (guardSlowFile('formulas-ui')) return;
+
 const { test, before } = require('node:test');
 const assert = require('node:assert');
 const { bootUi } = require('./helpers/ui');

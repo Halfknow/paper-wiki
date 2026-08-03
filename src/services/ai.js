@@ -96,10 +96,10 @@ Data Augmentation、Backpropagation、Gradient Clipping、Knowledge Distillation
 /** 向后兼容别名（旧名 CONCEPT_PROMPT = DEFAULT_CONCEPT_PROMPT，避免破坏现有 import）。 */
 const CONCEPT_PROMPT = DEFAULT_CONCEPT_PROMPT;
 
-/** 概念总览图生成提示词（v3.10）：把概念清单喂给模型，产出**单文件 HTML 全览图**。
+/** 概念地图生成提示词（v3.10）：把概念清单喂给模型，产出**单文件 HTML 全览图**。
  *  融入 claude 原生可视化美学（暗色/玻璃拟态/微动画/鲜艳渐变/大胆字体），输出可在整页呈现的
  *  交互式总览（韦恩图/架构图/矩阵图形态，可切换视图的交互按钮）。可被 settings.conceptMapPrompt 覆盖。 */
-const DEFAULT_CONCEPT_MAP_PROMPT = `你是一位顶尖的前端可视化设计师 + AI/ML 知识架构师。给定一份概念清单（含术语、解释、分类、出现论文），生成一个**单文件 HTML 概念总览图**，目的是帮助用户一眼厘清这些概念之间的整体脉络与分类结构。
+const DEFAULT_CONCEPT_MAP_PROMPT = `你是一位顶尖的前端可视化设计师 + AI/ML 知识架构师。给定一份概念清单（含术语、解释、分类、出现论文），生成一个**单文件 HTML 概念地图**，目的是帮助用户一眼厘清这些概念之间的整体脉络与分类结构。
 
 ## 设计美学（claude 原生可视化风格，必须遵循）
 - **暗色主题**：深色背景（#0a0e1a / #0f172a 系），玻璃拟态卡片（backdrop-filter blur + 半透明边框）。
@@ -568,6 +568,29 @@ function applySettingsOverride(config, settings) {
     const baseT = config && config.ai && config.ai.taskMaxInputTokens ? config.ai.taskMaxInputTokens : {};
     baseAi.taskMaxInputTokens = { ...baseT, ...(aiOverride.taskMaxInputTokens || {}) };
   }
+  // --- v3.13 多渠道：settings.ai.channels + activeChannelId。
+  //     渠道列表非空且 activeChannelId 命中时，该渠道的 baseURL/apiKey/model/maxInputTokens
+  //     权威覆盖上面合并出的单配置（渠道是单一事实源）；渠道 maxInputTokens 空 = 跟随全局。
+  //     所有渠道 model 并入 extraModels（聊天切换器白名单 + listModels 候选自动包含渠道模型）。
+  const chanList = Array.isArray(aiOverride.channels) ? aiOverride.channels : [];
+  if (chanList.length) {
+    const merged = Array.isArray(baseAi.extraModels) ? baseAi.extraModels.slice() : [];
+    const seen = new Set(merged);
+    for (const c of chanList) {
+      if (c && c.model && !seen.has(c.model)) {
+        seen.add(c.model);
+        merged.push(c.model);
+      }
+    }
+    baseAi.extraModels = merged;
+    const active = chanList.find((c) => c && c.id === aiOverride.activeChannelId) || null;
+    if (active) {
+      if (typeof active.baseURL === 'string' && active.baseURL) baseAi.baseURL = active.baseURL;
+      if (typeof active.apiKey === 'string') baseAi.apiKey = active.apiKey; // 渠道显式空 key = 无鉴权网关
+      if (typeof active.model === 'string' && active.model) baseAi.model = active.model;
+      if (Number(active.maxInputTokens) > 0) baseAi.maxInputTokens = Number(active.maxInputTokens);
+    }
+  }
   eff.ai = baseAi;
 
   // --- 以下新增段统一规则：!== undefined 即覆盖（正确处理布尔 false / 数值 0）。
@@ -636,10 +659,36 @@ function applySettingsOverride(config, settings) {
  *  - jsonMode=true（默认）：强制 response_format: json_object，用于结构化抽取。
  *  - jsonMode=false：不设 response_format，允许模型自由输出 Markdown / 纯文本（用于总结）。
  *  - chatParams.model：可选，覆盖 config.ai.model（前端模型切换器用，须经白名单校验）。
- *  - chatParams.timeoutMs：可选，单次调用超时覆盖（如概念总览图等大产出生成远超默认 120s）。
+ *  - chatParams.timeoutMs：可选，单次调用超时覆盖（如概念地图等大产出生成远超默认 120s）。
  *  - chatParams.maxRetries：可选，重试次数覆盖（长耗时调用应调小，避免超时后反复重试白白耗时）。
+ *  - chatParams.signal：可选，外部取消信号（如后台任务被用户删除时主动中断），与超时信号合并。
  *  - messages[i].content 支持数组（OpenAI 多模态：[{type:'text',text},{type:'image_url',image_url:{url}}]），
  *    原样透传给上游，用于视觉问答。 */
+
+/** 合成请求中止信号：超时（AbortSignal.timeout）+ 外部取消信号（chatParams.signal）二合一。
+ *  AbortSignal.any 需 Node 20+（项目要求 ≥20）；不可用时退化为仅超时信号。 */
+function composeChatSignal(effTimeoutMs, externalSignal) {
+  const timeoutSignal =
+    typeof AbortSignal !== 'undefined' && AbortSignal.timeout ? AbortSignal.timeout(effTimeoutMs) : undefined;
+  if (!externalSignal) return timeoutSignal;
+  if (typeof AbortSignal !== 'undefined' && AbortSignal.any && timeoutSignal) {
+    return AbortSignal.any([timeoutSignal, externalSignal]);
+  }
+  return externalSignal;
+}
+
+/** 429/5xx 指数退避等待（2s→4s→8s→16s，封顶 30s + ≤0.5s 抖动）。
+ *  测试经 __setBackoffForTests 替换为零延迟——真实退避会让单测白等 ~30s。 */
+const defaultBackoffWait = (attempt) => {
+  const backoff = Math.min(30000, 2000 * Math.pow(2, attempt)) + Math.floor(Math.random() * 500);
+  return new Promise((r) => setTimeout(r, backoff));
+};
+let backoffWait = defaultBackoffWait;
+/** 测试专用：替换退避函数（传 null 还原真实退避）。生产代码勿调。 */
+function __setBackoffForTests(fn) {
+  backoffWait = typeof fn === 'function' ? fn : defaultBackoffWait;
+}
+
 async function callChat({ messages, config, fetchImpl = fetch, jsonMode = true, chatParams }) {
   const { baseURL, apiKey, model, timeoutMs = 120000 } = config.ai;
   const url = `${String(baseURL).replace(/\/$/, '')}/chat/completions`;
@@ -653,8 +702,7 @@ async function callChat({ messages, config, fetchImpl = fetch, jsonMode = true, 
   const maxRetries = cp.maxRetries != null ? cp.maxRetries : 4;
   let lastErr;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    const signal =
-      typeof AbortSignal !== 'undefined' && AbortSignal.timeout ? AbortSignal.timeout(effTimeoutMs) : undefined;
+    const signal = composeChatSignal(effTimeoutMs, cp.signal);
     let res;
     try {
       res = await fetchImpl(url, {
@@ -671,15 +719,24 @@ async function callChat({ messages, config, fetchImpl = fetch, jsonMode = true, 
         const data = await res.json();
         return data && data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content;
       }
+      const errText = await res.text().catch(() => '');
+      // 锁定采样参数的模型（Kimi k3「only 1 is allowed」/ OpenAI o 系列 / gpt-5）：
+      // 400 且报错提及 temperature 时剥掉 temperature/top_p 立即重发（不消耗退避重试额度）。
+      if (res.status === 400 && /temperature/i.test(errText) && reqBody.temperature !== undefined) {
+        delete reqBody.temperature;
+        delete reqBody.top_p;
+        attempt--;
+        continue;
+      }
       // 429 / 5xx 可重试；其它（400 鉴权/模型不存在等）直接失败
       const retryable = res.status === 429 || (res.status >= 500 && res.status < 600);
-      const errText = await res.text().catch(() => '');
       lastErr = new Error(`AI HTTP ${res.status}: ${errText.slice(0, 200)}`);
       if (!retryable) throw lastErr;
     }
+    // 外部取消（chatParams.signal，如后台任务被删除）不走退避重试，立即抛出
+    if (cp.signal && cp.signal.aborted) throw lastErr || new Error('aborted');
     if (attempt < maxRetries) {
-      const backoff = Math.min(30000, 2000 * Math.pow(2, attempt)) + Math.floor(Math.random() * 500);
-      await new Promise((r) => setTimeout(r, backoff));
+      await backoffWait(attempt);
     }
   }
   throw lastErr;
@@ -711,8 +768,7 @@ async function callChatStream({ messages, config, fetchImpl = fetch, jsonMode = 
   const maxRetries = cp.maxRetries != null ? cp.maxRetries : 4;
   let lastErr;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    const signal =
-      typeof AbortSignal !== 'undefined' && AbortSignal.timeout ? AbortSignal.timeout(effTimeoutMs) : undefined;
+    const signal = composeChatSignal(effTimeoutMs, cp.signal);
     let res;
     try {
       res = await fetchImpl(url, {
@@ -722,7 +778,7 @@ async function callChatStream({ messages, config, fetchImpl = fetch, jsonMode = 
         signal,
       });
     } catch (e) {
-      lastErr = e; // 网络层错误，退避重试
+      lastErr = e;
     }
     if (res) {
       if (res.ok) {
@@ -768,15 +824,23 @@ async function callChatStream({ messages, config, fetchImpl = fetch, jsonMode = 
         }
         continue;
       }
+      // 锁定采样参数的模型（Kimi k3 / OpenAI o 系列 / gpt-5）：400 且提及 temperature → 剥参数重发（不占额度）
+      const errText = await res.text().catch(() => '');
+      if (res.status === 400 && /temperature/i.test(errText) && reqBody.temperature !== undefined) {
+        delete reqBody.temperature;
+        delete reqBody.top_p;
+        attempt--;
+        continue;
+      }
       // 429 / 5xx 可重试；其它直接失败
       const retryable = res.status === 429 || (res.status >= 500 && res.status < 600);
-      const errText = await res.text().catch(() => '');
       lastErr = new Error(`AI HTTP ${res.status}: ${errText.slice(0, 200)}`);
       if (!retryable) throw lastErr;
     }
+    // 外部取消（chatParams.signal，如后台任务被删除）不走退避重试，立即抛出
+    if (cp.signal && cp.signal.aborted) throw lastErr || new Error('aborted');
     if (attempt < maxRetries) {
-      const backoff = Math.min(30000, 2000 * Math.pow(2, attempt)) + Math.floor(Math.random() * 500);
-      await new Promise((r) => setTimeout(r, backoff));
+      await backoffWait(attempt);
     }
   }
   throw lastErr;
@@ -871,12 +935,18 @@ async function extractConcepts({ title, abstract, fulltext, existingTerms, confi
   return parseConceptResult(text);
 }
 
-/** 概念总览图生成（v3.10）：把概念清单喂给模型，产出单文件 HTML 全览图。
+/** 概念地图生成（v3.10）：把概念清单喂给模型，产出单文件 HTML 全览图。
  *  - concepts：store.concepts（含 term/definition/category/paperIds）。
- *  - prompt：默认内置 DEFAULT_CONCEPT_MAP_PROMPT，可被 settings 覆盖。
+ *  - prompt：默认内置 DEFAULT_CONCEPT_MAP_PROMPT，可被 settings.conceptMapPrompt 覆盖。
  *  - prevHtml：优化已有制品时传入原 HTML，让模型在其基础上按新 prompt 调整（而非从零重做）。
- *  返回 HTML 字符串（已剥 ```html 围栏）。jsonMode:false（HTML 非 JSON）。 */
-async function generateConceptMap({ concepts, config, fetchImpl = fetch, prompt, prevHtml }) {
+ *  - signal：后台任务取消信号（用户在生成中删除制品时主动中断）。
+ *  返回 HTML 字符串（已剥 ```html 围栏）。jsonMode:false（HTML 非 JSON）。
+ *
+ *  走**流式**（callChatStream）而非非流式 callChat（v3.14 根因修复）：单文件 HTML 大产出
+ *  常需数十分钟（思考型模型尤甚），非流式请求首字节前完全静默，会被网关/中间代理的空闲
+ *  超时掐断（且旧 10 分钟 total 预算也不够）；流式从思考阶段就有字节流动，连接保活。
+ *  total 预算放宽到 30 分钟；只重试 1 次（超长生成重试代价太大）。 */
+async function generateConceptMap({ concepts, config, fetchImpl = fetch, prompt, prevHtml, signal }) {
   const sys = prompt && String(prompt).trim() ? String(prompt).trim() : DEFAULT_CONCEPT_MAP_PROMPT;
   // 精简概念清单喂给模型（term/definition/category + 出现论文数；过多时截断防超长）
   const items = (Array.isArray(concepts) ? concepts : [])
@@ -891,12 +961,12 @@ async function generateConceptMap({ concepts, config, fetchImpl = fetch, prompt,
     '概念清单（JSON）：\n' +
     JSON.stringify(items, null, 2) +
     (prevHtml
-      ? '\n\n这是之前生成的总览图 HTML，请在它基础上按我的新要求调整（保留好的部分，改进不足）：\n```html\n' +
+      ? '\n\n这是之前生成的概念地图 HTML，请在它基础上按我的新要求调整（保留好的部分，改进不足）：\n```html\n' +
         String(prevHtml).slice(0, 60000) +
         '\n```'
       : '') +
-    '\n\n请生成单文件 HTML 概念总览图，直接输出 HTML 文档。';
-  const text = await callChat({
+    '\n\n请生成单文件 HTML 概念地图，直接输出 HTML 文档。';
+  const text = await callChatStream({
     messages: [
       { role: 'system', content: sys },
       { role: 'user', content: user },
@@ -904,9 +974,7 @@ async function generateConceptMap({ concepts, config, fetchImpl = fetch, prompt,
     config,
     fetchImpl,
     jsonMode: false,
-    // 单文件 HTML 大产出生成耗时常远超默认 timeoutMs（120s）——超时 abort 会走重试链白耗 10 分钟仍 502，
-    // 制品永远落不了库。给足 10 分钟预算（与前端 abort 一致），且只重试 1 次（超时重试无意义）。
-    chatParams: { timeoutMs: 600000, maxRetries: 1 },
+    chatParams: { timeoutMs: 1800000, maxRetries: 1, signal },
   });
   // 剥 ```html / ``` 围栏（模型偶发包裹）
   let html = String(text || '').trim();
@@ -998,10 +1066,17 @@ function extractContextLength(m) {
   return Number.isFinite(n) && n > 0 ? n : null;
 }
 
+/** 从上游模型对象抽取展示名（OpenRouter/Kimi 等返回 display_name，OpenAI 无 → null）。 */
+function extractDisplayName(m) {
+  if (!m || typeof m !== 'object') return null;
+  const v = m.display_name ?? m.displayName ?? m.name;
+  return typeof v === 'string' && v && v !== m.id ? v : null;
+}
+
 /** 列出可用模型（Phase 2 模型切换器用）。
  *  - 优先调上游 OpenAI 兼容 /v1/models（带 apiKey）；失败/未配置回退 config.ai.model 单条 + extraModels。
  *  - 永不抛错：上游不可达时返回静态候选，保证前端模型切换器总能渲染。
- *  - 返回 { models: [{id, owned_by?, contextLength?}], default, current, source: 'upstream'|'config' }。
+ *  - 返回 { models: [{id, owned_by?, contextLength?, displayName?}], default, current, source: 'upstream'|'config' }。
  *    contextLength（token 数，可空）来自网关扩展字段，前端模型切换器展示「模型 · 1M」用。 */
 async function listModels({ config, fetchImpl = fetch, timeoutMs = 8000 }) {
   const model = config && config.ai && config.ai.model;
@@ -1028,14 +1103,14 @@ async function listModels({ config, fetchImpl = fetch, timeoutMs = 8000 }) {
     const data = await res.json();
     const list = Array.isArray(data && data.data)
       ? data.data
-          .map((m) => ({ id: m.id, owned_by: m.owned_by, contextLength: extractContextLength(m) }))
+          .map((m) => ({ id: m.id, owned_by: m.owned_by, contextLength: extractContextLength(m), displayName: extractDisplayName(m) }))
           .filter((m) => m && m.id)
       : Array.isArray(data && data.models)
         ? data.models
             .map((m) =>
               typeof m === 'string'
-                ? { id: m, contextLength: null }
-                : { id: m.id, owned_by: m.owned_by, contextLength: extractContextLength(m) },
+                ? { id: m, contextLength: null, displayName: null }
+                : { id: m.id, owned_by: m.owned_by, contextLength: extractContextLength(m), displayName: extractDisplayName(m) },
             )
             .filter((m) => m && m.id)
         : [];
@@ -1102,4 +1177,6 @@ module.exports = {
   callChat,
   callChatStream,
   listModels,
+  // 测试钩子（生产勿用）
+  __setBackoffForTests,
 };

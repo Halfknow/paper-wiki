@@ -3,6 +3,9 @@
 // dialog.js（PWDialog 自定义弹窗）真实 DOM 测试：jsdom + runScripts 直接执行 public/dialog.js。
 // 覆盖：confirm 确定/取消/Esc/点遮罩、prompt 输入/Esc、标题与 danger 样式、键盘事件隔离（stopPropagation）。
 
+const { guardSlowFile } = require('./helpers/slow');
+if (guardSlowFile('dialog-ui')) return;
+
 const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');

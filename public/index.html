@@ -192,7 +192,7 @@
         <input id="concept-q" type="search" placeholder="搜索术语或解释…" />
         <div class="seg" id="concept-view" role="group" aria-label="视图切换">
           <button type="button" data-view="list" class="active" title="概念清单（瀑布/紧凑）">清单</button>
-          <button type="button" data-view="maps" title="概念总览图制品">总览图</button>
+          <button type="button" data-view="maps" title="概念地图制品">地图</button>
         </div>
         <div class="seg" id="concept-layout" role="group" aria-label="显示方式">
           <button type="button" data-layout="masonry" class="active" title="瀑布流卡片">瀑布</button>
@@ -210,13 +210,13 @@
       <div class="concepts-alpha-bar" id="concepts-alpha-bar" hidden></div>
       <div id="concepts-grid" class="concepts-grid"></div>
     </div>
-    <!-- 总览图视图：制品列表 + 生成按钮（v3.10） -->
+    <!-- 地图视图：制品列表 + 生成按钮（v3.10；v3.14 起后台生成） -->
     <div id="concept-maps-pane" class="concept-maps-pane" hidden>
       <div class="concept-maps-section">
         <div class="cms-head">
-          <h3>总览图制品</h3>
-          <span class="cms-hint">基于概念清单生成的可视化全览图，点击查看/优化/删除</span>
-          <button class="btn sm" id="btn-concept-map" type="button" title="基于当前概念清单生成可视化总览图（架构图/矩阵图/韦恩图）">生成总览图</button>
+          <h3>概念地图制品</h3>
+          <span class="cms-hint">基于概念清单生成的可视化全览图（后台生成，切页不打断），点击查看/优化/删除</span>
+          <button class="btn sm" id="btn-concept-map" type="button" title="基于当前概念清单生成可视化概念地图（架构图/矩阵图/韦恩图）">生成概念地图</button>
         </div>
         <div id="concept-maps-list" class="concept-maps-list"></div>
       </div>
@@ -262,11 +262,12 @@
         <div class="settings-nav-group">总览</div>
         <div class="settings-nav-item active" data-tab="overview" data-kw="概览 仪表盘 状态 生效"><span class="sni"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="8" height="8" rx="1.5"/><rect x="13" y="3" width="8" height="5" rx="1.5"/><rect x="13" y="10" width="8" height="11" rx="1.5"/><rect x="3" y="13" width="8" height="8" rx="1.5"/></svg></span><span>概览</span></div>
         <div class="settings-nav-group">智能</div>
-        <div class="settings-nav-item" data-tab="ai" data-kw="ai 接口 api key 模型 model 网关"><span class="sni"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3v5"/><path d="M15 3v5"/><path d="M6 8h12v3a6 6 0 0 1-12 0V8z"/><path d="M12 17v4"/></svg></span><span>AI 接口</span></div>
+        <div class="settings-nav-item" data-tab="ai" data-kw="ai 接口 api key 模型 model 网关 渠道 channel 默认"><span class="sni"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3v5"/><path d="M15 3v5"/><path d="M6 8h12v3a6 6 0 0 1-12 0V8z"/><path d="M12 17v4"/></svg></span><span>模型渠道</span></div>
         <div class="settings-nav-item" data-tab="summary" data-kw="总结 提示词 prompt summary"><span class="sni"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="3" width="14" height="18" rx="2"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="9" y1="12" x2="15" y2="12"/><line x1="9" y1="16" x2="13" y2="16"/></svg></span><span>总结提示词</span></div>
         <div class="settings-nav-item" data-tab="tags" data-kw="标签 主题 tags topics 提示词"><span class="sni"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M20.6 13.4l-7.2 7.2a2 2 0 0 1-2.8 0L2 12V2h10l8.6 8.6a2 2 0 0 1 0 2.8z"/><circle cx="7.5" cy="7.5" r="1.3"/></svg></span><span>标签 / 主题提示词</span></div>
         <div class="settings-nav-item" data-tab="formula" data-kw="公式 formula latex 抽取 提示词"><span class="sni"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4h9"/><path d="M13 4L8 20"/><path d="M4 12h8"/><path d="M15.5 10.5l5 7"/><path d="M20.5 10.5l-5 7"/></svg></span><span>公式提示词</span></div>
         <div class="settings-nav-item" data-tab="concept" data-kw="概念 concept 抽取 提示词 分类"><span class="sni"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6"/><path d="M10 21h4"/><path d="M12 3a6 6 0 0 0-4 10.5c.6.6 1 1.4 1 2.5h6c0-1.1.4-1.9 1-2.5A6 6 0 0 0 12 3z"/></svg></span><span>概念提示词</span></div>
+        <div class="settings-nav-item" data-tab="concept-map" data-kw="概念地图 concept map 提示词 总览图 可视化"><span class="sni"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="12" cy="17" r="2.5"/><path d="M8 7.5l2.8 7M16 7.5l-2.8 7M8.5 6h7"/></svg></span><span>概念地图提示词</span></div>
         <div class="settings-nav-item" data-tab="formula-engine" data-kw="公式 引擎 mineru 抽取 backend"><span class="sni"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 9h6v6H9z"/></svg></span><span>公式抽取引擎</span></div>
         <div class="settings-nav-group">采集</div>
         <div class="settings-nav-item" data-tab="scan" data-kw="扫描 间隔 定时 scan"><span class="sni"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><polyline points="21 3 21 8 16 8"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/><polyline points="3 21 3 16 8 16"/></svg></span><span>文件扫描</span></div>
@@ -295,7 +296,7 @@
           <div class="ov-quick">
             <div class="ov-quick-title">快捷入口</div>
             <div class="ov-quick-links">
-              <button class="btn ghost sm" data-goto="ai">AI 接口</button>
+              <button class="btn ghost sm" data-goto="ai">模型渠道</button>
               <button class="btn ghost sm" data-goto="scan">文件扫描</button>
               <button class="btn ghost sm" data-goto="arxiv">arXiv 元数据</button>
               <button class="btn ghost sm" data-goto="discover">主题发现</button>
@@ -303,31 +304,24 @@
           </div>
         </div>
 
-        <!-- AI 接口 -->
-        <div class="settings-panel" data-panel="ai" hidden>
+        <!-- AI 接口 / 模型渠道（v3.13：卡片式多渠道 + 默认切换） -->
+        <div class="settings-panel settings-panel-wide" data-panel="ai" hidden>
           <div class="settings-head">
-            <div><h2>AI 接口 <span class="ovr-badge" id="ovr-ai" hidden>已覆盖 config</span></h2><p>OpenAI 兼容的 API 配置。保存后立即生效，无需重启服务。</p></div>
+            <div><h2>模型渠道 <span class="ovr-badge" id="ovr-ai" hidden>已覆盖 config</span></h2><p>每个渠道是一个 OpenAI 兼容端点（Base URL + API Key + 模型）。<b>默认渠道</b>驱动全站 AI 能力——总结、标签、概念、公式、聊天与划线翻译。点卡片上的「设为默认」即刻切换，无需重启。</p></div>
           </div>
+          <div class="ch-grid" id="ch-grid"></div>
+          <button class="ch-add" id="btn-ch-add" type="button">
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+            添加渠道
+          </button>
+
+          <div class="settings-subhead" id="ai-global-subhead">全局参数<span>作用于所有渠道，渠道未单独覆盖时生效</span></div>
           <div class="settings-form">
-            <div class="field">
-              <label>API Base URL</label>
-              <input type="text" id="ai-baseurl" placeholder="https://api.openai.com/v1" autocomplete="off" />
-              <span class="hint">网关地址，需含到 <code>/v1</code>。代码会自动拼接 <code>/chat/completions</code>。</span>
-            </div>
-            <div class="field">
-              <label>API Key</label>
-              <input type="password" id="ai-apikey" placeholder="sk-..." autocomplete="off" />
-              <span class="hint">密钥只存本地，前端只回显掩码。留空保存=清空。</span>
-            </div>
-            <div class="field">
-              <label>模型</label>
-              <input type="text" id="ai-model" placeholder="gpt-4o / deepseek-chat / glm-4.6" autocomplete="off" />
-            </div>
             <div class="field-row">
               <div class="field">
                 <label>最大输入（tokens）</label>
                 <input type="number" id="ai-maxinput" min="1000" step="1000" placeholder="如 1000000 = 1M 上下文" />
-                <span class="hint">按 token 计（OpenAI 标准）。超长论文按 tokens×~3.5 字符截断喂给模型；1M 上下文模型填 1000000 即喂全文。</span>
+                <span class="hint">按 token 计（OpenAI 标准）。超长论文按 tokens×~3.5 字符截断喂给模型；渠道卡片可单独覆盖。</span>
               </div>
               <div class="field">
                 <label>请求超时（秒）</label>
@@ -349,9 +343,8 @@
             </details>
           </div>
           <div class="editor-actions">
-            <button class="btn ghost sm" id="btn-ai-test">测试连接</button>
             <button class="btn ghost sm danger" id="btn-ai-reset">恢复 config 默认</button>
-            <button class="btn" id="btn-ai-save">保存配置</button>
+            <button class="btn" id="btn-ai-save">保存全局参数</button>
             <span class="save-hint" id="ai-hint"></span>
           </div>
           <div class="config-ref">
@@ -423,10 +416,10 @@
         <!-- 概念抽取提示词（v3.10） -->
         <div class="settings-panel" data-panel="concept" hidden>
           <div class="settings-head">
-            <div><h2>概念抽取提示词 <span class="ovr-badge" id="ovr-concept" hidden>自定义</span></h2><p>用于抽取关键概念并分类（强制 JSON 输出，含 category 字段，驱动概念总览图分组）。</p></div>
+            <div><h2>概念抽取提示词 <span class="ovr-badge" id="ovr-concept" hidden>自定义</span></h2><p>用于抽取关键概念并分类（强制 JSON 输出，含 category 字段，驱动概念地图分组）。</p></div>
           </div>
           <div class="prompt-panel">
-            <p class="save-hint">提示词里的 <code>category</code> 枚举决定概念总览图的分组维度；<code>term 规范名对照表</code>决定跨论文能否归并（同一概念不同写法会成重复条目）。</p>
+            <p class="save-hint">提示词里的 <code>category</code> 枚举决定概念地图的分组维度；<code>term 规范名对照表</code>决定跨论文能否归并（同一概念不同写法会成重复条目）。</p>
             <textarea id="concept-prompt-edit" placeholder="正在加载…"></textarea>
             <div class="editor-actions">
               <button class="btn ghost sm" id="btn-concept-prompt-default">恢复默认</button>
@@ -436,6 +429,26 @@
             <details>
               <summary class="save-hint">查看内置默认概念提示词（参考）</summary>
               <pre id="concept-prompt-default-pre" class="md"></pre>
+            </details>
+          </div>
+        </div>
+
+        <!-- 概念地图提示词（v3.14） -->
+        <div class="settings-panel" data-panel="concept-map" hidden>
+          <div class="settings-head">
+            <div><h2>概念地图提示词 <span class="ovr-badge" id="ovr-concept-map" hidden>自定义</span></h2><p>用于把概念清单生成单文件 HTML 概念地图（自由输出，非 JSON）。生成时「自定义要求」&gt; 此提示词 &gt; 内置默认。</p></div>
+          </div>
+          <div class="prompt-panel">
+            <p class="save-hint">该提示词是生成的 system prompt，决定地图的设计美学/交互形态/技术约束；生成单个制品时输入的「自定义要求」会临时取代它（仅当次生效）。</p>
+            <textarea id="concept-map-prompt-edit" placeholder="正在加载…"></textarea>
+            <div class="editor-actions">
+              <button class="btn ghost sm" id="btn-concept-map-prompt-default">恢复默认</button>
+              <button class="btn" id="btn-concept-map-prompt-save">保存</button>
+              <span class="save-hint" id="concept-map-prompt-hint"></span>
+            </div>
+            <details>
+              <summary class="save-hint">查看内置默认概念地图提示词（参考）</summary>
+              <pre id="concept-map-prompt-default-pre" class="md"></pre>
             </details>
           </div>
         </div>

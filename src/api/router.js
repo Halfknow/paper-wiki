@@ -1,5 +1,6 @@
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 const { mergeTopics, mergeConcepts, deleteConcept, removePaperFromConcepts, conceptsToMarkdown, addFolder, deleteFolder } = require('../core/store');
 const {
   DEFAULT_SUMMARY_PROMPT,
@@ -43,13 +44,50 @@ function maskKey(key) {
   return s.slice(0, 3) + '****' + s.slice(-4);
 }
 
-/** 计算当前生效 AI 配置（store.settings.ai 覆盖 config.ai）的只读视图（回显用，不含完整 key）。 */
-function aiSettingsView(effConfig) {
+/** 单渠道只读视图（apiKey 掩码，不回显明文）。 */
+function channelView(c, activeChannelId) {
+  return {
+    id: c.id,
+    name: c.name || '',
+    baseURL: c.baseURL || '',
+    model: c.model || '',
+    maxInputTokens: Number(c.maxInputTokens) > 0 ? Number(c.maxInputTokens) : null,
+    hasApiKey: !!c.apiKey,
+    apiKeyMasked: maskKey(c.apiKey),
+    active: c.id === activeChannelId,
+  };
+}
+
+/** 计算当前生效 AI 配置（store.settings.ai 覆盖 config.ai）的只读视图（回显用，不含完整 key）。
+ *  v3.13：附带多渠道视图——有存根渠道则掩码回显；无渠道（旧部署）从生效配置合成单渠道「默认渠道」。 */
+function aiSettingsView(effConfig, aiOverride) {
+  const o = aiOverride && typeof aiOverride === 'object' ? aiOverride : {};
+  const stored = Array.isArray(o.channels) ? o.channels.filter((c) => c && c.id) : [];
+  const channels = stored.length
+    ? stored.map((c) => channelView(c, o.activeChannelId))
+    : effConfig.ai.baseURL || effConfig.ai.model
+      ? [
+          channelView(
+            {
+              id: 'ch_default',
+              name: '默认渠道',
+              baseURL: effConfig.ai.baseURL,
+              apiKey: effConfig.ai.apiKey,
+              model: effConfig.ai.model,
+              maxInputTokens: null, // 合成渠道不抢全局 tokens（跟随全局字段）
+            },
+            'ch_default',
+          ),
+        ]
+      : [];
   return {
     baseURL: effConfig.ai.baseURL || '',
     model: effConfig.ai.model || '',
     apiKeyMasked: maskKey(effConfig.ai.apiKey),
     hasApiKey: !!effConfig.ai.apiKey,
+    // v3.13 多渠道（卡片式管理；activeChannelId 指向默认渠道）
+    channels,
+    activeChannelId: stored.length ? o.activeChannelId || '' : channels.length ? channels[0].id : '',
     // v3.11：输入上限以 tokens 为准（OpenAI 标准）；旧 maxInputChars 作废弃别名仍回显（兼容存量）
     maxInputTokens: effConfig.ai.maxInputTokens ?? DEFAULT_MAX_INPUT_TOKENS,
     maxInputChars: effConfig.ai.maxInputChars ?? 24000,
@@ -58,6 +96,16 @@ function aiSettingsView(effConfig) {
     taskMaxInputTokens: taskBudgetView(effConfig.ai.taskMaxInputTokens),
     taskMaxInputChars: taskBudgetView(effConfig.ai.taskMaxInputChars),
   };
+}
+
+/** 解析渠道表单里的 apiKey：掩码/未传 → 取同 id 已存 key（含旧部署合成 ch_default 的生效 key）；
+ *  空串 → 显式清空；其余 → 新值。oldKeyOf(id) 返回该渠道此前存储的 key（无则 undefined）。 */
+function resolveChannelApiKey(raw, id, oldKeyOf) {
+  if (typeof raw !== 'string') return oldKeyOf(id);
+  const v = raw.trim();
+  if (!v) return ''; // 显式清空
+  if (/^\*+$/.test(v)) return oldKeyOf(id); // 掩码 = 未改动
+  return v;
 }
 
 /** 每任务输入上限只读视图：补齐全部任务键，未设置/非正数一律回显 null（= 跟随全局）。 */
@@ -268,6 +316,69 @@ function createApiRouter(ctx) {
   }
   const ok = (res, data) => send(res, 200, { ok: true, data });
   const fail = (res, code, error) => send(res, code, { ok: false, error });
+
+  // ---- 概念地图后台生成任务（v3.14）----
+  // 生成单文件 HTML 是大产出 AI 调用（流式也需数分钟~数十分钟），不能让 HTTP 请求挂着等——
+  // 客户端断开/切页/刷新都会丢结果。改为任务化：POST/PUT 立即落库一个 status:'generating'
+  // 占位制品并返回，AI 生成在后台跑，完成/失败后更新占位再落库；前端轮询 settings 元信息。
+  // 任务句柄只活在内存（AbortController 不可序列化）；服务重启后占位变「僵尸 generating」，
+  // 由 conceptMapMeta 在读路径解析为 error（服务重启，生成中断）。
+  /** key=制品 id，value={ abort } */
+  const conceptMapJobs = new Map();
+
+  /** 制品 → 元信息（读路径统一走这里）：解析僵尸 generating（任务句柄不存在=进程已重启）为 error。 */
+  function conceptMapMeta(m) {
+    const stale = m.status === 'generating' && !conceptMapJobs.has(m.id);
+    return {
+      id: m.id,
+      name: m.name,
+      prompt: m.prompt,
+      status: stale ? 'error' : m.status || 'ready',
+      error: stale ? '服务重启，生成中断' : m.error || '',
+      hasHtml: !!m.html,
+      createdAt: m.createdAt,
+      updatedAt: m.updatedAt,
+    };
+  }
+
+  /** 启动/后台执行概念地图生成任务。item 是已落库的占位制品（status:'generating'）。
+   *  完成后就地更新 item（共享 store 引用）并 save——store 是 manager 内存缓存，与后续请求共享。 */
+  function startConceptMapJob({ store, save, item, prevHtml }) {
+    const abort = new AbortController();
+    conceptMapJobs.set(item.id, { abort });
+    (async () => {
+      try {
+        const effConfig = applySettingsOverride(config, store.settings || {});
+        const prompt =
+          (item.prompt && String(item.prompt).trim()) || store.settings.conceptMapPrompt || DEFAULT_CONCEPT_MAP_PROMPT;
+        const html = await generateConceptMap({
+          concepts: store.concepts,
+          config: effConfig,
+          prompt,
+          prevHtml,
+          signal: abort.signal,
+        });
+        item.html = String(html || '');
+        item.error = '';
+        // 截断检测：完整 HTML 必含 </html>；缺失=被模型输出上限截断。半成品仍保留（可查看/再优化补全）。
+        item.status = /<\/html\s*>/i.test(item.html) ? 'ready' : 'error';
+        if (item.status === 'error') item.error = '输出不完整（可能被模型输出上限截断）——已保留半成品，可查看后点「优化」补全';
+      } catch (e) {
+        item.status = 'error';
+        // 错误信息直接展示（自托管单用户场景，AI HTTP 401/429 等细节对排查至关重要）
+        item.error = abort.signal.aborted ? '已手动取消' : `概念地图生成失败：${(e && e.message) || e}`;
+        // 优化失败时 item.html 仍是旧制品内容，不丢
+      }
+      item.updatedAt = Date.now();
+      store.settings.updatedAt = Date.now();
+      conceptMapJobs.delete(item.id);
+      try {
+        await save(store);
+      } catch {
+        /* 空间被删等场景：任务结果无处可写，静默丢弃 */
+      }
+    })();
+  }
 
   /** 解析当前请求的空间上下文：?space=<id> 指定空间，无参回 active 空间。
    *  返回 { spaceId, space, store, save }。store 是 manager 内存缓存的引用（与 scanner 共享）。
@@ -1265,17 +1376,18 @@ function createApiRouter(ctx) {
         // --- 概念抽取提示词（v3.10，三级回退，同 formulaPrompt 模式）---
         conceptPrompt: store.settings.conceptPrompt || '',
         defaultConceptPrompt: DEFAULT_CONCEPT_PROMPT,
+        // --- 概念地图提示词（v3.14 开放设置页编辑；生成任务优先级：用户当次输入 > 此覆盖 > 内置默认）---
+        conceptMapPrompt: store.settings.conceptMapPrompt || '',
         defaultConceptMapPrompt: DEFAULT_CONCEPT_MAP_PROMPT,
         // --- 聊天预置 Prompt（@ 引用之外，输入框上方的快捷提问按钮，用户可自定义）---
         chatPresets: Array.isArray(store.settings.chatPresets) ? store.settings.chatPresets : [],
         // --- v3.2 保存的搜索预设（高级搜索命名预设，per-space）---
         savedSearches: Array.isArray(store.settings.savedSearches) ? store.settings.savedSearches : [],
-        // --- v3.10 概念总览图制品（只回显元信息，html 按需 GET 单个，避免此接口变重）---
-        conceptMaps: (Array.isArray(store.settings.conceptMaps) ? store.settings.conceptMaps : []).map((m) => ({
-          id: m.id, name: m.name, prompt: m.prompt, createdAt: m.createdAt, updatedAt: m.updatedAt,
-        })),
+        // --- v3.10 概念地图制品（只回显元信息，html 按需 GET 单个，避免此接口变重）---
+        // v3.14：元信息含 status/error/hasHtml（后台生成任务态；僵尸 generating 解析为 error）
+        conceptMaps: (Array.isArray(store.settings.conceptMaps) ? store.settings.conceptMaps : []).map(conceptMapMeta),
         // 生效 AI 配置（store.settings.ai 覆盖 config.ai 后）+ config 原值
-        ai: aiSettingsView(effConfig),
+        ai: aiSettingsView(effConfig, store.settings.ai),
         configAi: { baseURL: (config.ai && config.ai.baseURL) || '', model: (config.ai && config.ai.model) || '' },
         // --- 采集：扫描 / arxiv / discover（生效值 + config 原值）---
         scan: { scanIntervalMinutes: effConfig.scanIntervalMinutes ?? 5 },
@@ -1303,6 +1415,7 @@ function createApiRouter(ctx) {
           tagsPrompt: !!ov.tagsPrompt,
           formulaPrompt: !!ov.formulaPrompt,
           conceptPrompt: !!ov.conceptPrompt,
+          conceptMapPrompt: !!ov.conceptMapPrompt,
         },
         // --- 系统只读（host/port 全局；papersDir 现为当前空间绑定的文件夹，可在空间管理中修改）---
         system: {
@@ -1368,6 +1481,15 @@ function createApiRouter(ctx) {
       store.settings.updatedAt = Date.now();
       await save(store);
       return ok(res, { conceptPrompt: store.settings.conceptPrompt });
+    }
+    // PUT /api/settings/concept-map-prompt  body: { value }  空串=恢复默认（概念地图生成提示词，v3.14）
+    if (pathname === '/api/settings/concept-map-prompt' && method === 'PUT') {
+      const op = JSON.parse(body || '{}');
+      store.settings = store.settings || {};
+      store.settings.conceptMapPrompt = typeof op.value === 'string' ? op.value.trim() : '';
+      store.settings.updatedAt = Date.now();
+      await save(store);
+      return ok(res, { conceptMapPrompt: store.settings.conceptMapPrompt });
     }
     // PUT /api/settings/chat-presets  body: { value: [{label,prompt}] }  空数组=恢复内置默认
     //   聊天输入框上方的快捷提问按钮（用户可自定义 label/prompt）。规整：去空项、限 20 条、截断长度。
@@ -1453,15 +1575,115 @@ function createApiRouter(ctx) {
       store.settings.updatedAt = Date.now();
       await save(store);
       const effConfig = applySettingsOverride(config, store.settings);
-      return ok(res, { ai: aiSettingsView(effConfig) });
+      return ok(res, { ai: aiSettingsView(effConfig, store.settings.ai) });
+    }
+
+    // PUT /api/settings/ai/channels  body: { channels: [...], activeChannelId? }  全量替换渠道列表（v3.13）。
+    //   渠道 = OpenAI 兼容端点卡片 { id?, name?, baseURL, apiKey?, model, maxInputTokens? }。
+    //   - id 缺省生成 ch_xxxxxxxx；name 缺省取 baseURL host。
+    //   - apiKey：掩码（全 *）/未传 → 保留同 id 已存 key（含旧部署合成 ch_default 的生效 key）；空串 → 清空。
+    //   - baseURL / model 必填（空则 400）；activeChannelId 必须命中，否则回落第一个渠道。
+    //   - 首次保存渠道（列表非空）时把旧版顶层 baseURL/apiKey/model 覆盖迁移进渠道并删除（渠道成单一事实源）。
+    if (pathname === '/api/settings/ai/channels' && method === 'PUT') {
+      const op = JSON.parse(body || '{}');
+      const list = Array.isArray(op.channels) ? op.channels : [];
+      store.settings = store.settings || {};
+      const cur = store.settings.ai || {};
+      const effBefore = applySettingsOverride(config, store.settings);
+      // 旧 key 解析表：已存渠道 + 旧部署合成默认渠道（ch_default → 当前生效 key）
+      const oldKeyOf = (id) => {
+        const hit = (Array.isArray(cur.channels) ? cur.channels : []).find((c) => c && c.id === id);
+        if (hit) return hit.apiKey;
+        if (id === 'ch_default') return effBefore.ai.apiKey;
+        return undefined;
+      };
+      const clean = [];
+      const seenIds = new Set();
+      for (let i = 0; i < list.length; i++) {
+        const raw = list[i] && typeof list[i] === 'object' ? list[i] : {};
+        const baseURL = typeof raw.baseURL === 'string' ? raw.baseURL.trim() : '';
+        const model = typeof raw.model === 'string' ? raw.model.trim() : '';
+        if (!baseURL || !model) return fail(res, 400, `第 ${i + 1} 个渠道缺少 baseURL 或 model`);
+        let id = typeof raw.id === 'string' && /^[\w-]{1,40}$/.test(raw.id) ? raw.id : '';
+        if (!id || seenIds.has(id)) id = 'ch_' + crypto.randomBytes(4).toString('hex');
+        seenIds.add(id);
+        let name = typeof raw.name === 'string' ? raw.name.trim() : '';
+        if (!name) {
+          try {
+            name = new URL(baseURL).host;
+          } catch {
+            name = model;
+          }
+        }
+        const tokens = Number(raw.maxInputTokens);
+        clean.push({
+          id,
+          name: name.slice(0, 40),
+          baseURL,
+          apiKey: resolveChannelApiKey(raw.apiKey, id, oldKeyOf) || '',
+          model,
+          maxInputTokens: Number.isFinite(tokens) && tokens > 0 ? Math.round(tokens) : null,
+        });
+      }
+      const next = { ...cur };
+      if (clean.length) {
+        // 迁移：渠道接管后删除旧版顶层三元组，避免双事实源
+        delete next.baseURL;
+        delete next.apiKey;
+        delete next.model;
+        let active = typeof op.activeChannelId === 'string' ? op.activeChannelId : cur.activeChannelId;
+        if (!clean.some((c) => c.id === active)) active = clean[0].id;
+        next.channels = clean;
+        next.activeChannelId = active;
+      } else {
+        // 清空渠道：回到旧版顶层字段 / config.json 语义
+        delete next.channels;
+        delete next.activeChannelId;
+      }
+      store.settings.ai = next;
+      store.settings.updatedAt = Date.now();
+      await save(store);
+      const effConfig = applySettingsOverride(config, store.settings);
+      return ok(res, { ai: aiSettingsView(effConfig, store.settings.ai) });
+    }
+
+    // POST /api/settings/ai/models  body: { baseURL?, apiKey?, channelId? }  按表单值拉上游 /v1/models（渠道编辑器用）。
+    //   apiKey 掩码/未传 → 按 channelId 取已存渠道 key（缺省回落当前生效 key）。永不抛错（listModels 自带回退）。
+    if (pathname === '/api/settings/ai/models' && method === 'POST') {
+      const op = JSON.parse(body || '{}');
+      const effConfig = applySettingsOverride(config, store.settings || {});
+      const ch = (store.settings && store.settings.ai && Array.isArray(store.settings.ai.channels)
+        ? store.settings.ai.channels
+        : []
+      ).find((c) => c && c.id === op.channelId);
+      const baseURL = typeof op.baseURL === 'string' && op.baseURL.trim() ? op.baseURL.trim() : (ch && ch.baseURL) || effConfig.ai.baseURL;
+      let apiKey = typeof op.apiKey === 'string' ? op.apiKey.trim() : '';
+      if (!apiKey || /^\*+$/.test(apiKey)) apiKey = (ch && ch.apiKey) || effConfig.ai.apiKey || '';
+      const adhoc = { ...effConfig, ai: { ...effConfig.ai, baseURL, apiKey } };
+      try {
+        const r = await listModels({ config: adhoc });
+        return ok(res, r);
+      } catch (e) {
+        return fail(res, 500, isProd ? '列出模型失败' : `列出模型失败：${e.message}`);
+      }
     }
     // POST /api/settings/test  用当前生效配置发一条 ping 消息验证连通性。
     //   body 可选透传表单值 { baseURL?, apiKey?, model? }（覆盖生效配置），让用户改完不保存也能测。
     if (pathname === '/api/settings/test' && method === 'POST') {
       const op = JSON.parse(body || '{}');
       const effConfig = applySettingsOverride(config, store.settings);
-      // 表单透传覆盖（未传则用已保存的生效值）：baseURL/model 非空才覆盖，apiKey 非掩码才覆盖
+      // v3.13：channelId 指向已存渠道时以其为基底（卡片「测试连接」），否则用当前生效配置
+      const ch = (store.settings && store.settings.ai && Array.isArray(store.settings.ai.channels)
+        ? store.settings.ai.channels
+        : []
+      ).find((c) => c && c.id === op.channelId);
       const testAi = { ...effConfig.ai };
+      if (ch) {
+        testAi.baseURL = ch.baseURL || testAi.baseURL;
+        testAi.model = ch.model || testAi.model;
+        testAi.apiKey = ch.apiKey || '';
+      }
+      // 表单透传覆盖（未传则用基底值）：baseURL/model 非空才覆盖，apiKey 非掩码才覆盖
       if (typeof op.baseURL === 'string' && op.baseURL.trim()) testAi.baseURL = op.baseURL.trim();
       if (typeof op.model === 'string' && op.model.trim()) testAi.model = op.model.trim();
       if (typeof op.apiKey === 'string' && op.apiKey.trim() && !/^\*+$/i.test(op.apiKey))
@@ -1677,7 +1899,7 @@ function createApiRouter(ctx) {
         return ok(res, { ok: true });
       }
       const section = op.section;
-      const known = ['ai', 'summaryPrompt', 'tagsPrompt', 'formulaPrompt', 'conceptPrompt', 'arxiv', 'discover', 'translate', 'formulas', 'scan'];
+      const known = ['ai', 'summaryPrompt', 'tagsPrompt', 'formulaPrompt', 'conceptPrompt', 'conceptMapPrompt', 'arxiv', 'discover', 'translate', 'formulas', 'scan'];
       if (!known.includes(section)) return fail(res, 400, 'unknown section: ' + section);
       if (section === 'scan') {
         delete store.settings.scanIntervalMinutes;
@@ -1742,25 +1964,21 @@ function createApiRouter(ctx) {
       res.writeHead(200, { 'Content-Type': 'text/markdown; charset=utf-8' });
       return res.end(md);
     }
-    // ---- 概念总览图制品（v3.10）：基于概念清单 AI 生成单文件 HTML 全览图，存为可复用的制品 ----
-    // POST /api/concepts/map { prompt?, name? }  生成新总览图制品
+    // ---- 概念地图制品（v3.10）：基于概念清单 AI 生成单文件 HTML 全览图，存为可复用的制品 ----
+    // v3.14 起改为后台任务：POST/PUT 立即落库 status:'generating' 占位并返回（不再挂请求等 AI），
+    // 生成在后台跑（流式，见 ai.js generateConceptMap），完成/失败更新占位；前端轮询 settings 元信息。
+    // POST /api/concepts/map { prompt?, name? }  生成新地图制品（后台任务）
     if (pathname === '/api/concepts/map' && method === 'POST') {
       const op = JSON.parse(body || '{}');
-      if (!(store.concepts || []).length) return fail(res, 400, '概念清单为空，先抽取概念再生成总览图');
-      const effConfig = applySettingsOverride(config, store.settings || {});
-      const prompt = (op.prompt && String(op.prompt).trim()) || store.settings.conceptMapPrompt || DEFAULT_CONCEPT_MAP_PROMPT;
-      let html;
-      try {
-        html = await generateConceptMap({ concepts: store.concepts, config: effConfig, prompt });
-      } catch (e) {
-        return fail(res, 502, isProd ? '总览图生成失败' : `总览图生成失败：${e.message}`);
-      }
+      if (!(store.concepts || []).length) return fail(res, 400, '概念清单为空，先抽取概念再生成概念地图');
       store.settings.conceptMaps = store.settings.conceptMaps || [];
       const item = {
         id: 'cm_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
-        name: String(op.name || '').trim().slice(0, 80) || '概念总览图',
-        html: String(html),
+        name: String(op.name || '').trim().slice(0, 80) || '概念地图',
+        html: '',
         prompt: (op.prompt && String(op.prompt).trim()) || '',
+        status: 'generating',
+        error: '',
         createdAt: Date.now(),
         updatedAt: Date.now(),
       };
@@ -1768,40 +1986,38 @@ function createApiRouter(ctx) {
       store.settings.conceptMaps = store.settings.conceptMaps.slice(0, 50); // 限 50 个
       store.settings.updatedAt = Date.now();
       await save(store);
-      return ok(res, item);
+      startConceptMapJob({ store, save, item });
+      return ok(res, conceptMapMeta(item));
     }
-    // PUT /api/concepts/map { id, prompt }  基于自定义 prompt 优化已有制品（传 prevHtml 让 AI 在原基础上改）
+    // PUT /api/concepts/map { id, prompt }  基于自定义 prompt 优化已有制品（后台任务；生成期间旧 html 保留可看）
     if (pathname === '/api/concepts/map' && method === 'PUT') {
       const op = JSON.parse(body || '{}');
       store.settings.conceptMaps = store.settings.conceptMaps || [];
       const it = store.settings.conceptMaps.find((x) => x.id === op.id);
       if (!it) return fail(res, 404, '制品不存在');
-      const effConfig = applySettingsOverride(config, store.settings || {});
-      const prompt = (op.prompt && String(op.prompt).trim()) || it.prompt || DEFAULT_CONCEPT_MAP_PROMPT;
-      let html;
-      try {
-        html = await generateConceptMap({ concepts: store.concepts, config: effConfig, prompt, prevHtml: it.html });
-      } catch (e) {
-        return fail(res, 502, isProd ? '优化失败' : `优化失败：${e.message}`);
-      }
-      it.html = String(html);
+      if (conceptMapJobs.has(it.id)) return fail(res, 409, '该制品正在生成中，请等待完成或先删除取消');
       if (op.prompt) it.prompt = String(op.prompt).trim();
+      it.status = 'generating';
+      it.error = '';
       it.updatedAt = Date.now();
       store.settings.updatedAt = Date.now();
       await save(store);
-      return ok(res, it);
+      startConceptMapJob({ store, save, item: it, prevHtml: it.html });
+      return ok(res, conceptMapMeta(it));
     }
-    // GET/DELETE /api/concepts/map/:id  取单个制品完整 html / 删除制品
+    // GET/DELETE /api/concepts/map/:id  取单个制品完整 html / 删除制品（生成中的制品删除=取消任务）
     const conceptMapMatch = /^\/api\/concepts\/map\/([\w.-]+)$/.exec(pathname);
     if (conceptMapMatch) {
       store.settings.conceptMaps = store.settings.conceptMaps || [];
       const it = store.settings.conceptMaps.find((x) => x.id === conceptMapMatch[1]);
       if (method === 'GET') {
         if (!it) return fail(res, 404, '制品不存在');
-        return ok(res, it);
+        return ok(res, { ...conceptMapMeta(it), html: it.html || '' });
       }
       if (method === 'DELETE') {
         if (!it) return fail(res, 404, '制品不存在');
+        const job = conceptMapJobs.get(it.id);
+        if (job) job.abort.abort(); // 生成中 → 取消后台任务（任务的 save 在删除之后落库，item 已移除无副作用）
         store.settings.conceptMaps = store.settings.conceptMaps.filter((x) => x.id !== conceptMapMatch[1]);
         store.settings.updatedAt = Date.now();
         await save(store);

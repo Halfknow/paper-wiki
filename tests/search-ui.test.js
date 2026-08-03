@@ -3,6 +3,9 @@
 //       hasNotes/星标/年份/scope=body 各字段 DSL 生成 / 标签 chips / 清空 / 保存的搜索全流程。
 // 注意：window.PaperWikiSearch（public/search-dsl.js，classic script）在 boot 后手动注入沙箱。
 
+const { guardSlowFile } = require('./helpers/slow');
+if (guardSlowFile('search-ui')) return;
+
 const { test, before } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');

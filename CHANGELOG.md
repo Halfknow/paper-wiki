@@ -4,6 +4,52 @@
 
 ## [Unpublished]
 
+### Changed — 概念总览图改名「概念地图」+ 后台生成任务化 + 提示词开放设置（v3.14）
+
+**根因（生成慢且看似失败）**：概念地图走**非流式** `callChat`（v3.12 只把超时放宽到 10 分钟）——单文件 HTML 大产出在思考型模型（Kimi k3 等）上常需**数十分钟**（实测该端点 200 字输出约 12.7s），10 分钟 total 预算必超；且非流式请求首字节前完全静默，会被网关/中间代理的空闲超时掐断。双重夹击下制品永远落不了库（生产库 0 制品）。
+
+- **流式生成**：`generateConceptMap` 改走 `callChatStream`——从思考阶段就有字节流动（`reasoning_content` 先行），连接全程保活；total 预算放宽到 30 分钟，重试 1 次。
+- **后台任务化**：`POST/PUT /api/concepts/map` 不再挂请求等 AI——立即落库 `status:'generating'` 占位制品并返回元信息，AI 在服务端后台跑，完成/失败更新占位再落库。**切页/刷新/关页面都不打断生成**；前端 4s 轮询 settings 元信息，`generating→ready/error` 跳变 toast 通知。失败制品保留失败原因（含上游状态码，自托管场景排查友好）；输出截断（缺 `</html>`）标 error 但保留半成品可查看/再优化。
+- **可取消**：生成中的制品「删除」= 取消后台任务（`AbortController` 经 `chatParams.signal` 透传进 `callChat/callChatStream`，与超时信号 `AbortSignal.any` 合并；外部取消不走退避重试）。服务重启后僵尸 `generating` 占位在读路径解析为 error（任务句柄不可序列化，仅存内存）。PUT 优化期间旧 html 保留可看；同制品生成中重复优化 409。
+- **改名**：全站「概念总览图」→「概念地图」（视图 tab、按钮、设置页、提示词、错误文案；标识符 `conceptMaps`/`/api/concepts/map`/`cm_` id 不变，存量制品兼容）。
+- **提示词开放设置**：设置页新增「概念地图提示词」面板（智能组），`settings.conceptMapPrompt` 三级回退（生成时自定义要求 > 设置覆盖 > 内置默认），`PUT /api/settings/concept-map-prompt`（空串恢复默认）+ GET settings 回显 + overrides 徽标 + reset section 支持。
+- **测试**：改写 tests/api-conceptmap.test.js（4 例适配后台任务语义）+ tests/api.test.js +6 例（占位→完成→取 html / 截断标 error 留半成品 / 生成中删除=取消不复活 / 重复优化 409 / 僵尸 generating 解析 / 提示词保存回显重置）+ tests/ai.test.js 流式断言（stream:true、非 JSON、剥围栏、prevHtml 注入）+ 新增 tests/conceptmaps-ui.test.js（5 例 jsdom UI：改名 / 占位渲染 / 轮询跳变停轮询 / error 制品 / 设置面板）。
+
+### Fixed — 公式瀑布流懒加载后塌成单列（v3.14）
+
+部分环境（窄窗口恢复/侧栏开合/DevTools 开合等 `window resize` 覆盖不到的容器宽度变化）下，瀑布流按旧窄宽度算成单列后无人纠正，懒加载新批次沿用错误列数，看起来像「列表」。
+
+- **`ResizeObserver` 盯 grid 本体宽度**：只认宽度变化（高度变化是重排结果而非原因，过滤掉防反馈循环），宽度变化即防抖重排；`window resize` 监听保留作老浏览器兜底。
+
+### Added — 模型渠道卡片 + 一键切换默认模型（v3.13）
+
+设置页「AI 接口」重构为「模型渠道」：每个 OpenAI 兼容端点一张卡片（名称 / Base URL / Key 状态 / 模型 / 上下文徽标），「设为默认」一键切换全站 AI 能力的驱动渠道，立即生效无需重启。
+
+- **数据结构**：`settings.ai.channels[]`（`{id,name,baseURL,apiKey,model,maxInputTokens}`）+ `activeChannelId`。渠道存在时活跃渠道权威覆盖旧版顶层 `baseURL/apiKey/model`（`applySettingsOverride` 内解析，scanner/api 全部调用方零改动）；渠道 `maxInputTokens` 可单独覆盖全局输入上限。所有渠道 model 自动并入 `extraModels`（聊天切换器白名单 + `/api/ai/models` 候选）。
+- **迁移**：首次保存渠道列表时把旧版顶层三元组迁移进渠道并删除（单一事实源，防双写 desync）；无渠道存根的旧部署在 `GET /api/settings` 里合成单卡片「默认渠道」（id=`ch_default`，掩码 key 解析到当前生效 key）。
+- **API**：`PUT /api/settings/ai/channels`（全量替换；id 缺省生成 `ch_xxxxxxxx`；apiKey 掩码/未传按 id 保留已存 key，空串=无鉴权；baseURL/model 必填 400；activeChannelId 未命中回落第一个）+ `POST /api/settings/ai/models`（按表单值拉上游 `/v1/models`，掩码 key 按 channelId 解析）+ `POST /api/settings/test` 支持 `channelId` 基底。
+- **前端**：卡片网格（默认卡紫色描边 + 「默认」徽标 + 名称哈希色相头像 + Key 状态点）/ 行内编辑卡（快速预设：Kimi for Coding、智谱 GLM、DeepSeek、OpenAI、OpenRouter）/ 拉取模型填 datalist（命中 `context_length` 且 tokens 留空时自动回填）/ 每卡独立「测试连接」。全局参数（最大输入 tokens / 超时 / 各任务上限）与渠道解耦，单独保存。
+- **Fixed — 锁定 temperature 的模型 400 全灭**：Kimi k3（`invalid temperature: only 1 is allowed`）/ OpenAI o 系列 / gpt-5 只接受 temperature=1，`callChat`/`callChatStream` 默认发 0.3 会被 400 拒绝。现遇 400 且报错提及 temperature 时剥掉 `temperature/top_p` 立即重发（不占退避重试额度）。
+- **测试**：+7 例——渠道覆盖优先级/未命中回落/显式空 key、PUT channels 迁移+掩码保留+切换生效+校验、合成渠道视图、temperature 剥参重发（tests/ai.test.js、tests/api.test.js）。
+
+### Fixed — 渠道编辑「拉取模型」下拉显示不全（v3.13）
+
+原生 `<datalist>` 由浏览器控制渲染：按输入框当前值过滤（框里有 `glm-5.2` 就只剩 1 项）、可视项受限、无法展示上下文信息。重构为**自定义模型选择器**（与 sd-* 下拉/@ 引用浮层同设计语言）：
+
+- **全量可见**：聚焦/输入按子串过滤（id + displayName），chevron 按钮始终展开全量列表；拉取成功自动展开；大网关（OpenRouter 数百个）渲染上限 100 条并提示继续输入过滤。
+- **信息密度**：每项显示模型 id（等宽）+ displayName + 上下文徽标（1M/256K，来自网关 `context_length`/`display_name` 扩展字段，`listModels` 新增 `extractDisplayName` 透传）；当前模型高亮 `cur`。
+- **tokens 同步**：`card.dataset.tokensFor` 记录当前 tokens 值归属的模型——值为空或归属另一模型时，选中自动回填新模型的 `contextLength`；手动改过的自定义值不覆盖。
+- **键盘导航**：↑/↓ 闭环移动高亮、Enter 选中、Esc 关闭（preventDefault 不冒泡到全局 Esc 分层）；点选择器外部关闭。
+- **测试**：新增 tests/settings-channels-ui.test.js（5 例，慢守卫）——卡片渲染/全量可见/过滤/键盘选中回填/设为默认 PUT/大列表截断。过程抓获并修复 3 个真实 bug：键盘导航重渲染清高亮（永远只跳第一项）、tokens 归属误判（过滤文本被当旧模型）、选中后 focus() 经 focusin 重开菜单。
+
+### Changed — 单测分层：npm test 快速套件 / test:full 全量（v3.13）
+
+开发效率修复：全量单测在 Docker Desktop 下要 ~38s，两大根因——
+
+- **`callChat` 真实指数退避**：429/5xx 重试用例白等真实退避（单条最重 ~30s）。`ai.js` 退避提取为可注入的 `backoffWait`，新增 `__setBackoffForTests` 测试钩子；`tests/ai.test.js` 顶部全局禁用后 **38s → 0.18s**。
+- **Docker bind mount 文件读放大**：`require('jsdom')` 在 gRPC-FUSE 挂载上要 ~20s/文件（CI 原生 fs 无此问题）。6 个 jsdom UI 文件 + scanner 均 >5s。
+- **慢文件守卫**：新增 `tests/helpers/slow.js`（`guardSlowFile`，须在重型 require 之前调用），`npm test` 默认整文件跳过（~489 例 / ~11s），`npm run test:full`（`PW_FULL_TESTS=1`，scripts/test-full.js，跨平台）跑全量 580 例；CI 改用 `test:full` 保持全覆盖。
+
 ### Fixed — 概念总览图生成后无制品（v3.12）
 
 **根因**：`callChat` 全局限时 `config.ai.timeoutMs`（默认 120s）对「生成单文件 HTML」这种大产出远远不够——GLM 生成总览图常需 2-5 分钟。超时 abort 被当作网络错误进 4 次指数退避重试（每次再超时 120s），白耗约 10 分钟后 502；前端 5 分钟 abort 兜底先到，用户看到「生成超时」，制品永远落不了库。

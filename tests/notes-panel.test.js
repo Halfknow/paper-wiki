@@ -2,6 +2,9 @@
 // 覆盖：卡片渲染/添加（线上「点击没反应」bug 的回归）/编辑/取消/删除/排序/复制/锚点跳转/
 //       旧 notes 自动迁移/AI 骨架生成/编辑中切 tab 自动提交/双面板同步。
 
+const { guardSlowFile } = require('./helpers/slow');
+if (guardSlowFile('notes-panel')) return;
+
 const { test, before } = require('node:test');
 const assert = require('node:assert');
 const { bootUi } = require('./helpers/ui');

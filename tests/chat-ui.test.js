@@ -5,6 +5,9 @@
 // 覆盖的是 app.js 详情 tab 聊天（reader 抽屉聊天依赖 pdf.js，不在 jsdom 范围，由 e2e 兜底）。
 // 运行环境：需要 jsdom（devDependency 语义；CI 上随 npm install 安装）。
 
+const { guardSlowFile } = require('./helpers/slow');
+if (guardSlowFile('chat-ui')) return;
+
 const { test, before } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');

@@ -2923,83 +2923,124 @@ async function showConcepts() {
   // 概念 Markdown 下载链接带当前空间（静态 <a href> 不经 sp()，这里手动注入）
   const dl = document.querySelector('a[href="/api/concepts.md"]');
   if (dl) dl.href = sp('/api/concepts.md');
-  // 总览图制品元信息（从 settings 回显，html 按需 GET 单个）
+  // 概念地图制品元信息（从 settings 回显，html 按需 GET 单个）
   try { const s = await jget('/api/settings'); state.conceptMaps = (s && s.data && s.data.conceptMaps) || []; } catch { state.conceptMaps = []; }
   showView('concepts');
   renderConcepts();
-  switchConceptView(_conceptView); // 应用持久化的视图（清单/总览图），内部按需 renderConceptMaps
+  switchConceptView(_conceptView); // 应用持久化的视图（清单/地图），内部按需 renderConceptMaps
+  // 有生成中的制品 → 继续轮询（比如上次生成中切走了页面，后台任务仍在跑）
+  if ((state.conceptMaps || []).some((m) => m.status === 'generating')) _startConceptMapPolling();
 }
 
-// ---- 概念总览图制品（v3.10）：基于概念清单 AI 生成单文件 HTML 全览图，保留历史制品可优化 ----
-/** 生成新总览图：可选自定义 prompt → POST /api/concepts/map → 刷新制品列表。 */
+// ---- 概念地图制品（v3.10）：基于概念清单 AI 生成单文件 HTML 全览图，保留历史制品可优化 ----
+// v3.14 起生成是**后台任务**：POST/PUT 立即返回占位制品（status:'generating'），AI 在服务端后台跑，
+// 切页/刷新都不打断；前端轮询 settings 元信息，完成/失败 toast 通知。
+let _cmPollTimer = null; // 轮询句柄（有 generating 制品时存活）
+let _cmPrevStatus = {}; // 上次轮询各制品状态（检测 generating→ready/error 跳变）
+
+/** 启动制品状态轮询（4s）。已启动则幂等。 */
+function _startConceptMapPolling() {
+  if (_cmPollTimer) return;
+  _cmPrevStatus = {};
+  for (const m of state.conceptMaps || []) _cmPrevStatus[m.id] = m.status;
+  _cmPollTimer = setInterval(_pollConceptMaps, 4000);
+}
+/** 停止轮询（无 generating 制品 / 切空间时）。 */
+function _stopConceptMapPolling() {
+  if (_cmPollTimer) { clearInterval(_cmPollTimer); _cmPollTimer = null; }
+  _cmPrevStatus = {};
+}
+/** 轮询一轮：拉 settings 元信息 → 检测状态跳变 toast → 刷新列表（地图 pane 可见时）。 */
+async function _pollConceptMaps() {
+  let metas;
+  try {
+    const s = await jget('/api/settings');
+    metas = (s && s.data && s.data.conceptMaps) || [];
+  } catch { return; } // 网络抖动跳过本轮
+  for (const m of metas) {
+    const prev = _cmPrevStatus[m.id];
+    if (prev === 'generating' && m.status === 'ready') toast(`概念地图「${m.name}」已生成`, 'info');
+    else if (prev === 'generating' && m.status === 'error') toast(`概念地图「${m.name}」${m.error || '生成失败'}`, 'error');
+    _cmPrevStatus[m.id] = m.status;
+  }
+  state.conceptMaps = metas;
+  if (!metas.some((m) => m.status === 'generating')) { _stopConceptMapPolling(); }
+  // 概念页地图 pane 可见时刷新列表（其它页面不打扰 DOM；pane 用 .hidden 控制显隐）
+  const pane = $('concept-maps-pane');
+  if (pane && !pane.hidden && $('concepts-view').style.display !== 'none') renderConceptMaps();
+}
+
+/** 生成新地图：可选自定义 prompt → POST 立即返回占位 → 后台生成 → 轮询。 */
 async function generateConceptMap() {
   if (!(state.concepts && state.concepts.length)) { toast('概念清单为空，先抽取概念', 'error'); return; }
   const prompt = await PWDialog.prompt('可选：输入生成要求（留空用默认提示词，如"按分类分组，矩阵图样式，强调高频概念"）：', {
-    title: '生成概念总览图', multiline: true, okText: '生成',
+    title: '生成概念地图', multiline: true, okText: '生成',
   });
   if (prompt === null) return; // 取消
-  const btn = $('btn-concept-map');
-  const orig = btn ? btn.textContent : '';
-  if (btn) { btn.disabled = true; btn.textContent = '生成中…（大产出需数分钟，请勿离开页面）'; }
+  let r;
   try {
-    // 客户端超时 10 分钟兜底（与后端 callChat 的 timeoutMs 覆盖一致；AI 生成单文件 HTML 耗时长）
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 600000);
-    const res = await fetch(sp('/api/concepts/map'), {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prompt: prompt || undefined }), signal: ctrl.signal,
-    });
-    clearTimeout(timer);
-    const r = await res.json();
-    if (r && r.ok) {
-      toast('总览图已生成');
-      // 刷新制品列表（重新拉 settings 元信息）
-      const s = await jget('/api/settings');
-      if (s && s.data) state.conceptMaps = s.data.conceptMaps || [];
-      renderConceptMaps();
-      // 直接打开新生成的制品
-      if (r.data && r.data.id) viewConceptMap(r.data.id, r.data.html);
-    } else toast((r && r.error) || '生成失败', 'error');
-  } catch (e) {
-    const msg = (e && e.name === 'AbortError') ? '生成超时（10 分钟），请减少概念数量或重试' : ('生成失败：' + (e && e.message || e));
-    toast(msg, 'error');
-  } finally {
-    if (btn) { btn.disabled = false; btn.textContent = orig; }
-  }
+    r = await POST('/api/concepts/map', { prompt: prompt || undefined });
+  } catch (e) { toast('提交失败：' + (e && e.message || e), 'error'); return; }
+  if (r && r.ok && r.data) {
+    toast('已开始后台生成（大产出需数分钟~数十分钟），可随时离开本页，完成后会通知', 'info');
+    state.conceptMaps = [r.data].concat(state.conceptMaps || []);
+    renderConceptMaps();
+    _startConceptMapPolling();
+  } else toast((r && r.error) || '提交失败', 'error');
 }
-/** 渲染制品列表（元信息从 state.conceptMaps；html 按需 GET 单个）。 */
+/** 渲染制品列表（元信息从 state.conceptMaps；html 按需 GET 单个）。
+ *  状态感知：generating=生成中标记（仅可删除=取消）；error=失败原因（可查看半成品/再优化/删除）。 */
 function renderConceptMaps() {
   const box = $('concept-maps-list');
   if (!box) return;
   const maps = state.conceptMaps || [];
-  if (!maps.length) { box.innerHTML = '<div class="cms-empty">暂无总览图。点上方「生成总览图」基于当前概念清单创建。</div>'; return; }
+  if (!maps.length) { box.innerHTML = '<div class="cms-empty">暂无概念地图。点上方「生成概念地图」基于当前概念清单创建。</div>'; return; }
   box.innerHTML = maps.map((m) => {
     const t = new Date(m.createdAt || 0).toLocaleString();
-    return '<div class="cms-item" data-id="' + m.id + '">' +
-      '<div class="cms-item-main"><span class="cms-item-name">' + escapeHtml(m.name || '总览图') + '</span>' +
-      '<span class="cms-item-time">' + t + (m.updatedAt && m.updatedAt !== m.createdAt ? '（优化过）' : '') + '</span></div>' +
-      '<div class="cms-item-actions">' +
-      '<button class="btn ghost sm" data-cm-view="' + m.id + '">查看</button>' +
-      '<button class="btn ghost sm" data-cm-opt="' + m.id + '">优化</button>' +
-      '<button class="btn ghost sm" data-cm-newtab="' + m.id + '">新标签页</button>' +
-      '<button class="btn ghost sm danger" data-cm-del="' + m.id + '">删除</button>' +
-      '</div></div>';
+    let statusHtml = '<span class="cms-item-time">' + t + (m.updatedAt && m.updatedAt !== m.createdAt ? '（优化过）' : '') + '</span>';
+    let actions;
+    if (m.status === 'generating') {
+      statusHtml = '<span class="cms-item-time cms-generating"><span class="cms-spinner"></span>后台生成中…可随时离开本页</span>';
+      actions = '<button class="btn ghost sm danger" data-cm-del="' + m.id + '" title="取消生成并删除">取消</button>';
+    } else if (m.status === 'error') {
+      statusHtml = '<span class="cms-item-time cms-error" title="' + escapeHtml(m.error || '') + '">' + escapeHtml(m.error || '生成失败') + '</span>';
+      actions =
+        (m.hasHtml ? '<button class="btn ghost sm" data-cm-view="' + m.id + '">查看</button>' : '') +
+        '<button class="btn ghost sm" data-cm-opt="' + m.id + '">优化</button>' +
+        '<button class="btn ghost sm danger" data-cm-del="' + m.id + '">删除</button>';
+    } else {
+      actions =
+        '<button class="btn ghost sm" data-cm-view="' + m.id + '">查看</button>' +
+        '<button class="btn ghost sm" data-cm-opt="' + m.id + '">优化</button>' +
+        '<button class="btn ghost sm" data-cm-newtab="' + m.id + '">新标签页</button>' +
+        '<button class="btn ghost sm danger" data-cm-del="' + m.id + '">删除</button>';
+    }
+    return '<div class="cms-item' + (m.status === 'generating' ? ' is-generating' : '') + '" data-id="' + m.id + '">' +
+      '<div class="cms-item-main"><span class="cms-item-name">' + escapeHtml(m.name || '概念地图') + '</span>' +
+      statusHtml + '</div>' +
+      '<div class="cms-item-actions">' + actions + '</div></div>';
   }).join('');
   box.querySelectorAll('[data-cm-view]').forEach((b) => (b.onclick = () => viewConceptMap(b.dataset.cmView)));
   box.querySelectorAll('[data-cm-opt]').forEach((b) => (b.onclick = () => optimizeConceptMap(b.dataset.cmOpt)));
   box.querySelectorAll('[data-cm-newtab]').forEach((b) => (b.onclick = () => openConceptMapNewTab(b.dataset.cmNewtab)));
   box.querySelectorAll('[data-cm-del]').forEach((b) => (b.onclick = async () => {
-    if (!(await PWDialog.confirm('删除这个总览图制品？', { title: '删除制品', danger: true, okText: '删除' }))) return;
+    const m = (state.conceptMaps || []).find((x) => x.id === b.dataset.cmDel);
+    const isGen = m && m.status === 'generating';
+    if (!(await PWDialog.confirm(isGen ? '取消生成并删除这个制品？' : '删除这个概念地图制品？', { title: isGen ? '取消生成' : '删除制品', danger: true, okText: isGen ? '取消生成' : '删除' }))) return;
     const r = await DEL('/api/concepts/map/' + b.dataset.cmDel);
-    if (r && r.ok) { toast('已删除'); state.conceptMaps = (state.conceptMaps || []).filter((x) => x.id !== b.dataset.cmDel); renderConceptMaps(); }
-    else toast((r && r.error) || '删除失败', 'error');
+    if (r && r.ok) {
+      toast(isGen ? '已取消生成' : '已删除');
+      state.conceptMaps = (state.conceptMaps || []).filter((x) => x.id !== b.dataset.cmDel);
+      delete _cmPrevStatus[b.dataset.cmDel];
+      renderConceptMaps();
+    } else toast((r && r.error) || '删除失败', 'error');
   }));
 }
 /** 查看制品：按需 GET 单个 html → iframe srcdoc 全屏覆盖层。传 html 则免请求。 */
 async function viewConceptMap(id, html) {
   if (!html) {
     const r = await jget('/api/concepts/map/' + id);
-    if (!r || !r.data) { toast('加载失败', 'error'); return; }
+    if (!r || !r.data || !r.data.html) { toast((r && r.data && r.data.status === 'generating') ? '仍在生成中，完成后可查看' : '加载失败', 'error'); return; }
     html = r.data.html;
   }
   openConceptMapOverlay(id, html);
@@ -3019,7 +3060,7 @@ function openConceptMapOverlay(id, html) {
     '<button class="btn ghost sm" id="cmo-newtab">新标签页打开</button></div>' +
     '<iframe class="cmo-frame" sandbox="allow-scripts allow-same-origin allow-popups"></iframe>';
   ov.classList.add('open');
-  ov.querySelector('.cmo-title').textContent = ((state.conceptMaps || []).find((m) => m.id === id) || {}).name || '概念总览图';
+  ov.querySelector('.cmo-title').textContent = ((state.conceptMaps || []).find((m) => m.id === id) || {}).name || '概念地图';
   const frame = ov.querySelector('.cmo-frame');
   frame.srcdoc = html || '';
   ov.querySelector('#cmo-close').onclick = () => { ov.classList.remove('open'); frame.srcdoc = ''; };
@@ -3034,32 +3075,31 @@ async function openConceptMapNewTab(id, html) {
   window.open(url, '_blank');
   setTimeout(() => URL.revokeObjectURL(url), 60000);
 }
-/** 优化已有制品：输入自定义 prompt → PUT（传 prevHtml 让 AI 在原基础上改）。 */
+/** 优化已有制品：输入自定义 prompt → PUT 立即返回（后台任务）→ 轮询。生成期间旧 html 保留可看。 */
 async function optimizeConceptMap(id) {
   const prompt = await PWDialog.prompt('输入优化要求（如"把架构图改成矩阵图""增加概念间的连线""只保留高频概念"）：', {
-    title: '优化总览图', multiline: true, okText: '优化',
+    title: '优化概念地图', multiline: true, okText: '优化',
   });
   if (prompt === null || !prompt) return;
-  toast('优化中…（大产出需数分钟）');
+  let r;
   try {
-    const r = await PUT('/api/concepts/map', { id, prompt });
-    if (r && r.ok) {
-      toast('优化完成');
-      const s = await jget('/api/settings');
-      if (s && s.data) state.conceptMaps = s.data.conceptMaps || [];
-      renderConceptMaps();
-      viewConceptMap(id, r.data.html); // 直接看优化结果
-    } else toast((r && r.error) || '优化失败', 'error');
-  } catch (e) { toast('优化失败：' + (e.message || e), 'error'); }
+    r = await PUT('/api/concepts/map', { id, prompt });
+  } catch (e) { toast('提交失败：' + (e.message || e), 'error'); return; }
+  if (r && r.ok && r.data) {
+    toast('已开始后台优化（大产出需数分钟~数十分钟），可随时离开本页，完成后会通知', 'info');
+    state.conceptMaps = (state.conceptMaps || []).map((x) => (x.id === id ? r.data : x));
+    renderConceptMaps();
+    _startConceptMapPolling();
+  } else toast((r && r.error) || '提交失败', 'error');
 }
 
 // 概念页排序状态（localStorage 持久化用户选择）
 let _conceptSort = localStorage.getItem('pw-concept-sort') || 'freq';
 // 概念页显示方式：masonry（瀑布流，默认）/ list（紧凑清单）
 let _conceptLayout = localStorage.getItem('pw-concept-layout') || 'masonry';
-// 概念页视图：list（概念清单，默认）/ maps（总览图制品）
+// 概念页视图：list（概念清单，默认）/ maps（概念地图制品）
 let _conceptView = localStorage.getItem('pw-concept-view') || 'list';
-/** 切换概念页视图（清单 / 总览图），持久化用户选择，控制两个 pane 显隐 + 工具栏控件可见性。 */
+/** 切换概念页视图（清单 / 地图），持久化用户选择，控制两个 pane 显隐 + 工具栏控件可见性。 */
 function switchConceptView(view) {
   _conceptView = view;
   localStorage.setItem('pw-concept-view', view);
@@ -3068,7 +3108,7 @@ function switchConceptView(view) {
   const mapsPane = $('concept-maps-pane');
   if (listPane) listPane.hidden = isMaps;
   if (mapsPane) mapsPane.hidden = !isMaps;
-  // 总览图视图下隐藏搜索/布局/排序（它们只对清单有意义）
+  // 地图视图下隐藏搜索/布局/排序（它们只对清单有意义）
   document.querySelectorAll('#concept-q, #concept-layout, #concept-sort').forEach((el) => {
     el.style.display = isMaps ? 'none' : '';
   });
@@ -3336,6 +3376,9 @@ const _FORMULA_MASONRY_GAP = 12;
 /** resize 防抖句柄（复用单 timer，避免每次 layout 都新增 listener）。 */
 let _formulaResizeTimer = null;
 let _formulaResizeWired = false;
+/** ResizeObserver 实例 + 上次观测到的 grid 宽度（只认宽度变化，防高度反馈循环）。 */
+let _formulaGridRO = null;
+let _formulaGridROW = 0;
 /** 上次布局时的列数（resize 改变列数才需重排；纯高度变化由 reflow 触发）。 */
 let _formulaMasonryCols = 0;
 
@@ -3432,6 +3475,21 @@ function _renderFormulaBatch(count) {
     if (!_formulaResizeWired) {
       _formulaResizeWired = true;
       window.addEventListener('resize', _scheduleFormulaMasonryRelayout, { passive: true });
+    }
+    // ResizeObserver 盯 grid 本体宽度（v3.14 加固）：window resize 覆盖不到的场景——
+    // 侧栏收起/展开、浏览器窗口从窄恢复、DevTools 开合、缩放变化——都曾导致瀑布流按
+    // 旧窄宽度算成单列后无人纠正（懒加载新批次沿用错误列数，看起来像「列表」）。
+    // 只认宽度变化（高度变化是重排的结果而非原因，过滤掉防反馈循环）。
+    if (typeof ResizeObserver !== 'undefined' && !_formulaGridRO) {
+      _formulaGridROW = g.clientWidth || 0;
+      _formulaGridRO = new ResizeObserver(() => {
+        const w = g.clientWidth || 0;
+        if (w && Math.abs(w - _formulaGridROW) > 1) {
+          _formulaGridROW = w;
+          _scheduleFormulaMasonryRelayout();
+        }
+      });
+      _formulaGridRO.observe(g);
     }
     const run = () => _layoutFormulaMasonry(false);
     if (typeof requestAnimationFrame === 'function') { requestAnimationFrame(() => requestAnimationFrame(run)); }
@@ -3753,11 +3811,13 @@ function mountSettingDropdown(wrapId, options, initialValue, onChange) {
 async function loadSettingsData() {
   try {
     const { data } = await jget('/api/settings');
-    // ---- AI 接口（apiKey 显示占位，保存时若未改则不传）----
-    $('ai-baseurl').value = data.ai.baseURL || '';
-    $('ai-apikey').value = data.ai.hasApiKey ? APIKEY_MASK : '';
-    $('ai-apikey').dataset.masked = data.ai.hasApiKey ? '1' : '';
-    $('ai-model').value = data.ai.model || '';
+    // ---- 模型渠道（v3.13 卡片式多渠道；apiKey 只回显掩码，卡片内编辑）----
+    channelsState = {
+      channels: Array.isArray(data.ai.channels) ? data.ai.channels : [],
+      activeChannelId: data.ai.activeChannelId || '',
+    };
+    editingChannelId = null;
+    renderChannels();
     // v3.11：输入上限以 tokens 为准（OpenAI 标准）。后端同时回显旧 maxInputChars（兼容存量），
     // 这里优先取 tokens；tokens 缺失时说明是旧部署未保存过 → 回显空让用户填（默认值由 placeholder 暗示）。
     $('ai-maxinput').value = data.ai.maxInputTokens || '';
@@ -3788,6 +3848,9 @@ async function loadSettingsData() {
     // 概念提示词（v3.10）
     if ($('concept-prompt-edit')) $('concept-prompt-edit').value = data.conceptPrompt || '';
     if ($('concept-prompt-default-pre')) $('concept-prompt-default-pre').textContent = data.defaultConceptPrompt || '';
+    // 概念地图提示词（v3.14）
+    if ($('concept-map-prompt-edit')) $('concept-map-prompt-edit').value = data.conceptMapPrompt || '';
+    if ($('concept-map-prompt-default-pre')) $('concept-map-prompt-default-pre').textContent = data.defaultConceptMapPrompt || '';
     // ---- 聊天预置 Prompt（输入框上方快捷提问按钮，store.settings.chatPresets 覆盖内置默认）----
     chatPresetsOverride = Array.isArray(data.chatPresets) ? data.chatPresets : null;
     // ---- v3.2 保存的搜索预设（高级搜索命名预设）----
@@ -3970,6 +4033,7 @@ function markOverrides(ov) {
   show('ovr-tags', !!ov.tagsPrompt);
   show('ovr-formula', !!ov.formulaPrompt);
   show('ovr-concept', !!ov.conceptPrompt);
+  show('ovr-concept-map', !!ov.conceptMapPrompt);
   show('ovr-scan', !!ov.scan);
   const ax = ov.arxiv || [];
   show('ovr-arxiv-enabled', ax.includes('enabled'));
@@ -4003,8 +4067,6 @@ async function saveAiConfig() {
   const btn = $('btn-ai-save');
   const hint = $('ai-hint');
   const payload = {
-    baseURL: $('ai-baseurl').value.trim(),
-    model: $('ai-model').value.trim(),
     // v3.11：输入上限按 tokens 发（OpenAI 标准）；空值 → 后端用默认 32000
     maxInputTokens: parseInt($('ai-maxinput').value, 10) || undefined,
     timeoutMs: (parseInt($('ai-timeout').value, 10) || 120) * 1000,
@@ -4018,16 +4080,13 @@ async function saveAiConfig() {
   };
   // maxInputTokens 空时从 payload 删掉（undefined 不发），让后端保留原值而非覆盖成默认
   if (payload.maxInputTokens == null) delete payload.maxInputTokens;
-  // apiKey：用户没改（仍是占位）则不传，避免误清空；改成新值或清空则传
-  const keyVal = $('ai-apikey').value;
-  if (keyVal !== APIKEY_MASK) payload.apiKey = keyVal;
   setBusy(btn, true, '保存中…');
   try {
     const r = await PUT('/api/settings/ai', payload);
     if (r.ok) {
       await loadSettingsData(); // 刷新表单 / 概览 / 覆盖徽标
       hint.textContent = '已保存 · ' + new Date().toLocaleTimeString();
-      toast('AI 配置已保存，立即生效');
+      toast('全局参数已保存，立即生效');
     } else {
       hint.textContent = '保存失败：' + (r.error || '');
       toast(r.error || '保存失败', 'error');
@@ -4039,32 +4098,440 @@ async function saveAiConfig() {
   setBusy(btn, false);
 }
 
-async function testAiConnection() {
-  const btn = $('btn-ai-test');
-  const hint = $('ai-hint');
-  setBusy(btn, true, '测试中…');
-  // 透传表单当前值（含未保存的改动），让用户改完不保存也能测。apiKey 掩码不传（后端用已存的）。
-  const testPayload = {
-    baseURL: $('ai-baseurl').value.trim(),
-    model: $('ai-model').value.trim(),
-  };
-  const keyVal = $('ai-apikey').value;
-  if (keyVal !== APIKEY_MASK) testPayload.apiKey = keyVal;
-  hint.textContent = '正在用表单当前值发送测试请求…';
+// ============================================================================
+// v3.13 模型渠道卡片：每个渠道 = 一个 OpenAI 兼容端点（Base URL + Key + 模型），
+// activeChannelId 指向默认渠道（驱动全站 AI 能力）。列表整体 PUT 替换，
+// apiKey 掩码回传 = 未改动（后端按 id 保留已存 key）。
+// ============================================================================
+let channelsState = { channels: [], activeChannelId: '' };
+let editingChannelId = null; // 正在编辑的渠道 id；'__new__' = 新建草稿
+
+/** 常用渠道快速预设（添加渠道时一键填充，可再改）。 */
+const CHANNEL_PRESETS = [
+  { name: 'Kimi for Coding', baseURL: 'https://api.kimi.com/coding/v1', model: 'k3', maxInputTokens: 1000000 },
+  { name: '智谱 GLM', baseURL: 'https://open.bigmodel.cn/api/paas/v4', model: 'glm-4.6', maxInputTokens: 200000 },
+  { name: 'DeepSeek', baseURL: 'https://api.deepseek.com/v1', model: 'deepseek-chat', maxInputTokens: 128000 },
+  { name: 'OpenAI', baseURL: 'https://api.openai.com/v1', model: 'gpt-4o', maxInputTokens: 128000 },
+  { name: 'OpenRouter', baseURL: 'https://openrouter.ai/api/v1', model: '', maxInputTokens: null },
+];
+
+function chHost(u) {
   try {
-    const r = await POST('/api/settings/test', testPayload);
+    return new URL(u).host;
+  } catch {
+    return u || '';
+  }
+}
+function chTokensLabel(t) {
+  t = Number(t);
+  if (!t) return '';
+  if (t >= 1000000) return (t / 1000000).toFixed(t % 1000000 ? 1 : 0) + 'M';
+  if (t >= 1000) return Math.round(t / 1000) + 'K';
+  return String(t);
+}
+/** 渠道头像底色：按名称哈希取色相，稳定且各渠道可区分。 */
+function chAvatarHue(name) {
+  let h = 0;
+  for (const ch of String(name || '?')) h = (h * 31 + ch.charCodeAt(0)) % 360;
+  return h;
+}
+
+function chCardHtml(c, active) {
+  const initial = escapeHtml((c.name || c.model || '?').trim().charAt(0).toUpperCase() || '?');
+  const tokens = chTokensLabel(c.maxInputTokens);
+  return (
+    `<div class="ch-card${active ? ' active' : ''}" data-id="${escapeHtml(c.id)}">` +
+    `<div class="ch-top">` +
+    `<span class="ch-avatar" style="--hue:${chAvatarHue(c.name)}">${initial}</span>` +
+    `<div class="ch-title">` +
+    `<div class="ch-name">${escapeHtml(c.name || chHost(c.baseURL) || '未命名渠道')}${active ? '<span class="ch-badge">默认</span>' : ''}</div>` +
+    `<div class="ch-model">${escapeHtml(c.model)}${tokens ? `<span class="ch-ctx">${tokens}</span>` : ''}</div>` +
+    `</div>` +
+    `<span class="ch-key${c.hasApiKey ? ' ok' : ''}" title="${c.hasApiKey ? 'API Key 已配置' : '未配置 API Key（无鉴权端点）'}"></span>` +
+    `</div>` +
+    `<div class="ch-url" title="${escapeHtml(c.baseURL)}">${escapeHtml(chHost(c.baseURL))}</div>` +
+    `<div class="ch-actions">` +
+    (active ? '' : '<button class="btn ghost sm" data-act="default">设为默认</button>') +
+    `<button class="btn ghost sm" data-act="edit">编辑</button>` +
+    `<button class="btn ghost sm" data-act="test">测试</button>` +
+    `<span class="ch-test" aria-live="polite"></span>` +
+    `<button class="ch-del" data-act="del" title="删除渠道"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg></button>` +
+    `</div></div>`
+  );
+}
+
+function chEditCardHtml(c) {
+  const isNew = c.id === '__new__';
+  const presets = CHANNEL_PRESETS.map((p, i) => `<option value="${i}">${escapeHtml(p.name)}</option>`).join('');
+  return (
+    `<div class="ch-card editing" data-id="${escapeHtml(c.id)}" data-tokens-for="${escapeHtml(c.model || '')}">` +
+    `<div class="ch-form">` +
+    `<div class="ch-form-row">` +
+    `<label>渠道名称<input type="text" class="chf-name" value="${escapeHtml(c.name || '')}" placeholder="如 Kimi / 智谱 GLM" autocomplete="off" /></label>` +
+    (isNew ? `<label>快速预设<select class="chf-preset"><option value="">自定义…</option>${presets}</select></label>` : '') +
+    `</div>` +
+    `<label>Base URL<input type="text" class="chf-baseurl" value="${escapeHtml(c.baseURL || '')}" placeholder="https://api.openai.com/v1" autocomplete="off" spellcheck="false" /></label>` +
+    `<label>API Key<input type="password" class="chf-apikey" value="${c.hasApiKey ? APIKEY_MASK : ''}" placeholder="sk-...（留空 = 无鉴权端点）" autocomplete="off" /></label>` +
+    `<div class="ch-form-row">` +
+    // 模型选择器（自定义下拉：聚焦/输入即按子串过滤，chevron 展开全量；选中回填上下文 tokens）
+    `<label>模型<div class="chf-model-wrap">` +
+    `<input type="text" class="chf-model" value="${escapeHtml(c.model || '')}" placeholder="gpt-4o / k3 / glm-4.6" autocomplete="off" spellcheck="false" role="combobox" aria-expanded="false" />` +
+    `<button type="button" class="chf-model-toggle" data-act="model-menu" title="显示全部已拉取模型" tabindex="-1"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></button>` +
+    `<div class="chf-model-menu" hidden></div>` +
+    `</div></label>` +
+    `<label>上下文 tokens<input type="number" class="chf-tokens" min="0" step="1000" value="${c.maxInputTokens || ''}" placeholder="跟随全局" /></label>` +
+    `</div>` +
+    `<div class="ch-form-actions">` +
+    `<button class="btn ghost sm" data-act="fetch-models" title="从上游 /v1/models 拉取可选模型与上下文长度">拉取模型</button>` +
+    `<button class="btn ghost sm" data-act="test">测试连接</button>` +
+    `<span class="ch-test" aria-live="polite"></span>` +
+    `<span style="flex:1"></span>` +
+    `<button class="btn ghost sm" data-act="cancel">取消</button>` +
+    `<button class="btn sm" data-act="save">保存渠道</button>` +
+    `</div></div></div>`
+  );
+}
+
+function renderChannels() {
+  const grid = $('ch-grid');
+  if (!grid) return;
+  const { channels, activeChannelId } = channelsState;
+  let html = channels
+    .map((c) => (editingChannelId === c.id ? chEditCardHtml(c) : chCardHtml(c, c.id === activeChannelId)))
+    .join('');
+  if (editingChannelId === '__new__') html += chEditCardHtml({ id: '__new__' });
+  if (!html) {
+    grid.innerHTML =
+      '<div class="ch-empty">还没有模型渠道。点击下方「添加渠道」配置一个 OpenAI 兼容端点（Kimi / 智谱 / DeepSeek 均可）；config.json 中的配置会作为初始渠道显示。</div>';
+    return;
+  }
+  grid.innerHTML = html;
+}
+
+/** 当前列表 → PUT payload（apiKey 一律掩码 = 未改动，后端按 id 保留）。 */
+function chPayloadList() {
+  return channelsState.channels.map((c) => ({
+    id: c.id,
+    name: c.name,
+    baseURL: c.baseURL,
+    apiKey: APIKEY_MASK,
+    model: c.model,
+    maxInputTokens: c.maxInputTokens || null,
+  }));
+}
+
+/** 整体保存渠道列表；成功后以响应刷新本地状态 + 概览。 */
+async function saveChannels(channels, activeChannelId) {
+  const r = await PUT('/api/settings/ai/channels', { channels, activeChannelId });
+  if (!r.ok) {
+    toast(r.error || '渠道保存失败', 'error');
+    return false;
+  }
+  channelsState = { channels: r.data.ai.channels, activeChannelId: r.data.ai.activeChannelId };
+  editingChannelId = null;
+  chEditModels = [];
+  renderChannels();
+  loadSettingsData(); // 后台刷新概览 / 覆盖徽标（不 await，避免阻塞交互）
+  return true;
+}
+
+async function chSetDefault(id) {
+  const c = channelsState.channels.find((x) => x.id === id);
+  if (await saveChannels(chPayloadList(), id)) toast(`默认模型已切换为「${(c && (c.name || c.model)) || id}」`, 'good');
+}
+
+async function chDelete(id) {
+  const c = channelsState.channels.find((x) => x.id === id);
+  const isActive = channelsState.activeChannelId === id;
+  const ok = await PWDialog.confirm(
+    `删除渠道「${(c && (c.name || c.model)) || id}」？` + (isActive ? '\n它是当前默认渠道，删除后默认将回落到列表第一个渠道。' : ''),
+    { title: '删除渠道', danger: true, okText: '删除' },
+  );
+  if (!ok) return;
+  const next = chPayloadList().filter((x) => x.id !== id);
+  const nextActive = isActive ? (next[0] && next[0].id) || '' : channelsState.activeChannelId;
+  if (await saveChannels(next, nextActive)) toast('渠道已删除');
+}
+
+/** 读取编辑卡片当前表单值（apiKey 掩码 = 未改动）。 */
+function chFormValues(card) {
+  const tokens = parseInt(card.querySelector('.chf-tokens').value, 10);
+  return {
+    name: card.querySelector('.chf-name').value.trim(),
+    baseURL: card.querySelector('.chf-baseurl').value.trim(),
+    apiKey: card.querySelector('.chf-apikey').value,
+    model: card.querySelector('.chf-model').value.trim(),
+    maxInputTokens: Number.isFinite(tokens) && tokens > 0 ? tokens : null,
+  };
+}
+
+async function chSave(card, id) {
+  const v = chFormValues(card);
+  if (!v.baseURL || !v.model) {
+    toast('Base URL 与模型必填', 'error');
+    return;
+  }
+  const btn = card.querySelector('[data-act="save"]');
+  setBusy(btn, true, '保存中…');
+  let list;
+  let active = channelsState.activeChannelId;
+  if (id === '__new__') {
+    list = chPayloadList().concat([{ name: v.name, baseURL: v.baseURL, apiKey: v.apiKey === APIKEY_MASK ? '' : v.apiKey, model: v.model, maxInputTokens: v.maxInputTokens }]);
+    if (!active) active = ''; // 后端会回落到第一个渠道
+  } else {
+    list = chPayloadList().map((x) => (x.id === id ? { ...x, ...v, id } : x));
+  }
+  const ok = await saveChannels(list, active);
+  setBusy(btn, false);
+  if (ok) toast('渠道已保存', 'good');
+}
+
+async function chTest(card, id) {
+  const span = card.querySelector('.ch-test');
+  const btn = card.querySelector('[data-act="test"]');
+  let payload;
+  if (id === '__new__' || editingChannelId === id) {
+    const v = chFormValues(card);
+    payload = { baseURL: v.baseURL, model: v.model, apiKey: v.apiKey };
+    if (id !== '__new__') payload.channelId = id; // 掩码 key 由后端按渠道解析
+  } else {
+    const c = channelsState.channels.find((x) => x.id === id) || {};
+    payload = { channelId: id, baseURL: c.baseURL, model: c.model, apiKey: APIKEY_MASK };
+  }
+  setBusy(btn, true, '测试中…');
+  span.textContent = '…';
+  span.className = 'ch-test';
+  try {
+    const r = await POST('/api/settings/test', payload);
     if (r.ok) {
-      hint.textContent = '✓ 连接成功 · ' + new Date().toLocaleTimeString();
-      toast('连接成功', 'good');
+      span.textContent = '✓ 连接成功';
+      span.classList.add('good');
     } else {
-      hint.textContent = '✗ ' + (r.error || '连接失败');
-      toast(r.error || '连接失败', 'error');
+      span.textContent = '✗ ' + (r.error || '失败');
+      span.classList.add('bad');
     }
   } catch (e) {
-    hint.textContent = '✗ ' + (e.message || e);
-    toast('连接失败', 'error');
+    span.textContent = '✗ ' + (e.message || e);
+    span.classList.add('bad');
   }
   setBusy(btn, false);
+}
+
+/** 从上游 /v1/models 拉模型列表入选择器；当前值命中 context_length 且 tokens 留空时顺手回填。 */
+async function chFetchModels(card, id) {
+  const btn = card.querySelector('[data-act="fetch-models"]');
+  const span = card.querySelector('.ch-test');
+  const v = chFormValues(card);
+  setBusy(btn, true, '拉取中…');
+  span.textContent = '';
+  span.className = 'ch-test';
+  try {
+    const r = await POST('/api/settings/ai/models', {
+      channelId: id === '__new__' ? undefined : id,
+      baseURL: v.baseURL,
+      apiKey: v.apiKey,
+    });
+    if (!r.ok) throw new Error(r.error || '拉取失败');
+    chEditModels = ((r.data && r.data.models) || []).filter((m) => m && m.id);
+    // 当前已填模型命中上游 context_length 且 tokens 留空 → 顺手回填（tokensFor 标记归属当前模型）
+    const tokensInput = card.querySelector('.chf-tokens');
+    const cur = chEditModels.find((m) => m.id === v.model);
+    if (cur && cur.contextLength && !tokensInput.value) {
+      tokensInput.value = cur.contextLength;
+      card.dataset.tokensFor = v.model;
+    }
+    span.textContent = `已拉取 ${chEditModels.length} 个模型`;
+    span.classList.add('good');
+    openChModelMenu(card, ''); // 展开全量列表，所见即所得
+  } catch (e) {
+    span.textContent = '✗ ' + (e.message || e);
+    span.classList.add('bad');
+  }
+  setBusy(btn, false);
+}
+
+// ---- 模型选择器下拉（替代原生 datalist：全量可见 + 子串过滤 + 上下文徽标 + 键盘导航）----
+let chEditModels = []; // 当前编辑卡片已拉取的模型 [{id, contextLength?, displayName?}]
+const CH_MENU_CAP = 100; // 大网关（OpenRouter 数百个）渲染上限，超出提示输入过滤
+
+function chMenuFiltered(filter) {
+  const f = (filter || '').trim().toLowerCase();
+  if (!f) return chEditModels;
+  return chEditModels.filter(
+    (m) => m.id.toLowerCase().includes(f) || (m.displayName || '').toLowerCase().includes(f),
+  );
+}
+
+function renderChModelMenu(card, filter) {
+  const menu = card.querySelector('.chf-model-menu');
+  if (!menu) return;
+  const cur = card.querySelector('.chf-model').value.trim();
+  if (!chEditModels.length) {
+    menu.innerHTML =
+      '<div class="chf-mm-hint">尚未拉取模型列表 <button type="button" class="btn ghost sm" data-act="fetch-models">立即拉取</button></div>';
+    return;
+  }
+  const items = chMenuFiltered(filter);
+  if (!items.length) {
+    menu.innerHTML = '<div class="chf-mm-hint">无匹配模型，可直接输入自定义模型 id</div>';
+    return;
+  }
+  const shown = items.slice(0, CH_MENU_CAP);
+  menu.innerHTML =
+    shown
+      .map(
+        (m) =>
+          `<button type="button" class="chf-mm-item${m.id === cur ? ' cur' : ''}" data-m="${escapeHtml(m.id)}">` +
+          `<span class="chf-mm-id">${escapeHtml(m.id)}</span>` +
+          (m.displayName ? `<span class="chf-mm-name">${escapeHtml(m.displayName)}</span>` : '') +
+          (m.contextLength ? `<span class="chf-mm-ctx">${chTokensLabel(m.contextLength)}</span>` : '') +
+          `</button>`,
+      )
+      .join('') +
+    (items.length > CH_MENU_CAP
+      ? `<div class="chf-mm-hint">共 ${items.length} 个匹配，仅显示前 ${CH_MENU_CAP} 个——继续输入以缩小范围</div>`
+      : '');
+}
+
+function openChModelMenu(card, filter) {
+  const menu = card && card.querySelector('.chf-model-menu');
+  if (!menu) return;
+  renderChModelMenu(card, filter);
+  menu.hidden = false;
+  const input = card.querySelector('.chf-model');
+  if (input) input.setAttribute('aria-expanded', 'true');
+}
+
+function closeChModelMenu(card) {
+  const menu = card && card.querySelector('.chf-model-menu');
+  if (!menu || menu.hidden) return;
+  menu.hidden = true;
+  const input = card.querySelector('.chf-model');
+  if (input) input.setAttribute('aria-expanded', 'false');
+}
+
+/** 选中模型：回填输入框。tokens 同步规则（card.dataset.tokensFor 记录当前 tokens 值归属的模型）：
+ *  值为空 / 值归属另一个模型 → 覆盖为新模型的 contextLength；归属本模型（已同步或手动自定义）→ 不碰。 */
+function pickChModel(card, id) {
+  const input = card.querySelector('.chf-model');
+  input.value = id;
+  const tokensInput = card.querySelector('.chf-tokens');
+  const m = chEditModels.find((x) => x.id === id);
+  if (m && m.contextLength && (!tokensInput.value || card.dataset.tokensFor !== id)) {
+    tokensInput.value = m.contextLength;
+    card.dataset.tokensFor = id;
+  }
+  closeChModelMenu(card);
+  // 不再 input.focus()：键盘路径焦点本就在输入框；鼠标点选后重新 focus 会经 focusin 把菜单又打开
+}
+
+/** 键盘导航：↑/↓ 移动高亮（闭环），Enter 选中高亮项。仅在菜单关闭时才重渲染，否则会清掉高亮态。 */
+function chMenuNav(card, dir) {
+  const menu = card && card.querySelector('.chf-model-menu');
+  if (!menu) return;
+  if (menu.hidden) openChModelMenu(card, card.querySelector('.chf-model').value);
+  const items = [...menu.querySelectorAll('.chf-mm-item')];
+  if (!items.length) return;
+  let idx = items.findIndex((el) => el.classList.contains('hover'));
+  idx = (idx + dir + items.length) % items.length;
+  items.forEach((el, i) => el.classList.toggle('hover', i === idx));
+  items[idx].scrollIntoView({ block: 'nearest' });
+}
+
+/** 渠道网格事件委托（编辑/设默认/测试/删除/保存/拉模型/预设填充 + 模型选择器）。 */
+function bindChannelGrid() {
+  const grid = $('ch-grid');
+  if (!grid) return;
+  grid.addEventListener('click', async (e) => {
+    // 模型菜单项优先（无 data-act，命中即选中）
+    const mmItem = e.target.closest('.chf-mm-item');
+    if (mmItem) {
+      pickChModel(mmItem.closest('.ch-card'), mmItem.dataset.m);
+      return;
+    }
+    const btn = e.target.closest('[data-act]');
+    if (!btn) return;
+    const card = btn.closest('.ch-card');
+    const id = card && card.dataset.id;
+    const act = btn.dataset.act;
+    if (act === 'default') await chSetDefault(id);
+    else if (act === 'edit') {
+      chEditModels = [];
+      editingChannelId = id;
+      renderChannels();
+    } else if (act === 'del') await chDelete(id);
+    else if (act === 'test') await chTest(card, id);
+    else if (act === 'cancel') {
+      chEditModels = [];
+      editingChannelId = null;
+      renderChannels();
+    } else if (act === 'save') await chSave(card, id);
+    else if (act === 'fetch-models') await chFetchModels(card, id);
+    else if (act === 'model-menu') {
+      const menu = card.querySelector('.chf-model-menu');
+      if (menu && !menu.hidden) closeChModelMenu(card);
+      else openChModelMenu(card, ''); // chevron 始终展开全量列表
+    }
+  });
+  // 输入即过滤（子串匹配 id / displayName）；手改 tokens → 归属标记为当前模型（改选不再覆盖自定义值）
+  grid.addEventListener('input', (e) => {
+    const inp = e.target.closest('.chf-model');
+    if (inp) openChModelMenu(inp.closest('.ch-card'), inp.value);
+    const tk = e.target.closest('.chf-tokens');
+    if (tk) {
+      const c = tk.closest('.ch-card');
+      const mi = c && c.querySelector('.chf-model');
+      if (c && mi) c.dataset.tokensFor = mi.value.trim();
+    }
+  });
+  // 聚焦展开（按当前值过滤；空值 = 全量）
+  grid.addEventListener('focusin', (e) => {
+    const inp = e.target.closest('.chf-model');
+    if (inp) openChModelMenu(inp.closest('.ch-card'), inp.value);
+  });
+  // 键盘导航：↑/↓ 移动高亮，Enter 选中，Esc 关闭（preventDefault 防冒泡到全局 Esc 分层）
+  grid.addEventListener('keydown', (e) => {
+    const inp = e.target.closest('.chf-model');
+    if (!inp) return;
+    const card = inp.closest('.ch-card');
+    const menu = card && card.querySelector('.chf-model-menu');
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      chMenuNav(card, e.key === 'ArrowDown' ? 1 : -1);
+    } else if (e.key === 'Enter' && menu && !menu.hidden) {
+      const hover = menu.querySelector('.chf-mm-item.hover') || menu.querySelector('.chf-mm-item.cur');
+      if (hover) {
+        e.preventDefault();
+        pickChModel(card, hover.dataset.m);
+      }
+    } else if (e.key === 'Escape' && menu && !menu.hidden) {
+      e.preventDefault();
+      closeChModelMenu(card);
+    }
+  });
+  grid.addEventListener('change', (e) => {
+    const sel = e.target.closest('.chf-preset');
+    if (!sel || sel.value === '') return;
+    const p = CHANNEL_PRESETS[Number(sel.value)];
+    const card = sel.closest('.ch-card');
+    if (p && card) {
+      card.querySelector('.chf-name').value = p.name;
+      card.querySelector('.chf-baseurl').value = p.baseURL;
+      card.querySelector('.chf-model').value = p.model;
+      card.querySelector('.chf-tokens').value = p.maxInputTokens || '';
+      card.dataset.tokensFor = p.model; // 预设 tokens 归属预设模型
+    }
+    sel.value = '';
+  });
+  // 点选择器外部 → 关闭菜单（document 级，bindChannelGrid 只挂一次）
+  document.addEventListener('click', (e) => {
+    if (e.target.closest('.chf-model-wrap')) return;
+    document.querySelectorAll('.chf-model-menu:not([hidden])').forEach((m) => {
+      m.hidden = true;
+      const input = m.closest('.chf-model-wrap') && m.closest('.chf-model-wrap').querySelector('.chf-model');
+      if (input) input.setAttribute('aria-expanded', 'false');
+    });
+  });
 }
 
 async function saveSummaryPrompt() {
@@ -4138,6 +4605,19 @@ async function saveConceptPrompt() {
   try {
     const r = await PUT('/api/settings/concept-prompt', { value: ta.value });
     if (r.ok) { hint.textContent = '已保存 · ' + new Date().toLocaleTimeString(); toast('概念提示词已保存'); }
+    else { hint.textContent = '保存失败：' + (r.error || ''); toast(r.error || '保存失败', 'error'); }
+  } catch (e) { hint.textContent = '保存失败：' + (e.message || e); toast('保存失败', 'error'); }
+  setBusy(btn, false);
+}
+/** 概念地图提示词保存（v3.14，仿 saveConceptPrompt）。空串=恢复默认。 */
+async function saveConceptMapPrompt() {
+  const ta = $('concept-map-prompt-edit');
+  const btn = $('btn-concept-map-prompt-save');
+  const hint = $('concept-map-prompt-hint');
+  setBusy(btn, true, '保存中…');
+  try {
+    const r = await PUT('/api/settings/concept-map-prompt', { value: ta.value });
+    if (r.ok) { hint.textContent = '已保存 · ' + new Date().toLocaleTimeString(); toast('概念地图提示词已保存'); }
     else { hint.textContent = '保存失败：' + (r.error || ''); toast(r.error || '保存失败', 'error'); }
   } catch (e) { hint.textContent = '保存失败：' + (e.message || e); toast('保存失败', 'error'); }
   setBusy(btn, false);
@@ -5234,7 +5714,19 @@ function bind() {
   });
   // AI 接口
   $('btn-ai-save').onclick = saveAiConfig;
-  $('btn-ai-test').onclick = testAiConnection;
+  // v3.13 模型渠道卡片：添加渠道 + 网格事件委托
+  $('btn-ch-add').onclick = () => {
+    chEditModels = [];
+    editingChannelId = '__new__';
+    renderChannels();
+    const card = document.querySelector('.ch-card.editing');
+    if (card) {
+      card.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      const nameInput = card.querySelector('.chf-name');
+      if (nameInput) nameInput.focus();
+    }
+  };
+  bindChannelGrid();
   // 总结提示词
   $('btn-summary-prompt-save').onclick = saveSummaryPrompt;
   $('btn-summary-prompt-default').onclick = async () => {
@@ -5273,7 +5765,18 @@ function bind() {
       }
     };
   }
-  // 概念总览图生成按钮（v3.10）
+  // 概念地图提示词（v3.14）
+  if ($('btn-concept-map-prompt-save')) $('btn-concept-map-prompt-save').onclick = saveConceptMapPrompt;
+  if ($('btn-concept-map-prompt-default')) {
+    $('btn-concept-map-prompt-default').onclick = async () => {
+      if (await PWDialog.confirm('清空当前编辑内容并恢复为内置默认概念地图提示词？（保存后生效）', { title: '恢复默认提示词', okText: '恢复默认' })) {
+        $('concept-map-prompt-edit').value = $('concept-map-prompt-default-pre').textContent || '';
+        $('concept-map-prompt-hint').textContent = '已载入默认提示词，尚未保存';
+        toast('已载入默认提示词');
+      }
+    };
+  }
+  // 概念地图生成按钮（v3.10）
   if ($('btn-concept-map')) $('btn-concept-map').onclick = generateConceptMap;
   // 采集：文件扫描 / arXiv / 主题发现
   $('btn-scan-save').onclick = saveScan;
@@ -5298,7 +5801,7 @@ function bind() {
   const wNorm = $('btn-w-norm');
   if (wNorm) wNorm.onclick = normalizeWeights;
   // AI 接口恢复默认
-  $('btn-ai-reset').onclick = () => resetSection('ai', 'AI 接口');
+  $('btn-ai-reset').onclick = () => resetSection('ai', '模型渠道与全局参数');
   // 概览：全部恢复默认 + 快捷入口
   $('btn-reset-all').onclick = resetAllSettings;
   document.querySelectorAll('.ov-quick-links [data-goto]').forEach((b) => {
@@ -5600,6 +6103,7 @@ async function switchSpace(id) {
   if (chatState && typeof chatState.closeStream === 'function') { try { chatState.closeStream(); } catch {} }
   chatState = null;
   try { await flushPendingNotes(); } catch {}
+  _stopConceptMapPolling(); // 概念地图轮询随空间切换停止（后台任务在服务端继续，回该空间时 showConcepts 会重启轮询）
   // 关阅读器（若开着）
   if (reader && typeof reader.close === 'function') { try { reader.close(); } catch {} }
   // 切换

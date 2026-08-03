@@ -15,7 +15,11 @@ const {
   applySettingsOverride,
   callChat,
   listModels,
+  __setBackoffForTests,
 } = require('../src/services/ai');
+
+// 全文件禁用真实退避（2s→16s 指数退避会让 429/5xx 重试用例白等 ~30s）；重试次数/语义不受影响
+__setBackoffForTests(() => Promise.resolve());
 
 const CFG = { ai: { baseURL: 'http://gw/v1', apiKey: 'k', model: 'm', maxInputChars: 100, timeoutMs: 1000 } };
 
@@ -96,6 +100,61 @@ test('applySettingsOverride 覆盖 scanIntervalMinutes（允许 0 关闭定时�
   assert.strictEqual(applySettingsOverride(config, { scanIntervalMinutes: 0 }).scanIntervalMinutes, 0);
   assert.strictEqual(applySettingsOverride(config, {}).scanIntervalMinutes, 5); // 未覆盖透传
   assert.strictEqual(config.scanIntervalMinutes, 5); // 不改原 config
+});
+
+// ---- v3.13 多渠道（channels + activeChannelId）----
+test('applySettingsOverride 活跃渠道权威覆盖 baseURL/apiKey/model/maxInputTokens', () => {
+  const config = { ai: { baseURL: 'http://cfg/v1', apiKey: 'cfg-key', model: 'cfg-model', maxInputTokens: 32000 } };
+  const settings = {
+    ai: {
+      // 旧版顶层覆盖存在时仍被活跃渠道压过（渠道是单一事实源）
+      baseURL: 'http://legacy/v1',
+      model: 'legacy-model',
+      channels: [
+        { id: 'ch_a', name: 'A', baseURL: 'http://a/v1', apiKey: 'key-a', model: 'model-a', maxInputTokens: 1000000 },
+        { id: 'ch_b', name: 'B', baseURL: 'http://b/v1', apiKey: 'key-b', model: 'model-b' },
+      ],
+      activeChannelId: 'ch_b',
+    },
+  };
+  const eff = applySettingsOverride(config, settings);
+  assert.strictEqual(eff.ai.baseURL, 'http://b/v1');
+  assert.strictEqual(eff.ai.apiKey, 'key-b');
+  assert.strictEqual(eff.ai.model, 'model-b');
+  assert.strictEqual(eff.ai.maxInputTokens, 32000, '渠道未设 tokens 时跟随全局/config');
+  // 渠道 model 并入 extraModels（聊天切换器白名单）
+  assert.ok(eff.ai.extraModels.includes('model-a'));
+  assert.ok(eff.ai.extraModels.includes('model-b'));
+  // 原 config 不被修改
+  assert.strictEqual(config.ai.model, 'cfg-model');
+  assert.strictEqual(config.ai.maxInputTokens, 32000);
+});
+
+test('applySettingsOverride 渠道 maxInputTokens 覆盖全局；activeChannelId 未命中则不动三元组', () => {
+  const config = { ai: { baseURL: 'http://cfg/v1', apiKey: 'cfg-key', model: 'cfg-model', maxInputTokens: 32000 } };
+  const withTokens = applySettingsOverride(config, {
+    ai: {
+      channels: [{ id: 'ch_a', baseURL: 'http://a/v1', apiKey: 'k', model: 'ma', maxInputTokens: 1000000 }],
+      activeChannelId: 'ch_a',
+    },
+  });
+  assert.strictEqual(withTokens.ai.maxInputTokens, 1000000);
+  const miss = applySettingsOverride(config, {
+    ai: { channels: [{ id: 'ch_a', baseURL: 'http://a/v1', apiKey: 'k', model: 'ma' }], activeChannelId: 'ch_zzz' },
+  });
+  assert.strictEqual(miss.ai.baseURL, 'http://cfg/v1', 'activeChannelId 未命中时回落 config/旧版字段');
+  assert.strictEqual(miss.ai.model, 'cfg-model');
+});
+
+test('applySettingsOverride 渠道显式空 apiKey = 无鉴权网关（覆盖 config key）', () => {
+  const config = { ai: { baseURL: 'http://cfg/v1', apiKey: 'cfg-key', model: 'm' } };
+  const eff = applySettingsOverride(config, {
+    ai: {
+      channels: [{ id: 'ch_a', baseURL: 'http://local/v1', apiKey: '', model: 'local-model' }],
+      activeChannelId: 'ch_a',
+    },
+  });
+  assert.strictEqual(eff.ai.apiKey, '');
 });
 
 test('applySettingsOverride 覆盖 arxiv 字段（布尔 false 生效，未设字段透传）', () => {
@@ -384,6 +443,32 @@ test('callChat 用 chatParams.model 覆盖 config.ai.model', async () => {
   assert.strictEqual(capturedBody.model, 'm', '无覆盖时回退 config.ai.model');
 });
 
+test('callChat 锁定 temperature 的模型（Kimi k3）：400 提及 temperature → 剥参数重发', async () => {
+  const bodies = [];
+  const fakeFetch = async (url, opts) => {
+    bodies.push(JSON.parse(opts.body));
+    if (bodies.length === 1) {
+      return {
+        ok: false,
+        status: 400,
+        text: async () => '{"error":{"message":"invalid temperature: only 1 is allowed for this model"}}',
+      };
+    }
+    return { ok: true, json: async () => ({ choices: [{ message: { content: 'ok' } }] }) };
+  };
+  const out = await callChat({
+    messages: [{ role: 'user', content: 'hi' }],
+    config: CFG,
+    fetchImpl: fakeFetch,
+    jsonMode: false,
+  });
+  assert.strictEqual(out, 'ok');
+  assert.strictEqual(bodies.length, 2, '第一次 400 后重发一次');
+  assert.strictEqual(bodies[0].temperature, 0.3, '首发带默认 temperature');
+  assert.strictEqual(bodies[1].temperature, undefined, '重发剥掉 temperature');
+  assert.strictEqual(bodies[1].top_p, undefined, '重发一并剥掉 top_p');
+});
+
 test('callChat 多模态：messages[i].content 为数组时原样透传（视觉问答）', async () => {
   let capturedBody;
   const fakeFetch = async (url, opts) => {
@@ -610,19 +695,12 @@ test('callChat 5xx 重试耗尽后抛最后一次错误（1+4 次尝试）', asy
     calls++;
     return { ok: false, status: 500, text: async () => 'boom' };
   };
-  // 退避最长 ~30s：测试内把 setTimeout 替换为立即执行（结束后还原，不影响其它用例）
-  const origSetTimeout = global.setTimeout;
-  global.setTimeout = (fn, ...rest) => origSetTimeout(fn, 0);
-  try {
-    await assert.rejects(
-      () =>
-        callChat({ messages: [{ role: 'user', content: 'hi' }], config: CFG, fetchImpl: fakeFetch, jsonMode: false }),
-      /AI HTTP 500: boom/,
-      '重试耗尽后应抛最后一次错误',
-    );
-  } finally {
-    global.setTimeout = origSetTimeout;
-  }
+  // 退避已被文件顶部 __setBackoffForTests 禁用（否则真实退避 ~30s）
+  await assert.rejects(
+    () => callChat({ messages: [{ role: 'user', content: 'hi' }], config: CFG, fetchImpl: fakeFetch, jsonMode: false }),
+    /AI HTTP 500: boom/,
+    '重试耗尽后应抛最后一次错误',
+  );
   assert.strictEqual(calls, 5, '1 次原始请求 + 4 次重试');
 });
 
@@ -1053,15 +1131,14 @@ test('callChat：chatParams.maxRetries 覆盖默认 4 次重试', async () => {
   assert.strictEqual(calls, 1, 'maxRetries:0 应只尝试 1 次（默认会 5 次）');
 });
 
-test('generateConceptMap：自由输出（非 JSON 模式）+ 剥 ```html 围栏', async () => {
+test('generateConceptMap：流式自由输出（非 JSON 模式）+ 剥 ```html 围栏', async () => {
   const { generateConceptMap } = require('../src/services/ai');
   let sawBody;
+  const sse = (text) =>
+    `data: ${JSON.stringify({ choices: [{ delta: { content: text } }] })}\n\ndata: [DONE]\n\n`;
   const fakeFetch = async (_url, opt) => {
     sawBody = JSON.parse(opt.body);
-    return {
-      ok: true,
-      json: async () => ({ choices: [{ message: { content: '```html\n<html><body>MAP</body></html>\n```' } }] }),
-    };
+    return { ok: true, text: async () => sse('```html\n<html><body>MAP</body></html>\n```') };
   };
   const html = await generateConceptMap({
     concepts: [{ term: 'Attention', definition: 'd', category: 'model', paperIds: ['p1'] }],
@@ -1070,16 +1147,19 @@ test('generateConceptMap：自由输出（非 JSON 模式）+ 剥 ```html 围栏
     prompt: '',
   });
   assert.strictEqual(html, '<html><body>MAP</body></html>');
-  assert.strictEqual(sawBody.response_format, undefined, '概念总览图是 HTML 产出，不能强制 json_object');
+  assert.strictEqual(sawBody.stream, true, '概念地图大产出必须走流式（非流式长请求会被代理空闲超时掐断）');
+  assert.strictEqual(sawBody.response_format, undefined, '概念地图是 HTML 产出，不能强制 json_object');
   assert.ok(sawBody.messages[1].content.includes('Attention'), '概念清单应注入 user 消息');
 });
 
 test('generateConceptMap：prevHtml 注入（优化模式）', async () => {
   const { generateConceptMap } = require('../src/services/ai');
   let sawBody;
+  const sse = (text) =>
+    `data: ${JSON.stringify({ choices: [{ delta: { content: text } }] })}\n\ndata: [DONE]\n\n`;
   const fakeFetch = async (_url, opt) => {
     sawBody = JSON.parse(opt.body);
-    return { ok: true, json: async () => ({ choices: [{ message: { content: '<html>v2</html>' } }] }) };
+    return { ok: true, text: async () => sse('<html>v2</html>') };
   };
   await generateConceptMap({
     concepts: [{ term: 'X', paperIds: [] }],
