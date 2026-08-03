@@ -2,7 +2,7 @@
 //
 // 自 public/app.js 拆出（v3.15 模块化重构）——声明体原样迁移，仅补 import/export。
 
-import { DEL, PATCH, POST, PUT, api, jget, sp } from '../core/api.js';
+import { DEL, PATCH, POST, PUT, jget, sp } from '../core/api.js';
 import { $ } from '../core/dom.js';
 import { escapeHtml } from '../core/format.js';
 import { state } from '../core/state.js';
@@ -12,8 +12,12 @@ import { showView } from '../views/view-switch.js';
 
 // ---- 概念清单视图 ----
 export async function showConcepts(view) {
-  const { data } = await jget('/api/concepts');
+  // state.papers 只由 refresh()（库视图 / 10s 轮询）填充——v3.15 深链 /concepts 时为空，
+  // 概念卡片 paperIds 全解析不到 → 误显示「独立条目」（同 formulas 的深链 bug，一并修）。
+  const needPapers = !(state.papers || []).length;
+  const [{ data }, pr] = await Promise.all([jget('/api/concepts'), needPapers ? jget('/api/papers') : null]);
   state.concepts = data || [];
+  if (pr && Array.isArray(pr.data)) state.papers = pr.data;
   // 概念 Markdown 下载链接带当前空间（静态 <a href> 不经 sp()，这里手动注入）
   const dl = document.querySelector('a[href="/api/concepts.md"]');
   if (dl) dl.href = sp('/api/concepts.md');
@@ -47,24 +51,34 @@ export function _stopConceptMapPolling() {
   _cmPrevStatus = {};
 }
 
-/** 轮询一轮：拉 settings 元信息 → 检测状态跳变 toast → 刷新列表（地图 pane 可见时）。 */
+/** 轮询一轮：拉 settings 元信息 → 检测状态跳变 toast → 有变化才重渲列表（地图 pane 可见时）。
+ *  注意：制品卡是 live iframe 缩略图，重渲 = 卸载重挂 iframe（重新拉 html + 重跑页内动画），
+ *  所以必须只在「状态/成员变化」时重渲，不能每轮都刷。 */
 async function _pollConceptMaps() {
+  if (!_cmPollTimer) return; // 已停止（切空间/无 generating 后）——定时器句柄即开关，防停止后残留回调继续拉取
   let metas;
   try {
     const s = await jget('/api/settings');
     metas = (s && s.data && s.data.conceptMaps) || [];
   } catch { return; } // 网络抖动跳过本轮
+  let changed = false;
+  const prevIds = new Set(Object.keys(_cmPrevStatus));
   for (const m of metas) {
     const prev = _cmPrevStatus[m.id];
-    if (prev === 'generating' && m.status === 'ready') toast(`概念地图「${m.name}」已生成`, 'info');
-    else if (prev === 'generating' && m.status === 'error') toast(`概念地图「${m.name}」${m.error || '生成失败'}`, 'error');
-    _cmPrevStatus[m.id] = m.status;
+    if (prev !== m.status) {
+      changed = true;
+      if (prev === 'generating' && m.status === 'ready') toast(`概念地图「${m.name}」已生成`, 'info');
+      else if (prev === 'generating' && m.status === 'error') toast(`概念地图「${m.name}」${m.error || '生成失败'}`, 'error');
+      _cmPrevStatus[m.id] = m.status;
+    }
+    prevIds.delete(m.id);
   }
+  if (prevIds.size) { changed = true; for (const id of prevIds) delete _cmPrevStatus[id]; } // 制品被删（他端/取消）
   state.conceptMaps = metas;
   if (!metas.some((m) => m.status === 'generating')) { _stopConceptMapPolling(); }
-  // 概念页地图 pane 可见时刷新列表（其它页面不打扰 DOM；pane 用 .hidden 控制显隐）
+  // 概念页地图 pane 可见且有变化才重渲（其它页面不打扰 DOM；pane 用 .hidden 控制显隐）
   const pane = $('concept-maps-pane');
-  if (pane && !pane.hidden && $('concepts-view').style.display !== 'none') renderConceptMaps();
+  if (changed && pane && !pane.hidden && $('concepts-view').style.display !== 'none') renderConceptMaps();
 }
 
 /** 生成新地图：可选自定义 prompt → POST 立即返回占位 → 后台生成 → 轮询。 */
@@ -86,8 +100,10 @@ export async function generateConceptMap() {
   } else toast((r && r.error) || '提交失败', 'error');
 }
 
-/** 渲染制品列表（元信息从 state.conceptMaps；html 按需 GET 单个）。
- *  状态感知：generating=生成中标记（仅可删除=取消）；error=失败原因（可查看半成品/再优化/删除）。 */
+/** 渲染制品缩略图网格（元信息从 state.conceptMaps）。
+ *  缩略图 = 制品 HTML 在 1280×800 iframe 里真实渲染后 CSS scale 缩小（live preview），
+ *  滚进视口才 GET html 挂载（IntersectionObserver 懒挂载；jsdom/老浏览器立即全挂）。
+ *  状态感知：generating=spinner 占位（仅可取消）；error=失败原因（有半成品也挂缩略图）。 */
 function renderConceptMaps() {
   const box = $('concept-maps-list');
   if (!box) return;
@@ -95,30 +111,37 @@ function renderConceptMaps() {
   if (!maps.length) { box.innerHTML = '<div class="cms-empty">暂无概念地图。点上方「生成概念地图」基于当前概念清单创建。</div>'; return; }
   box.innerHTML = maps.map((m) => {
     const t = new Date(m.createdAt || 0).toLocaleString();
-    let statusHtml = '<span class="cms-item-time">' + t + (m.updatedAt && m.updatedAt !== m.createdAt ? '（优化过）' : '') + '</span>';
-    let actions;
+    let thumbHtml, metaHtml, actions;
     if (m.status === 'generating') {
-      statusHtml = '<span class="cms-item-time cms-generating"><span class="cms-spinner"></span>后台生成中…可随时离开本页</span>';
+      thumbHtml = '<div class="cms-thumb-status"><span class="cms-spinner"></span><span>后台生成中…<br>可随时离开本页</span></div>';
+      metaHtml = '<span class="cms-item-time cms-generating">生成中</span>';
       actions = '<button class="btn ghost sm danger" data-cm-del="' + m.id + '" title="取消生成并删除">取消</button>';
     } else if (m.status === 'error') {
-      statusHtml = '<span class="cms-item-time cms-error" title="' + escapeHtml(m.error || '') + '">' + escapeHtml(m.error || '生成失败') + '</span>';
+      thumbHtml = m.hasHtml
+        ? '<div class="cms-thumb" data-cm-thumb="' + m.id + '"></div><div class="cms-thumb-badge err">不完整</div>'
+        : '<div class="cms-thumb-status cms-err">生成失败</div>';
+      metaHtml = '<span class="cms-item-time cms-error" title="' + escapeHtml(m.error || '') + '">' + escapeHtml(m.error || '生成失败') + '</span>';
       actions =
         (m.hasHtml ? '<button class="btn ghost sm" data-cm-view="' + m.id + '">查看</button>' : '') +
         '<button class="btn ghost sm" data-cm-opt="' + m.id + '">优化</button>' +
         '<button class="btn ghost sm danger" data-cm-del="' + m.id + '">删除</button>';
     } else {
+      thumbHtml = '<div class="cms-thumb" data-cm-thumb="' + m.id + '" data-cm-view-thumb="' + m.id + '" title="点击查看"></div>';
+      metaHtml = '<span class="cms-item-time">' + t + '</span>';
       actions =
-        '<button class="btn ghost sm" data-cm-view="' + m.id + '">查看</button>' +
         '<button class="btn ghost sm" data-cm-opt="' + m.id + '">优化</button>' +
         '<button class="btn ghost sm" data-cm-newtab="' + m.id + '">新标签页</button>' +
         '<button class="btn ghost sm danger" data-cm-del="' + m.id + '">删除</button>';
     }
-    return '<div class="cms-item' + (m.status === 'generating' ? ' is-generating' : '') + '" data-id="' + m.id + '">' +
-      '<div class="cms-item-main"><span class="cms-item-name">' + escapeHtml(m.name || '概念地图') + '</span>' +
-      statusHtml + '</div>' +
-      '<div class="cms-item-actions">' + actions + '</div></div>';
+    return '<div class="cms-card' + (m.status === 'generating' ? ' is-generating' : '') + '" data-id="' + m.id + '">' +
+      '<div class="cms-thumb-wrap">' + thumbHtml + '</div>' +
+      '<div class="cms-card-body">' +
+      '<div class="cms-item-main"><span class="cms-item-name">' + escapeHtml(m.name || '概念地图') + '</span>' + metaHtml + '</div>' +
+      '<div class="cms-item-actions">' + actions + '</div>' +
+      '</div></div>';
   }).join('');
   box.querySelectorAll('[data-cm-view]').forEach((b) => (b.onclick = () => viewConceptMap(b.dataset.cmView)));
+  box.querySelectorAll('[data-cm-view-thumb]').forEach((t) => (t.onclick = () => viewConceptMap(t.dataset.cmViewThumb)));
   box.querySelectorAll('[data-cm-opt]').forEach((b) => (b.onclick = () => optimizeConceptMap(b.dataset.cmOpt)));
   box.querySelectorAll('[data-cm-newtab]').forEach((b) => (b.onclick = () => openConceptMapNewTab(b.dataset.cmNewtab)));
   box.querySelectorAll('[data-cm-del]').forEach((b) => (b.onclick = async () => {
@@ -133,6 +156,54 @@ function renderConceptMaps() {
       renderConceptMaps();
     } else toast((r && r.error) || '删除失败', 'error');
   }));
+  _observeConceptMapThumbs(box);
+}
+
+// ---- 制品缩略图：live iframe 缩放预览 ----
+/** 缩略图渲染宽度（iframe 按此渲染再 scale 到卡片宽度；16:10 比例由 CSS aspect-ratio 保证）。 */
+const _CM_THUMB_W = 1280;
+const _CM_THUMB_H = 800;
+let _cmThumbIO = null; // IntersectionObserver 单例（复用）
+
+/** 挂载单个缩略图：GET 制品 html → sandboxed iframe srcdoc → 按容器宽度 scale。幂等。 */
+function _mountConceptMapThumb(box, id) {
+  if (!box || box.dataset.mounted) return;
+  box.dataset.mounted = '1';
+  jget('/api/concepts/map/' + id).then((r) => {
+    if (!r || !r.data || !r.data.html) { box.classList.add('cms-thumb-failed'); return; }
+    const iframe = document.createElement('iframe');
+    iframe.className = 'cms-thumb-frame';
+    iframe.setAttribute('sandbox', 'allow-scripts'); // 不放 allow-same-origin：制品禁存储 API，隔离更严
+    iframe.setAttribute('tabindex', '-1');
+    iframe.setAttribute('title', '概念地图缩略预览');
+    iframe.style.width = _CM_THUMB_W + 'px';
+    iframe.style.height = _CM_THUMB_H + 'px';
+    box.appendChild(iframe);
+    iframe.srcdoc = r.data.html;
+    const scale = (box.clientWidth || 300) / _CM_THUMB_W;
+    iframe.style.transform = 'scale(' + scale + ')';
+  }).catch(() => { box.classList.add('cms-thumb-failed'); });
+}
+
+/** 懒挂载：滚进视口才取 html 挂 iframe（rootMargin 预载一屏）。无 IO（jsdom/老浏览器）立即全挂。 */
+function _observeConceptMapThumbs(scope) {
+  const thumbs = scope.querySelectorAll('.cms-thumb[data-cm-thumb]');
+  if (!thumbs.length) return;
+  if (typeof IntersectionObserver === 'undefined') {
+    thumbs.forEach((t) => _mountConceptMapThumb(t, t.dataset.cmThumb));
+    return;
+  }
+  if (!_cmThumbIO) {
+    _cmThumbIO = new IntersectionObserver((entries) => {
+      for (const e of entries) {
+        if (e.isIntersecting) {
+          _cmThumbIO.unobserve(e.target);
+          _mountConceptMapThumb(e.target, e.target.dataset.cmThumb);
+        }
+      }
+    }, { rootMargin: '400px' });
+  }
+  thumbs.forEach((t) => _cmThumbIO.observe(t));
 }
 
 /** 查看制品：按需 GET 单个 html → iframe srcdoc 全屏覆盖层。传 html 则免请求。 */

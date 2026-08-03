@@ -2,7 +2,7 @@
 //
 // 自 public/app.js 拆出（v3.15 模块化重构）——声明体原样迁移，仅补 import/export。
 
-import { DEL, PATCH, api, jget, sp } from '../core/api.js';
+import { DEL, PATCH, jget, sp } from '../core/api.js';
 import { $ } from '../core/dom.js';
 import { escapeHtml } from '../core/format.js';
 import { renderMd } from '../core/markdown.js';
@@ -17,8 +17,13 @@ import { showView } from '../views/view-switch.js';
 // 「归一化到一般形式」的展示落点在 occurrences[].symbolMap：清单页给一般形式，
 // 展开某篇论文能看到「这篇里 d_k 写作 d」。
 export async function showFormulas() {
-  const { data } = await jget('/api/formulas');
+  // state.papers 只由 refresh()（库视图 / 10s 轮询）填充——v3.15 深链 /formulas 时为空，
+  // 卡片 occurrences 全解析不到 → 误显示「独立条目」（等 10s 轮询后渲染的批次才有论文，看起来像时好时坏）。
+  // 这里直接补拉一次列表（不走 refresh()，避免 renderList/syncFilterToUrl 副作用污染公式页 URL）。
+  const needPapers = !(state.papers || []).length;
+  const [{ data }, pr] = await Promise.all([jget('/api/formulas'), needPapers ? jget('/api/papers') : null]);
   state.formulas = data || [];
+  if (pr && Array.isArray(pr.data)) state.papers = pr.data;
   const dl = document.querySelector('a[href="/api/formulas.md"]');
   if (dl) dl.href = sp('/api/formulas.md');
   showView('formulas');
@@ -32,9 +37,11 @@ export let _formulaLayout = localStorage.getItem('pw-formula-layout') || 'masonr
 // 懒加载：公式清单可能数百条，每张卡跑同步 KaTeX，一次性 innerHTML 会卡顿。
 // 故保留「全量排序后的 list」，但分批渲染（首批 _FORMULA_FIRST_BATCH，之后每批 _FORMULA_NEXT_BATCH），
 // 用 IntersectionObserver 观察末尾 sentinel 触发追加。jsdom/老浏览器无此 API 时一次性渲染全部（兼容）。
-const _FORMULA_FIRST_BATCH = 60;
+// 批量取小（v3.15）：每张卡 KaTeX 同步渲染 + 全量重排都是主线程开销，小批量滚动更顺滑
+// （首批仍按 3 列 × ~10 行留足一屏+overscan，避免刚滚动就等加载）。
+const _FORMULA_FIRST_BATCH = 30;
 
-const _FORMULA_NEXT_BATCH = 40;
+const _FORMULA_NEXT_BATCH = 20;
 
 let _formulaList = []; // 当前排序后的完整列表（renderFormulas 计算）
 
@@ -182,14 +189,27 @@ let _formulaMasonryCols = 0;
  *  - 兜底：jsdom / 容器未挂载 / 宽度为 0 / 卡高测不到时跳过定位并移除 .js-masonry，
  *    回退到 CSS grid 行优先（有空隙但可读，测试不依赖定位）。
  *  @param {boolean} reflowOnlyHeight true=列数不变只重算高度（如展开符号表），不重置 width */
+// TEMP-DEBUG：瀑布流懒加载塌列问题取证（定位后删除）
+function _mdbg(ev, extra) {
+  try {
+    (window._masonryDebug = window._masonryDebug || []).push({
+      t: Math.round(performance.now()), ev,
+      w: ($('formulas-grid') || {}).clientWidth,
+      view: ($('formulas-view') || {}).offsetWidth,
+      ...extra,
+    });
+    if (window._masonryDebug.length > 200) window._masonryDebug.shift();
+  } catch {}
+}
 function _layoutFormulaMasonry(reflowOnlyHeight) {
   const g = $('formulas-grid');
-  if (!g || _formulaLayout !== 'masonry') return;
+  if (!g || _formulaLayout !== 'masonry') { _mdbg('layout-skip', { layout: _formulaLayout }); return; }
   const cards = g.querySelectorAll(':scope > .formula-card');
-  if (!cards.length) { g.classList.remove('js-masonry'); g.style.height = ''; return; }
+  if (!cards.length) { g.classList.remove('js-masonry'); g.style.height = ''; _mdbg('layout-empty'); return; }
   const width = g.clientWidth;
   // 兜底：宽度测不到（jsdom / 不可见 / display:none）→ 不做绝对定位，回退 CSS grid
   if (!width || width < _FORMULA_MASONRY_MIN / 2) {
+    _mdbg('layout-fallback', { width, cards: cards.length });
     _formulaMasonryCols = 0;
     g.classList.remove('js-masonry');
     cards.forEach((c) => { c.style.position = ''; c.style.top = ''; c.style.left = ''; c.style.width = ''; });
@@ -200,22 +220,25 @@ function _layoutFormulaMasonry(reflowOnlyHeight) {
   let cols = Math.max(1, Math.floor((width + gap) / (_FORMULA_MASONRY_MIN + gap)));
   // 列数受卡片数封顶（3 张卡别开 4 列留大片空白）
   cols = Math.min(cols, cards.length);
+  _mdbg('layout-apply', { width, cols, cards: cards.length, reflow: !!reflowOnlyHeight });
   const colWidth = (width - (cols - 1) * gap) / cols;
   // reflowOnlyHeight：列数未变时复用列宽，只重排纵向位置
   if (reflowOnlyHeight && cols !== _formulaMasonryCols) reflowOnlyHeight = false;
   _formulaMasonryCols = cols;
   const colHeights = new Array(cols).fill(0);
   g.classList.add('js-masonry');
+  // 三遍分离（写-读-写），避免逐卡「设宽→读高」的同步强制重排（layout thrashing，慢机器上卡死主线程）：
   cards.forEach((card) => {
-    // 测高前先给确定列宽，避免换行差异导致测高偏差（首次定位 & 列数变化时）
     card.style.width = colWidth + 'px';
     card.style.position = 'absolute';
-    const h = card.offsetHeight;
+  });
+  const heights = Array.from(cards, (c) => c.offsetHeight || 0); // 批量读：浏览器合并为一次 reflow
+  cards.forEach((card, i) => {
     // 卡高测不到（0）→ 无法精确堆叠，但仍按列宽横向排（纵向会重叠，优于全部压在 top:0）
     const target = colHeights.indexOf(Math.min(...colHeights));
     card.style.top = colHeights[target] + 'px';
     card.style.left = target * (colWidth + gap) + 'px';
-    colHeights[target] += (h || 0) + gap;
+    colHeights[target] += heights[i] + gap;
   });
   const maxH = Math.max(...colHeights, 0);
   g.style.height = maxH ? maxH + 'px' : '';
@@ -232,12 +255,15 @@ function _layoutFormulaMasonry(reflowOnlyHeight) {
 /** 防抖重排（resize / 字体载入后）：列数可能变，全量重排。 */
 function _scheduleFormulaMasonryRelayout() {
   if (_formulaResizeTimer) clearTimeout(_formulaResizeTimer);
-  _formulaResizeTimer = setTimeout(() => { _formulaResizeTimer = null; _layoutFormulaMasonry(false); }, 120);
+  _formulaResizeTimer = setTimeout(() => { _formulaResizeTimer = null; _mdbg('debounce-run'); _layoutFormulaMasonry(false); }, 120);
 }
 
 /** 渲染 count 张卡（从 _formulaShown 开始追加），插 sentinel 并挂/复用 IntersectionObserver。
  *  无 IntersectionObserver（jsdom/老浏览器）时一次性渲染全部。
- *  渲染后跑瀑布流定位（KaTeX 同步渲染完成即可测高；字体/图片异步回流另由 resize 兜底）。 */
+ *  渲染后**同步**跑瀑布流定位（KaTeX 本就同步渲染，卡高立即可测）——历史实现用双 rAF 延迟定位，
+ *  新批次卡在定位前以「在流、全宽、相对定位」刷出来，慢机器/重负载下 rAF 排队时用户会看到
+ *  整段列表态（v3.15 懒加载塌列的根因之一）；同步定位后不再有在流瞬态。
+ *  字体/KaTeX 字体异步回流可能导致卡高后变化，再补一次 rAF 校正 + resize/RO 兜底。 */
 function _renderFormulaBatch(count) {
   const g = $('formulas-grid');
   if (!g || !_formulaList.length) return;
@@ -245,8 +271,16 @@ function _renderFormulaBatch(count) {
   const total = _formulaList.length;
   const end = Math.min(_formulaShown + count, total);
   if (end <= _formulaShown) return;
+  _mdbg('batch', { from: _formulaShown, to: end, total });
   const frag = document.createDocumentFragment();
-  for (let i = _formulaShown; i < end; i++) frag.appendChild(_buildFormulaCard(_formulaList[i], layout));
+  for (let i = _formulaShown; i < end; i++) {
+    // 单卡构建异常（极端 LaTeX/Markdown）不得中断整批——否则 observer 反复重试同一批，定位永远不跑
+    try {
+      frag.appendChild(_buildFormulaCard(_formulaList[i], layout));
+    } catch (e) {
+      _mdbg('card-error', { i, msg: String((e && e.message) || e).slice(0, 120) });
+    }
+  }
   // 移除旧 sentinel（若有）再追加新批次
   const oldSentinel = g.querySelector('#formula-sentinel');
   if (oldSentinel) oldSentinel.remove();
@@ -261,12 +295,12 @@ function _renderFormulaBatch(count) {
     g.appendChild(sentinel);
     _observeFormulaSentinel(sentinel);
   }
-  // 瀑布流定位：双 rAF 确保 KaTeX/字体回流后再测高（首帧测高可能偏小）；list 布局不动
+  // 瀑布流定位：同步定位（消除在流瞬态）；list 布局不动
   if (layout === 'masonry') {
     // wire resize 一次性（监听窗口/侧栏宽度变化）
     if (!_formulaResizeWired) {
       _formulaResizeWired = true;
-      window.addEventListener('resize', _scheduleFormulaMasonryRelayout, { passive: true });
+      window.addEventListener('resize', () => { _mdbg('win-resize'); _scheduleFormulaMasonryRelayout(); }, { passive: true });
     }
     // ResizeObserver 盯 grid 本体宽度（v3.14 加固）：window resize 覆盖不到的场景——
     // 侧栏收起/展开、浏览器窗口从窄恢复、DevTools 开合、缩放变化——都曾导致瀑布流按
@@ -276,6 +310,7 @@ function _renderFormulaBatch(count) {
       _formulaGridROW = g.clientWidth || 0;
       _formulaGridRO = new ResizeObserver(() => {
         const w = g.clientWidth || 0;
+        _mdbg('ro-fire', { w, prev: _formulaGridROW });
         if (w && Math.abs(w - _formulaGridROW) > 1) {
           _formulaGridROW = w;
           _scheduleFormulaMasonryRelayout();
@@ -283,9 +318,12 @@ function _renderFormulaBatch(count) {
       });
       _formulaGridRO.observe(g);
     }
-    const run = () => _layoutFormulaMasonry(false);
-    if (typeof requestAnimationFrame === 'function') { requestAnimationFrame(() => requestAnimationFrame(run)); }
-    else run();
+    _mdbg('sync-run');
+    _layoutFormulaMasonry(false);
+    // 字体/KaTeX 字体异步回流后的校正（只重算高度，列宽不变）
+    if (typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(() => requestAnimationFrame(() => { _mdbg('raf-recheck'); _layoutFormulaMasonry(true); }));
+    }
   }
 }
 

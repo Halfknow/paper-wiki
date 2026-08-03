@@ -4,6 +4,27 @@
 
 ## [Unpublished]
 
+### Fixed — 深链 /formulas /concepts 时卡片关联论文丢失显示「独立条目」（v3.15）
+
+`state.papers` 只由 `refresh()`（库视图 enter / 10s 轮询）填充。v3.15 引入 URL 路由后，**直接刷新/深链 /formulas 或 /concepts 时 refresh() 尚未跑过**，`state.papers` 为空 → 卡片 `occurrences`/`paperIds` 全部解析不到 → 误显示「（独立条目）」；10s 轮询补拉后渲染的懒加载批次才有论文，看起来「前面独立条目、滚动到后面又有了」。`showFormulas`/`showConcepts` 现在在 `state.papers` 为空时直接补拉一次列表（不走 refresh()，避免 renderList/syncFilterToUrl 副作用污染当前页 URL）。
+
+### Fixed — 公式瀑布流懒加载塌列：同步定位 + 三遍分离消 thrash + 取证埋点（v3.15）
+
+懒加载触发后瀑布流变成「全宽单列列表」的第二轮根因修复（第一轮 v3.14 的 ResizeObserver 只覆盖宽度变化无人纠正的场景）：
+
+- **同步定位消除在流瞬态**：`_renderFormulaBatch` 历史上追加新卡后用**双 rAF** 延迟跑瀑布流定位——新批次卡在定位前以「在流、全宽、相对定位」刷在屏幕上；慢机器/重负载下 rAF 排在成批 KaTeX 同步渲染之后，用户会看到持续数秒甚至更久的列表态。KaTeX 本就同步渲染（卡高立即可测），改为**追加后同步定位**；字体异步回流由 rAF 复查（只重算高度）+ resize/RO 兜底。
+- **三遍分离（写-读-写）消 layout thrashing**：原实现逐卡「设宽 → 读 offsetHeight」——每次读都强制同步重排（N 张卡 = N 次 reflow，重负载下主线程长时间卡死）。改为先批量设宽、再批量读高（浏览器合并为一次 reflow）、最后批量写 top/left。
+- **单卡异常不中断整批**：`_buildFormulaCard` 加 try/catch——否则一张卡的极端 LaTeX/Markdown 异常会让本批追加失败，observer 反复重试同一批且定位永远排不上。
+- **取证埋点（临时）**：布局关键事件（batch / layout-apply / layout-fallback / ro-fire / win-resize）记录到 `window._masonryDebug`，用于收集用户真实环境的事件序列（复现后控制台 `copy(JSON.stringify(window._masonryDebug))`）。
+- **已验证场景**（Playwright 真实 Chromium）：正常逐批滚动全量加载列数稳定；窄窗（cols=1）→ 加载中途拉宽窗口自动恢复 cols=3。
+
+### Changed — 概念地图提示词改浅色高级风 + 制品清单改缩略图网格（v3.15）
+
+- **提示词参考 Claude 制品提示词优化（深色 → 浅色）**：默认提示词的设计美学段落从暗色玻璃拟态改为**浅色高级风**（明亮暖白/冷白底、纯白卡片 + 细边框 + 柔和投影、配色克制、强调色仅用于标题/徽标/连线）。借鉴 Claude `read_me` 设计模块的思想——提示词内置一份权威**设计令牌**规范（`:root` CSS 变量统一定义配色/间距刻度/圆角/字号层级，全部样式只引用变量，不散落硬编码色值）；并加入 never-expose-machinery（只输出 HTML 文档，不输出"我将要…"式叙述）。路由判断/`sendPrompt`/`window.storage` 等 Claude 运行时机制与独立生成场景无关，未采纳。
+- **制品清单列表行 → 缩略图网格**：制品卡上方是**live 缩略图**——制品 HTML 在 1280×800 sandboxed iframe（`allow-scripts`，不放 same-origin）里真实渲染后 CSS `scale()` 缩小到卡宽；IntersectionObserver 滚进视口才 GET html 挂载（jsdom/老浏览器立即全挂）。点缩略图直接查看；generating 卡显示 spinner 占位，error 卡（含半成品）显示「不完整」徽标 + 半成品缩略图。
+- **轮询只在状态/成员变化时重渲**：制品卡重渲 = 卸载重挂 iframe（重新拉 html + 重跑页内动画），`_pollConceptMaps` 改为检测到跳变才 render；`_stopConceptMapPolling` 后残留回调短路（定时器句柄即开关）。
+- **测试**：tests/conceptmaps-ui.test.js 改写 5 例（网格渲染 / 占位卡 / 跳变重渲挂 iframe + 轮询停止 / error 徽标 + 半成品缩略图 / 设置面板）。
+
 ### Changed — 路由化重构：前端 History API 路由 + app.js 拆 37 模块 + 后端路由表（v3.15）
 
 **动机**：`public/app.js` 已达 7070 行 / 366KB，改一处聊天输入框的行为要把约 180k tokens 灌进

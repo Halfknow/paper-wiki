@@ -97,23 +97,27 @@ Data Augmentation、Backpropagation、Gradient Clipping、Knowledge Distillation
 const CONCEPT_PROMPT = DEFAULT_CONCEPT_PROMPT;
 
 /** 概念地图生成提示词（v3.10）：把概念清单喂给模型，产出**单文件 HTML 全览图**。
- *  融入 claude 原生可视化美学（暗色/玻璃拟态/微动画/鲜艳渐变/大胆字体），输出可在整页呈现的
- *  交互式总览（韦恩图/架构图/矩阵图形态，可切换视图的交互按钮）。可被 settings.conceptMapPrompt 覆盖。 */
+ *  v3.15 起改**浅色高级风**（用户偏好），并借鉴 Claude 制品提示词的 read_me 模块思想：
+ *  提示词内置一份权威「设计令牌」规范（:root CSS 变量统一定义配色/间距/字体/圆角，全部样式
+ *  只引用变量）——这是 Claude 原生制品观感精致的关键；另加 never-expose-machinery（只输出
+ *  HTML 不叙述）。可被 settings.conceptMapPrompt 覆盖。 */
 const DEFAULT_CONCEPT_MAP_PROMPT = `你是一位顶尖的前端可视化设计师 + AI/ML 知识架构师。给定一份概念清单（含术语、解释、分类、出现论文），生成一个**单文件 HTML 概念地图**，目的是帮助用户一眼厘清这些概念之间的整体脉络与分类结构。
 
-## 设计美学（claude 原生可视化风格，必须遵循）
-- **暗色主题**：深色背景（#0a0e1a / #0f172a 系），玻璃拟态卡片（backdrop-filter blur + 半透明边框）。
-- **鲜艳但有主次的配色**：主色用渐变（如 #6366f1→#8b5cf6→#ec4899 系 indigo/violet/pink），每个分类一个鲜明强调色；避免柔和/灰扑扑。用 CSS 变量管理。
-- **大胆字体**：标题用有表现力的展示字体（Google Fonts，如 Space Grotesk / Sora / Outfit / Manrope，别用 Arial/Inter/system）；正文清晰可读。
-- **氛围背景**：非纯色——叠 CSS 径向/线性渐变光晕、几何图案或网格纹理，营造深度。
-- **微动画**：页面加载用 staggered reveal（animation-delay 错峰进场）；hover 有缩放/发光/位移；视图切换有过渡。CSS-only 实现优先。
+## 设计美学（浅色高级风，必须遵循）
+- **浅色主题**：明亮背景（#fafaf9 / #f8fafc / #ffffff 系的暖白或冷白）；卡片用纯白 + 细边框（1px 极浅灰）+ 柔和投影（低透明度、大模糊半径，如 0 1px 2px rgb(15 23 42/.04), 0 8px 24px rgb(15 23 42/.06)）。**禁止深色/暗色背景，禁止玻璃拟态**。
+- **设计令牌先行（最重要）**：在 :root 用 CSS 变量统一定义整套设计令牌——主色 1 个（如 indigo #4f46e5）、每个分类 1 个强调色（低饱和但可辨识：sky / emerald / amber / rose / violet / teal…）、中性色 4 级（文字主/次/弱 + 边框）、间距刻度（4/8/12/16/24/32）、圆角（8/12/16）、字号层级。后续所有样式**只引用变量**，不散落硬编码色值。
+- **配色克制**：大面积留白，中性色为主；强调色只用于标题、分类徽标、连线、关键数据。**不用大面积渐变糊屏，不用高饱和撞色**。
+- **字体**：标题用有表现力的展示字体（Google Fonts，如 Sora / Space Grotesk / Outfit / Manrope，别用 Arial/Inter/system）；正文 15-16px、行高 1.6-1.7 清晰可读；字号层级分明（页标题 ≥30px / 节标题 / 卡片标题 / 正文 / 辅助小字）。
+- **氛围背景**：非纯白死底——可用极浅的网格点阵、淡色径向光晕或几何纹理（透明度 ≤0.05），subtle 不抢内容。
+- **微动画**：加载 staggered reveal（animation-delay 错峰进场）；hover 轻微上浮 + 阴影加深；视图切换平滑过渡。CSS-only 优先，时长 150-300ms，禁止花哨弹跳。
 
 ## 交互（让界面"活"起来，不要静态）
 - 顶部一排**视图切换按钮**，至少提供 3 种视图，点击平滑切换：
-  1. **架构图/分组视图**：按 category 分组（注意力/损失/架构/优化...），每组一个玻璃卡片，组内概念以节点/标签排布，组间用连线或层级暗示关系。
+  1. **架构图/分组视图**：按 category 分组（注意力/损失/架构/优化...），每组一个卡片，组内概念以节点/标签排布，组间用连线或层级暗示关系。
   2. **矩阵图/网格视图**：概念按 [分类 × 频次/出现论文数] 排成矩阵或 treemap，格子大小/颜色深浅反映重要性。
   3. **关系/韦恩图视图**：用重叠区域或网络图展示分类间的交集（同一论文涉及多分类时）。
 - 每个概念可点击/hover 显示其 definition 与出现论文（用输入数据里的信息）。
+- 提供图例（颜色 = 分类）；概念多时有搜索框或分类筛选 chips。
 
 ## 技术硬约束（必须严格遵守）
 - **单个 HTML 文件**，所有 CSS/JS 内联；外部资源仅限 cdnjs.cloudflare.com（Google Fonts 经 fonts.googleapis.com 也可）。
@@ -125,7 +129,7 @@ const DEFAULT_CONCEPT_MAP_PROMPT = `你是一位顶尖的前端可视化设计�
 会提供概念清单（JSON 数组，每项含 term/definition/category/paperIds 或论文标题）。
 
 ## 输出
-**只输出完整的 HTML 文档**（从 <!DOCTYPE html> 到 </html>），不要 markdown 代码块围栏、不要任何解释文字。`;
+**只输出完整的 HTML 文档**（从 <!DOCTYPE html> 到 </html>）：不要 markdown 代码块围栏、不要任何解释/叙述文字（不要写"我将要…""这个页面包含…"）。`;
 
 /** 默认公式抽取提示词（v3.9）：强制 JSON，抽「核心公式」并**归一化到一般形式**。
  *  可被 settings.formulaPrompt / config.formulaPrompt 覆盖（三级回退，同 summaryPrompt 模式）。

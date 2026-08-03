@@ -276,6 +276,7 @@ arXiv 导入 (POST /api/import { url, meta? }):
 **公式抽取**（`scanner.extractFormulas(ids)` + processOne 步骤 6）：走 `extractFormulasViaEngine` dispatcher（引擎=ai 喂全文 / 引擎=mineru 喂 PDF filepath）；`mergeFormulas` 按 canonicalName 去重，命中只补空字段。阅读器右上角下拉菜单支持「查看本篇/追加抽取/重新抽取（replace）」，候选端点 `POST /api/papers/:id/{formulas,concepts}/candidates` 返回不入库，勾选后 `merge {items, mode?}` 入库（见陷阱 40）。
 
 **概念地图**（`POST /api/concepts/map`，v3.10；v3.14 起**后台任务化**）：POST/PUT 立即落库 `status:'generating'` 占位制品并返回（不挂请求等 AI），`startConceptMapJob` 在后台跑 `generateConceptMap`（**callChatStream 流式**——非流式大产出首字节前静默，会被代理空闲超时掐断；30min 预算、重试 1 次、支持 signal 取消），完成/失败更新占位再落库。切页/刷新不打断生成；前端 4s 轮询 settings 元信息，`generating→ready/error` 跳变 toast。生成中「删除」=取消任务（AbortController）；僵尸 generating（服务重启丢任务句柄）读路径解析为 error；同制品生成中重复优化 409；截断（缺 `</html>`）标 error 但保留半成品。提示词三级回退：当次自定义 > `settings.conceptMapPrompt` > 内置默认。
+制品清单是**缩略图网格**（v3.15）：制品 HTML 在 1280×800 sandboxed iframe（`allow-scripts` 无 same-origin）真实渲染后 `scale()` 缩小做 live 预览，IntersectionObserver 懒挂载；轮询只在状态/成员跳变时重渲（重渲=重挂 iframe，每轮必刷会反复重跑页内动画）。默认提示词为浅色高级风 + 设计令牌规范（:root CSS 变量统一定义，借鉴 Claude 制品 read_me 模块思想）。
 
 
 **批注持久化**（reader.js ↔ api.js ↔ annotations.js）：前端 `annotationStorage.onSetModified` → 防抖 serialize（`doc.annotationStorage.serializable.map`）→ PATCH `{annotations:{items}}` → api.js 经 `annotations.normalizeAnnotations` 归一化后存 store。回显：open 时拿 detailView.annotations → loadAnnotations 按 pageIndex 分组 → pagerendered 后 `getPageView(i).annotationEditorLayer.annotationEditorLayer.deserialize(item)`。
