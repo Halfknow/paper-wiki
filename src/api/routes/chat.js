@@ -105,9 +105,29 @@ function register(t, ctx) {
       return;
     }
     // POST：非流式 JSON（向后兼容，现有 POST 调用方继续工作）
+    // chatParams：与 GET /chat、POST /chat/vision 同规则（白名单 + 类型校验），协议对称。
+    const postOp = JSON.parse(body || '{}');
+    const chatParams = {};
+    const cpSrc = postOp.chatParams || {};
+    if (cpSrc.thinking === 'enabled' || cpSrc.thinking === 'disabled') {
+      chatParams.thinking = { type: cpSrc.thinking };
+    }
+    for (const k of ['temperature', 'topP']) {
+      if (cpSrc[k] != null && Number.isFinite(Number(cpSrc[k]))) chatParams[k] = Number(cpSrc[k]);
+    }
+    if (cpSrc.maxTokens != null && Number.isFinite(parseInt(cpSrc.maxTokens, 10)))
+      chatParams.maxTokens = parseInt(cpSrc.maxTokens, 10);
+    if (typeof cpSrc.model === 'string' && cpSrc.model.trim()) {
+      const effConfig = applySettingsOverride(config, store.settings);
+      const allowed = new Set([effConfig.ai && effConfig.ai.model].filter(Boolean));
+      const extra = effConfig.ai && Array.isArray(effConfig.ai.extraModels) ? effConfig.ai.extraModels : [];
+      for (const m of extra) if (m) allowed.add(m);
+      if (allowed.has(cpSrc.model)) chatParams.model = cpSrc.model;
+    }
     const r = await scanner.chatPaper(spaceId, id, message, {
       regenerate,
       extraIds: extraIds.length ? extraIds : undefined,
+      chatParams: Object.keys(chatParams).length ? chatParams : undefined,
     });
     return ok(res, r);
   };

@@ -1087,6 +1087,7 @@ import '/vendor/pdfjs-viewer.js';
     _resetChatState() {
       if (this._chatClose) { try { this._chatClose(); } catch {} this._chatClose = null; }
       this._chatBusy = false;
+      this._chatEditingMi = null; // 编辑重发标记随状态重置
       this._chatQuotes = []; this.renderQuotes();
       this._chatExtraIds = []; this.renderExtraIdsRow();
       this._chatImages = []; this.renderAttachChips();
@@ -1110,27 +1111,19 @@ import '/vendor/pdfjs-viewer.js';
         this.elChatList.innerHTML = this.chatEmptyHtml();
         return;
       }
-      // 用 app.js 暴露的全宽扁平消息渲染（含 markdown/公式/时间戳/操作按钮）
+      // 用 chat-view.js 暴露的全宽扁平消息渲染（含 markdown/公式/时间戳/操作按钮）
       const W = window;
       const html = msgs.map((m, i) => {
         const regenerable = i === msgs.length - 1 && m.role === 'assistant';
-        return W.chatMsgHtml ? W.chatMsgHtml(m, i, { regenerable }) : this.chatMsgHtml(m, i);
+        return W.chatMsgHtml(m, i, { regenerable });
       }).join('');
       this.elChatList.innerHTML = html;
       this.elChatList.scrollTop = this.elChatList.scrollHeight;
       this.wireDrawerExtras();
     }
-    /** 空状态：提示 + 建议卡片（复用 app.js 的 chatEmptyHtml，或本地兜底） */
+    /** 空状态：复用 chat-view.js 的 chatEmptyHtml（app 启动时已挂 window，reader 总在其后打开）。 */
     chatEmptyHtml() {
-      const W = window;
-      if (W.chatEmptyHtml) return W.chatEmptyHtml();
-      return '<div class="rcd-empty">向 AI 提问关于这篇论文的问题</div>';
-    }
-    /** 兜底渲染（app.js 未加载时）：纯文本。正常走 window.chatMsgHtml。 */
-    chatMsgHtml(m, i) {
-      const content = (m.content || '').replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c])).replace(/\n/g, '<br/>');
-      const mi = i != null ? ` data-mi="${i}"` : '';
-      return `<div class="chat-msg ${m.role}"${mi}><div class="chat-bubble">${content}</div></div>`;
+      return window.chatEmptyHtml();
     }
     /** 接线抽屉的滚动FAB + 消息操作（复制/重新生成/编辑/删除/显示原文）+ 代码块复制/展开。
      *  FAB 现在是 .rcd-input-row 的静态兄弟节点（脱离滚动流、浮在输入框上方），
@@ -1209,13 +1202,20 @@ import '/vendor/pdfjs-viewer.js';
             node.setAttribute('data-show-source', isRaw ? '0' : '1');
             act.title = isRaw ? '显示原文' : '显示渲染';
           } else if (act.dataset.act === 'edit') {
-            // 编辑：把 user 消息内容填回输入框（reader 用简化版：不截断历史，用户改完手动重新提问）
+            // 编辑 user 消息并重发：内容填回输入框 + 标记 _chatEditingMi，发送时截断其后历史重答
+            // （对齐 detail chat-tab.js 的 editingMi 语义——编辑后按发送将替换其后所有消息，
+            //   而非「简化版」的追加新消息）。仅 user 消息可编辑。
             const msg = (this.paper && this.paper.chat && this.paper.chat[mi]) || null;
             if (!msg) return;
             if (this._chatBusy) { this.setStatus('请等当前回答完成'); return; }
             if (this.elChatInput) this.elChatInput.value = msg.content || '';
+            this._chatEditingMi = mi;
+            // 沿用被编辑 user 的 extraIds（编辑重发保持引用），刷新 chip 行
+            this._chatExtraIds = Array.isArray(msg.extraIds) ? msg.extraIds.slice() : [];
+            this.renderExtraIdsRow();
             this.autoResizeInput();
-            this.setStatus('已载入，修改后按发送');
+            this.updateSendEnabled();
+            this.setStatus('编辑后按发送将重新回答（后续消息会被替换）');
           } else if (act.dataset.act === 'delete') {
             if (this._chatBusy) { this.setStatus('请等当前回答完成'); return; }
             const chat = (this.paper && this.paper.chat) || [];
@@ -1250,28 +1250,41 @@ import '/vendor/pdfjs-viewer.js';
         return;
       }
       const regenerate = !!opts.regenerate;
+      // 编辑重发：_chatEditingMi 标记被编辑的 user 消息索引，发送时截断其后历史（对齐 detail editingMi）
+      const editMi = (!regenerate && this._chatEditingMi != null) ? Number(this._chatEditingMi) : null;
       const userText = regenerate ? '' : (this.elChatInput.value || '').trim();
       if (!userText && !regenerate) return;
       // 合并引用 badge 文本作为上下文（划线 Ctrl+L 添加的），拼到问题前发给 AI
       const message = regenerate ? '' : (this.getChatQuotesBlock() + userText);
-      // @ 引用论文（输入框 @ 添加的其它论文，联合问答）
+      // @ 引用论文（输入框 @ 添加的其它论文，联合问答）；编辑重发时沿用被编辑 user 的 extraIds
       const extraIds = regenerate ? [] : (this._chatExtraIds || []).slice();
       // Phase 3 附图（框选截图）：本次发送携带，发送后清空 chip
       const sendImages = regenerate ? [] : (this._chatImages || []).slice();
       const useVision = sendImages.length > 0;
       this._chatBusy = true;
+      this._chatEditingMi = null;                       // 消费即清，防下次普通发送误截断
       const myPaperId = this.paper.id;                 // 锁定本次请求所属论文，切换后响应作废
       const reasoningStart = Date.now();
       // 关闭上一个 EventSource（若有），再开新的。_chatClose 是 streamChatFetch 返回的中止函数。
       if (this._chatClose) { try { this._chatClose(); } catch {} }
       let myClose = null;
-      // 立即清输入 + 锁定（状态先于 UI）+ 清空引用 badge / 附图（已发送）
-      if (!regenerate) {
-        this.elChatInput.value = '';
-        this._chatQuotes = []; this.renderQuotes();   // 引用已并入消息发送，清空 badge
-        this._chatExtraIds = []; this.renderExtraIdsRow(); // @ 引用已发送，清空 chip
-        this._chatImages = []; this.renderAttachChips();   // 附图已发送，清空 chip
+      // 编辑重发：截断被编辑 user 之后的历史（DOM + this.paper.chat）
+      if (editMi != null) {
+        const cur = (this.paper && this.paper.chat) || [];
+        const cutCount = cur.length - editMi;
+        if (cutCount > 0) {
+          this.paper.chat = cur.slice(0, editMi);
+          if (this.elChatList) {
+            [...this.elChatList.querySelectorAll('.chat-msg')].slice(-cutCount).forEach((n) => n.remove());
+          }
+        }
       }
+      // 立即清输入 + 锁定（状态先于 UI）+ 清空引用 badge / 附图（已发送）。
+      // 编辑重发不清 extraIds（沿用被编辑 user 的引用），普通发送才清。
+      this.elChatInput.value = '';
+      this._chatQuotes = []; this.renderQuotes();   // 引用已并入消息发送，清空 badge
+      if (editMi == null) { this._chatExtraIds = []; this.renderExtraIdsRow(); } // @ 引用已发送，清空 chip
+      this._chatImages = []; this.renderAttachChips();   // 附图已发送，清空 chip
       // 发送键 morphing：变红方块停止
       this.setSending(true);
       this.elChatInput.disabled = true;
@@ -1294,14 +1307,15 @@ import '/vendor/pdfjs-viewer.js';
       const phList = document.getElementById('reader-chat-list');
       if (phList) { phList.appendChild(placeholder); phList.scrollTop = phList.scrollHeight; }
 
-      // 流式渲染：用 renderMd（markdown/公式），与详情 tab 一致
+      // 流式渲染：用 renderChatMd（与详情 tab 一致——代码块强化卡片/复制按钮/折叠，
+      //   而非通用 renderMd 的裸 <pre>）。流式中传 { final: false } 不折叠代码块。
       let accumulated = '';
       let accumulatedReasoning = '';  // 思考过程（reasoning_content）
       const getBubble = () => {
         const livePh = document.querySelector('#reader-chat-list .chat-msg.assistant[data-req="1"]');
         return livePh ? livePh.querySelector('.chat-bubble') : null;
       };
-      const renderMdSafe = (md) => (W.renderMd ? W.renderMd(md) : (md || '').replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c])).replace(/\n/g, '<br/>'));
+      const renderMdSafe = (md, final) => (W.renderChatMd ? W.renderChatMd(md, { final: !!final }) : (W.renderMd ? W.renderMd(md) : (md || '').replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c])).replace(/\n/g, '<br/>')));
       // 智能「跟随底部」：用户向上滚阅读时，新 token 不再把视图拽到底；滚回底部附近则恢复跟随。
       const listEl = document.getElementById('reader-chat-list');
       let stickBottom = true;
@@ -1323,7 +1337,7 @@ import '/vendor/pdfjs-viewer.js';
         if (!content) { content = document.createElement('div'); content.className = 'chat-content streaming'; bubble.appendChild(content); }
         content.classList.remove('thinking');
         content.classList.add('streaming');
-        content.innerHTML = renderMdSafe(accumulated);
+        content.innerHTML = renderMdSafe(accumulated, false);
         scrollIfStuck();
       };
       // 思考过程渲染：在正文上方显示可折叠的思考区
@@ -1340,7 +1354,7 @@ import '/vendor/pdfjs-viewer.js';
         }
         reasoningEl.innerHTML = '<details open><summary>思考中…</summary><div class="chat-reasoning-body"></div></details>';
         const rb = reasoningEl.querySelector('.chat-reasoning-body');
-        if (rb) { rb.textContent = accumulatedReasoning; }
+        if (rb) { rb.innerHTML = renderMdSafe(accumulatedReasoning, false); } // 思考内容也渲染 markdown（对齐 detail）
         scrollIfStuck();
       };
       const finish = (restore) => {
@@ -1384,7 +1398,10 @@ import '/vendor/pdfjs-viewer.js';
             const livePh = document.querySelector('#reader-chat-list .chat-msg.assistant[data-req="1"]');
             if (livePh && W.chatMsgHtml && this.paper.chat && this.paper.chat.length) {
               const lastMsg = this.paper.chat[this.paper.chat.length - 1];
-              const mi = Number(livePh.dataset.mi || 0);
+              // 流式占位气泡没有 data-mi（appendChild 时未赋），其正确索引即末位——
+              // 占位总在列表最后，data.chat 是服务端权威数组，lastMsg 必在 chat.length-1。
+              // 历史上读 livePh.dataset.mi 恒得 0，导致「存入笔记/复制/编辑」错取首条消息。
+              const mi = this.paper.chat.length - 1;
               const hadReasoning = !!accumulatedReasoning;
               const tmp = document.createElement('div');
               tmp.innerHTML = W.chatMsgHtml(lastMsg, mi, { regenerable: true });
@@ -1441,11 +1458,13 @@ import '/vendor/pdfjs-viewer.js';
       if (this._chatBusy) { this.setStatus('请等当前回答完成'); return; }
       const list = this.elChatList;
       if (!list) return;
+      // 只移除 DOM 最后一条 assistant（保留 user 问题可见：重新生成期间用户仍看得到自己的问题；
+      // 服务端会弹整轮重推 user+assistant，onDone 用权威 chat 替换 assistant 后索引自然对齐）。
+      // 历史版本连 user 一起移除，但 onDone 只补 assistant → 问题从视图里消失直到下次全量刷新（bug）——
+      // 对齐 detail chat-tab.js 的 doRegenerate 修复。
       const msgs = [...list.querySelectorAll('.chat-msg')];
-      const lastUser = [...msgs].reverse().find((m) => m.classList.contains('user'));
       const lastAssistant = [...msgs].reverse().find((m) => m.classList.contains('assistant'));
       if (lastAssistant) lastAssistant.remove();
-      if (lastUser) lastUser.remove();
       this.sendChat({ regenerate: true, skipUserMsg: true });
     }
     /** 流式读取 AI 对话（抽屉版）：GET /api/papers/:id/chat?message=（EventSource，discover 同款）。
@@ -1596,15 +1615,14 @@ import '/vendor/pdfjs-viewer.js';
     }
     /** 按 elementId 实时重查目标节点追加消息（绝不用 stale 闭包引用）。
      *  reader 抽屉虽无 10s 定时刷新，但切换论文/重开抽屉会清空 list，故同样用实时重查保稳健。
-     *  全宽扁平结构：优先用 app.js 暴露的 window.chatMsgHtml（含 markdown/角色/时间戳），兜底本地纯文本。 */
+     *  全宽扁平结构：用 chat-view.js 的 chatMsgHtml（含 markdown/角色/时间戳）。 */
     appendChatById(elementId, m) {
       const list = document.getElementById(elementId);
       if (!list) return;
       const empty = list.querySelector('.rcd-empty, .chat-empty');
       if (empty) empty.remove();
       const mi = list.querySelectorAll('.chat-msg').length;
-      const W = window;
-      const html = W.chatMsgHtml ? W.chatMsgHtml(m, mi) : this.chatMsgHtml(m, mi);
+      const html = window.chatMsgHtml(m, mi);
       list.insertAdjacentHTML('beforeend', html);
       list.scrollTop = list.scrollHeight;
     }
