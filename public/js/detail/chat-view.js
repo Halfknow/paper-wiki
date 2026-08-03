@@ -260,6 +260,37 @@ export const CHAT_PARAM_FIELDS = [
   { key: 'maxTokens', label: '最大 token', kind: 'number', min: 0, step: 256, def: '' },
 ];
 
+/** morphing 发送键：busy 时变为红色方块停止按钮，否则圆角发送箭头（SVG/title/aria 全同）。
+ *  详情 tab（setBusyUI）与 reader 抽屉（setSending）共用——历史两份逐字重复。只改 btn，
+ *  input 的禁用由调用方各自处理（detail 在此禁；reader 在 sendChat 单独管）。 */
+export function applySendingUi(btn, busy) {
+  if (!btn) return;
+  btn.disabled = false;
+  btn.classList.toggle('sending', !!busy);
+  btn.title = busy ? '停止生成' : '发送（Enter）';
+  btn.setAttribute('aria-label', busy ? '停止生成' : '发送');
+  btn.innerHTML = busy
+    ? '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>'
+    : '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg>';
+}
+
+/** textarea 自适应高度。minH/maxH 参数化（detail: 38/142；reader: 按行 1~8 行≈21~186）。
+ *  disabled 时跳过；onResize 回调在重排后触发（reader 用它联动 updateSendEnabled）。 */
+export function autoResizeInput(el, { minH = 38, maxH = 142, onResize } = {}) {
+  if (!el || el.disabled) return;
+  el.style.height = minH + 'px';
+  el.style.height = Math.min(maxH, el.scrollHeight) + 'px';
+  if (typeof onResize === 'function') onResize();
+}
+
+/** 发送键启用判定：输入空（且无 allowSend 旁路）时禁用。
+ *  allowSend 用于 reader 的「有引用 badge / 附图时空输入也允许发送」。 */
+export function updateSendEnabled(sb, ip, { busy, allowSend } = {}) {
+  if (!sb || busy) return;
+  const empty = !(ip && (ip.value || '').trim()) && !allowSend;
+  sb.disabled = empty;
+}
+
 /** 读取聊天模型参数（从 localStorage）。仅返回 enabled=true 且有值的字段（后端只收启用的）。
  *  存储结构 chatParams = { thinking:{enabled,val}, temperature:{...}, ... }；向后兼容旧扁平结构。 */
 export function getChatParams() {
@@ -505,6 +536,115 @@ function positionMentionPop(inputEl) {
   _mentionPop.style.width = Math.max(280, Math.min(w, r.width + 40)) + 'px';
 }
 
+/** @ 引用触发检测：从光标位置向前找最近的 @，满足触发条件则打开浮层，否则关闭。
+ *  详情 tab（chat-tab.js）与 reader 抽屉（reader.js）共用——历史两边各写一份 5 步检测，
+ *  仅 onPick 主体（写哪个 state）不同，故抽到此处参数化。ctx = { excludeId, selectedIds, onPick }。
+ *  触发条件：光标前存在 @，且 @ 前一字符为空白/行首；@ 后到光标的 query 无换行且 ≤40 字符。 */
+export function handleMentionTrigger(inputEl, ctx) {
+  if (!inputEl) { closeChatMentionPicker(); return; }
+  const val = inputEl.value;
+  const pos = inputEl.selectionStart != null ? inputEl.selectionStart : val.length;
+  const before = val.slice(0, pos);
+  const atIdx = before.lastIndexOf('@');
+  if (atIdx < 0) { closeChatMentionPicker(); return; }
+  const charBefore = atIdx > 0 ? before[atIdx - 1] : ' ';
+  if (charBefore && !/\s/.test(charBefore)) { closeChatMentionPicker(); return; }
+  const query = before.slice(atIdx + 1);
+  if (query.includes('\n') || query.length > 40) { closeChatMentionPicker(); return; }
+  openChatMentionPicker(inputEl, ctx || {}, query, atIdx);
+}
+
+/** 接线聊天消息列表的操作（代码块复制/展开 + 消息 copy/note/regen/source/edit/delete）。
+ *  详情 tab 与 reader 抽屉共用——历史上两边各写一份 ~65 行 click 委托，仅数据源/提示组件/重渲入口不同，
+ *  故抽到此参数化。完全相同的 cb-copy/cb-expand/source 直接合一；其余走回调解耦：
+ *    getMsg(mi)              同步取消息对象（detail: p.chat[mi]; reader: this.paper.chat[mi]）
+ *    getFreshChat()          async 取鲜活 chat 数组（note 用——detail 同步返 p.chat; reader 多 GET 一次防滞后）
+ *    getCopyText(mi, act)    同步取复制文本（默认 getMsg(mi).content；reader 走 DOM textContent 防 this.paper.chat 为空）
+ *    notify(msg, isError)    提示（detail: toast; reader: this.setStatus）
+ *    isBusy()                是否流式中（detail: chatState.busy; reader: this._chatBusy）
+ *    onRegenerate()          重新生成末条（各自调自己的 send 闭包）
+ *    onEdit(msg, mi)         编辑 user 重发（各自设 editingMi 标记 + 截断）
+ *    onDelete(nextChat)      async 持久化 + 重渲（detail: PATCH+renderDetail; reader: fetch+renderChatList）
+ *    paperId                 论文 id（note/delete 拼 URL）
+ *  注意：调用方负责守卫「只绑定一次」（reader 用 dataset.wired；detail 的 list 每次 renderChatTab 重建天然单次）。 */
+export function wireChatActions(list, opts) {
+  const {
+    getMsg, getFreshChat, getCopyText, notify, isBusy,
+    onRegenerate, onEdit, onDelete, onNoteResult, paperId,
+  } = opts || {};
+  const notifyFn = notify || ((m, isErr) => toast(m, isErr ? 'error' : undefined));
+  const isBusyFn = isBusy || (() => false);
+  list.addEventListener('click', async (e) => {
+    // —— 代码块复制 / 展开 ——（两入口完全一致）
+    const cbCopy = e.target.closest('.cb-copy');
+    if (cbCopy) {
+      const card = cbCopy.closest('.cb-card');
+      const pre = card && card.querySelector('pre');
+      const text = pre ? pre.textContent : '';
+      if (navigator.clipboard) navigator.clipboard.writeText(text).then(() => {
+        cbCopy.classList.add('copied');
+        const sp = cbCopy.querySelector('span'); if (sp) sp.textContent = '已复制';
+        setTimeout(() => { cbCopy.classList.remove('copied'); const sp2 = cbCopy.querySelector('span'); if (sp2) sp2.textContent = '复制'; }, 1200);
+      }).catch(() => notifyFn('复制失败', true));
+      return;
+    }
+    const cbExp = e.target.closest('.cb-expand');
+    if (cbExp) { const card = cbExp.closest('.cb-card'); if (card) card.classList.remove('collapsed'); return; }
+    // —— 消息操作 ——
+    const act = e.target.closest('.chat-act');
+    if (!act) return;
+    const mi = Number(act.dataset.mi);
+    if (act.dataset.act === 'copy') {
+      const text = typeof getCopyText === 'function'
+        ? getCopyText(mi, act)
+        : (() => { const m = getMsg ? getMsg(mi) : null; return m ? (m.content || '') : ''; })();
+      if (navigator.clipboard && text) navigator.clipboard.writeText(text).then(() => notifyFn('已复制')).catch(() => notifyFn('复制失败', true));
+      else if (!navigator.clipboard) notifyFn('剪贴板不可用', true);
+    } else if (act.dataset.act === 'note') {
+      // 存入笔记：该回答 + 前溯最近 user 作问题 → 问答卡（拷贝语义，删聊天不删卡）。
+      // saveQaCardToNotes 内部已弹 toast（成功/失败），detail 侧无需再 notify；
+      // reader 侧若想额外更新抽屉状态栏，经 onNoteResult 回调（可选）。
+      try {
+        const chat = getFreshChat ? await getFreshChat() : null;
+        const msg = chat && chat[mi];
+        if (!msg) { notifyFn('消息不存在', true); return; }
+        let q = '';
+        for (let k = mi - 1; k >= 0; k--) {
+          if (chat[k] && chat[k].role === 'user') { q = chat[k].content || ''; break; }
+        }
+        const ok = paperId ? await saveQaCardToNotes(paperId, { question: q, answer: msg.content || '', mi }) : false;
+        if (typeof onNoteResult === 'function') onNoteResult(ok);
+      } catch { notifyFn('存入笔记失败', true); }
+    } else if (act.dataset.act === 'regen') {
+      if (isBusyFn()) { notifyFn('请等当前回答完成', true); return; }
+      if (typeof onRegenerate === 'function') onRegenerate();
+    } else if (act.dataset.act === 'source') {
+      // 切换显示原文 ⇄ 渲染态（两入口完全一致）
+      const node = act.closest('.chat-msg');
+      if (!node) return;
+      const isRaw = node.getAttribute('data-show-source') === '1';
+      node.setAttribute('data-show-source', isRaw ? '0' : '1');
+      act.title = isRaw ? '显示原文' : '显示渲染';
+    } else if (act.dataset.act === 'edit') {
+      const msg = getMsg ? getMsg(mi) : null;
+      if (!msg) return;
+      if (isBusyFn()) { notifyFn('请等当前回答完成', true); return; }
+      if (typeof onEdit === 'function') onEdit(msg, mi);
+    } else if (act.dataset.act === 'delete') {
+      const msg = getMsg ? getMsg(mi) : null;
+      if (!msg) return;
+      if (isBusyFn()) { notifyFn('请等当前回答完成', true); return; }
+      // 取当前 chat 数组：detail 同步返 p.chat（零成本）；reader 本就 GET 鲜活
+      const cur = getFreshChat ? await getFreshChat() : [];
+      const cut = [mi];
+      if (msg.role === 'user' && cur[mi + 1] && cur[mi + 1].role === 'assistant') cut.push(mi + 1);
+      if (!(await PWDialog.confirm('删除这条消息？' + (cut.length > 1 ? '（及其回复也会删除）' : ''), { title: '删除消息', danger: true, okText: '删除' }))) return;
+      const next = cur.filter((_, idx) => !cut.includes(idx));
+      if (typeof onDelete === 'function') await onDelete(next);
+    }
+  });
+}
+
 export function openChatMentionPicker(inputEl, ctx, query, atIdx) {
   _mentionCtx = ctx || {};
   const results = searchPapersForMention(query, ctx.excludeId, ctx.selectedIds);
@@ -611,10 +751,17 @@ if (typeof window !== 'undefined') {
   window.extraChipsReadonlyHtml = extraChipsReadonlyHtml;
   window.truncateChatTitle = truncateChatTitle;
   // @ 引用选择浮层（v2.7 现代化版，详情 tab + reader 抽屉共用）
+  window.handleMentionTrigger = handleMentionTrigger;
   window.openChatMentionPicker = openChatMentionPicker;
   window.closeChatMentionPicker = closeChatMentionPicker;
   window.isChatMentionPickerOpen = isChatMentionPickerOpen;
   window.handleMentionKeydown = handleMentionKeydown;
+  // 聊天消息操作接线（v3.16 详情 tab + reader 抽屉共用）
+  window.wireChatActions = wireChatActions;
+  // 聊天输入 UI 小工具（v3.16 共用）
+  window.applySendingUi = applySendingUi;
+  window.autoResizeInput = autoResizeInput;
+  window.updateSendEnabled = updateSendEnabled;
   // AI 笔记卡片：阅读器抽屉的笔记页 + 抽屉聊天「存入笔记」复用
   window.NotesPanel = NotesPanel;
   window.saveQaCardToNotes = saveQaCardToNotes;

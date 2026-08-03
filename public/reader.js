@@ -795,20 +795,12 @@ import '/vendor/pdfjs-viewer.js';
     }
     /** @ 触发器：检测输入框光标前最近的 @，弹论文选择浮层（v2.7 共享版，经 window 桥）。 */
     handleMentionTrigger() {
+      // 5 步检测逻辑已抽到 chat-view.js（与详情 tab 共用），此处只传 ctx。
       const input = this.elChatInput;
       if (!input || !this.paper) return;
       const W = window;
-      if (!W.openChatMentionPicker) return;
-      const val = input.value;
-      const pos = input.selectionStart != null ? input.selectionStart : val.length;
-      const before = val.slice(0, pos);
-      const atIdx = before.lastIndexOf('@');
-      if (atIdx < 0) { if (W.closeChatMentionPicker) W.closeChatMentionPicker(); return; }
-      const charBefore = atIdx > 0 ? before[atIdx - 1] : ' ';
-      if (charBefore && !/\s/.test(charBefore)) { if (W.closeChatMentionPicker) W.closeChatMentionPicker(); return; }
-      const query = before.slice(atIdx + 1);
-      if (query.includes('\n') || query.length > 40) { if (W.closeChatMentionPicker) W.closeChatMentionPicker(); return; }
-      W.openChatMentionPicker(input, {
+      if (!W.handleMentionTrigger) return;
+      W.handleMentionTrigger(input, {
         excludeId: this.paper.id,
         selectedIds: this._chatExtraIds || [],
         onPick: (id) => {
@@ -818,7 +810,7 @@ import '/vendor/pdfjs-viewer.js';
           this.autoResizeInput();
           this.updateSendEnabled();
         },
-      }, query, atIdx);
+      });
     }
     closeMentionPop() { const W = window; if (W.closeChatMentionPicker) W.closeChatMentionPicker(); }
     /** 注入参数浮层按钮（composer-right 内，模型按钮左侧）+ 浮层（复用 app.js 的 wireChatParamsShell / CHAT_PARAM_FIELDS）。 */
@@ -869,25 +861,21 @@ import '/vendor/pdfjs-viewer.js';
       ta.style.height = Math.min(ta.scrollHeight, maxH) + 'px';
       this.updateSendEnabled();
     }
-    /** 发送键空输入禁用（流式中由 setSending 控制 morphing，此处跳过）。 */
+    /** 发送键空输入禁用（流式中由 setSending 控制 morphing，此处跳过）。
+     *  v3.16：复用 chat-view.js 的 updateSendEnabled（与 detail 共用），reader 多判 quotes/images 旁路。 */
     updateSendEnabled() {
-      if (!this.elChatSend || this._chatBusy) return;
-      const empty = !(this.elChatInput && (this.elChatInput.value || '').trim()) && !this.hasChatQuotes() && !this.hasChatImages();
-      this.elChatSend.disabled = empty;
+      const W = window;
+      if (W.updateSendEnabled) {
+        W.updateSendEnabled(this.elChatSend, this.elChatInput, { busy: this._chatBusy, allowSend: this.hasChatQuotes() || this.hasChatImages() });
+      }
     }
     hasChatQuotes() { return Array.isArray(this._chatQuotes) && this._chatQuotes.length > 0; }
     hasChatImages() { return Array.isArray(this._chatImages) && this._chatImages.length > 0; }
-    /** morphing 发送键：busy=true 变红方块停止图标；false 恢复箭头。 */
+    /** morphing 发送键：busy=true 变红方块停止图标；false 恢复箭头。
+     *  v3.16：复用 chat-view.js 的 applySendingUi（与 detail 共用，SVG/title 全同）。 */
     setSending(busy) {
-      const btn = this.elChatSend;
-      if (!btn) return;
-      btn.disabled = false;                            // 停止键始终可点
-      btn.classList.toggle('sending', !!busy);
-      btn.title = busy ? '停止生成' : '发送（Enter）';
-      btn.setAttribute('aria-label', busy ? '停止生成' : '发送');
-      btn.innerHTML = busy
-        ? '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>'
-        : '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg>';
+      const W = window;
+      if (W.applySendingUi) W.applySendingUi(this.elChatSend, busy);
     }
     /** FAB（#reader-chat）纵向拖动：贴右侧、可拖到任意纵向位置，不随页面滚动变化。
      *  与点击共用一按钮：位移 > 4px 才进入拖动，拖动过的本次指针序列会吞掉随后的 click。
@@ -1148,66 +1136,37 @@ import '/vendor/pdfjs-viewer.js';
         const near = list.scrollHeight - list.scrollTop - list.clientHeight < 200;
         fab.classList.toggle('show', !near && list.scrollHeight > list.clientHeight + 50);
       }
-      // 消息操作 + 代码块操作（事件委托）
+      // 消息操作 + 代码块操作（事件委托）。v3.16：6 操作 + 代码块复制/展开抽到
+      // chat-view.js 的 wireChatActions（与详情 tab 共用），此处只注入 reader 侧回调。
+      // dataset.wired 守卫一次性绑定（renderChatList 每次重渲会重入 wireDrawerExtras）。
       if (!list.dataset.wired) {
         list.dataset.wired = '1';
-        list.addEventListener('click', async (e) => {
-          // —— 代码块复制 / 展开 ——
-          const cbCopy = e.target.closest('.cb-copy');
-          if (cbCopy) {
-            const card = cbCopy.closest('.cb-card');
-            const pre = card && card.querySelector('pre');
-            const text = pre ? pre.textContent : '';
-            if (navigator.clipboard && text) navigator.clipboard.writeText(text).then(() => { cbCopy.classList.add('copied'); const sp = cbCopy.querySelector('span'); if (sp) sp.textContent = '已复制'; setTimeout(() => { cbCopy.classList.remove('copied'); const sp2 = cbCopy.querySelector('span'); if (sp2) sp2.textContent = '复制'; }, 1200); }).catch(() => {});
-            return;
-          }
-          const cbExp = e.target.closest('.cb-expand');
-          if (cbExp) { const card = cbExp.closest('.cb-card'); if (card) card.classList.remove('collapsed'); return; }
-          // —— 消息操作 ——
-          const act = e.target.closest('.chat-act');
-          if (!act) return;
-          const mi = Number(act.dataset.mi);
-          if (act.dataset.act === 'copy') {
-            // 从 DOM 取正文（不依赖 this.paper.chat——首次发送前它为空，历史消息复制会失败）。
-            const msg = act.closest('.chat-msg');
-            const content = msg ? msg.querySelector('.chat-content') : null;
-            const text = content ? content.textContent : '';
-            if (navigator.clipboard && text) navigator.clipboard.writeText(text).then(() => this.setStatus('已复制')).catch(() => {});
-          } else if (act.dataset.act === 'regen') {
-            this.regenerate();
-          } else if (act.dataset.act === 'note') {
-            // 存入笔记：GET 最新 chat（this.paper.chat 可能滞后，沿用 copy 的 freshness 考量），
-            // 取该回答 + 前溯最近 user 作问题 → 问答卡（拷贝语义）。走 app.js 的 window 桥。
-            if (!this.paper) return;
+        const W = window;
+        W.wireChatActions(list, {
+          paperId: this.paper && this.paper.id,
+          getMsg: (mi) => (this.paper && this.paper.chat && this.paper.chat[mi]) || null,
+          // GET 鲜活 chat：reader 的 this.paper.chat 可能滞后（首次发送前为空），note/delete 用最新值
+          getFreshChat: async () => {
+            if (!this.paper) return [];
             try {
               const r = await fetch(sp('/api/papers/' + encodeURIComponent(this.paper.id))).then((x) => x.json());
               const chat = (r.data && r.data.chat) || [];
-              const msg = chat[mi];
-              if (!msg) { this.setStatus('消息不存在', true); return; }
-              let q = '';
-              for (let k = mi - 1; k >= 0; k--) {
-                if (chat[k] && chat[k].role === 'user') { q = chat[k].content || ''; break; }
-              }
-              const W = window;
-              const okSave = W.saveQaCardToNotes
-                ? await W.saveQaCardToNotes(this.paper.id, { question: q, answer: msg.content || '', mi })
-                : false;
-              this.setStatus(okSave ? '已存入笔记' : '存入笔记失败', !okSave);
-            } catch { this.setStatus('存入笔记失败', true); }
-          } else if (act.dataset.act === 'source') {
-            // 切换显示原文 ⇄ 渲染态
-            const node = act.closest('.chat-msg');
-            if (!node) return;
-            const isRaw = node.getAttribute('data-show-source') === '1';
-            node.setAttribute('data-show-source', isRaw ? '0' : '1');
-            act.title = isRaw ? '显示原文' : '显示渲染';
-          } else if (act.dataset.act === 'edit') {
+              if (this.paper) this.paper.chat = chat; // 顺手刷新本地缓存
+              return chat;
+            } catch { return (this.paper && this.paper.chat) || []; }
+          },
+          // copy 从 DOM 取正文（this.paper.chat 首次发送前为空，历史消息复制会失败）
+          getCopyText: (mi, act) => {
+            const msg = act.closest('.chat-msg');
+            const content = msg ? msg.querySelector('.chat-content') : null;
+            return content ? content.textContent : '';
+          },
+          notify: (m, isErr) => this.setStatus(m, isErr),
+          isBusy: () => !!this._chatBusy,
+          onRegenerate: () => this.regenerate(),
+          onNoteResult: (ok) => this.setStatus(ok ? '已存入笔记' : '存入笔记失败', !ok),
+          onEdit: (msg, mi) => {
             // 编辑 user 消息并重发：内容填回输入框 + 标记 _chatEditingMi，发送时截断其后历史重答
-            // （对齐 detail chat-tab.js 的 editingMi 语义——编辑后按发送将替换其后所有消息，
-            //   而非「简化版」的追加新消息）。仅 user 消息可编辑。
-            const msg = (this.paper && this.paper.chat && this.paper.chat[mi]) || null;
-            if (!msg) return;
-            if (this._chatBusy) { this.setStatus('请等当前回答完成'); return; }
             if (this.elChatInput) this.elChatInput.value = msg.content || '';
             this._chatEditingMi = mi;
             // 沿用被编辑 user 的 extraIds（编辑重发保持引用），刷新 chip 行
@@ -1216,15 +1175,8 @@ import '/vendor/pdfjs-viewer.js';
             this.autoResizeInput();
             this.updateSendEnabled();
             this.setStatus('编辑后按发送将重新回答（后续消息会被替换）');
-          } else if (act.dataset.act === 'delete') {
-            if (this._chatBusy) { this.setStatus('请等当前回答完成'); return; }
-            const chat = (this.paper && this.paper.chat) || [];
-            const msg = chat[mi];
-            if (!msg) return;
-            const cut = [mi];
-            if (msg.role === 'user' && chat[mi + 1] && chat[mi + 1].role === 'assistant') cut.push(mi + 1);
-            if (!(await PWDialog.confirm('删除这条消息？' + (cut.length > 1 ? '（及其回复也会删除）' : ''), { title: '删除消息', danger: true, okText: '删除' }))) return;
-            const next = chat.filter((_, idx) => !cut.includes(idx));
+          },
+          onDelete: async (next) => {
             try {
               await fetch(sp('/api/papers/' + encodeURIComponent(this.paper.id)), {
                 method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat: next }),
@@ -1232,7 +1184,7 @@ import '/vendor/pdfjs-viewer.js';
               if (this.paper) this.paper.chat = next;
               this.renderChatList(next);
             } catch { /* ignore */ }
-          }
+          },
         });
       }
     }
@@ -1372,7 +1324,9 @@ import '/vendor/pdfjs-viewer.js';
         }
       };
 
-      myClose = this.streamChatFetch(myPaperId, message, {
+      // v3.16：streamChatFetch/streamVisionFetch 已迁入 core/stream.js 并挂 window 桥，
+      // 与详情 tab 共用同一套实现（含视觉问答 images 分发）。
+      myClose = window.streamChatFetch(myPaperId, message, {
         regenerate,
         extraIds: extraIds.length ? extraIds : undefined,
         images: useVision ? sendImages : undefined,
@@ -1467,152 +1421,8 @@ import '/vendor/pdfjs-viewer.js';
       if (lastAssistant) lastAssistant.remove();
       this.sendChat({ regenerate: true, skipUserMsg: true });
     }
-    /** 流式读取 AI 对话（抽屉版）：GET /api/papers/:id/chat?message=（EventSource，discover 同款）。
-     *  与 app.js streamChatFetch 同构（reader.js 是独立 ESM，无法 import app.js，故复制一份）。
-     *  返回 close() 中止函数。POST+fetch SSE 在浏览器有挂起问题，故统一用 EventSource。
-     *  事件 token/done/fail（避免 error 防 EventSource 原生 error 误判 + 自动重连）。 */
-    streamChatFetch(paperId, message, { onToken, onDone, onFail, regenerate, extraIds, images } = {}) {
-      const W = window;
-      // Phase 3 视觉问答：带图片走 POST /chat/vision（fetch + ReadableStream，EventSource 无法带 body）
-      if (Array.isArray(images) && images.length) {
-        return this.streamVisionFetch(paperId, message, { onToken, onDone, onFail, regenerate, extraIds, images });
-      }
-      const params = new URLSearchParams();
-      if (message) params.set('message', message);
-      if (regenerate) params.set('regenerate', '1');
-      // @ 引用论文（逗号分隔透传）
-      if (Array.isArray(extraIds) && extraIds.length) params.set('extraIds', extraIds.join(','));
-      // 透传模型参数（复用 app.js 暴露的 getChatParams）
-      const cp = (W.getChatParams && W.getChatParams()) || {};
-      for (const k of ['thinking', 'temperature', 'topP', 'maxTokens']) {
-        const v = cp[k];
-        if (v == null || v === '') continue;
-        // thinking 是字符串（enabled/disabled），其余是数值
-        if (k === 'thinking') { if (v === 'enabled' || v === 'disabled') params.set(k, v); continue; }
-        if (!Number.isNaN(v)) params.set(k, String(v));
-      }
-      // Phase 2 模型切换：透传选中模型（复用 app.js 暴露的 getSelectedModel）
-      const selModel = W.getSelectedModel ? W.getSelectedModel() : '';
-      if (selModel) params.set('model', selModel);
-      const url = sp('/api/papers/' + encodeURIComponent(paperId) + '/chat?' + params.toString());
-      const es = new EventSource(url);
-      let finished = false;
-      es.addEventListener('token', (e) => {
-        let obj = null;
-        try { obj = JSON.parse(e.data); } catch { return; }
-        if (obj && obj.t && typeof onToken === 'function') onToken(obj.t, obj.kind || 'content');
-      });
-      es.addEventListener('done', (e) => {
-        finished = true;
-        try { es.close(); } catch {}
-        let obj = {};
-        try { obj = JSON.parse(e.data); } catch {}
-        if (typeof onDone === 'function') onDone(obj);
-      });
-      es.addEventListener('fail', (e) => {
-        finished = true;
-        try { es.close(); } catch {}
-        let msg = 'AI 回答失败';
-        try { msg = JSON.parse(e.data).error || msg; } catch {}
-        if (typeof onFail === 'function') onFail(msg);
-      });
-      es.onerror = () => {
-        if (finished) return;
-        finished = true;
-        try { es.close(); } catch {}
-        if (typeof onFail === 'function') onFail('连接中断，请重试');
-      };
-      return () => { finished = true; try { es.close(); } catch {} };
-    }
-    /** Phase 3 视觉问答流式：POST /api/papers/:id/chat/vision（fetch + ReadableStream 解析 SSE）。
-     *  EventSource 无法携带 body（图片 base64），故视觉问答走 fetch 流。
-     *  事件协议与 GET /chat 一致（token/done/fail），手动按 \n\n 分块解析。
-     *  返回 close() 中止函数（AbortController.abort）。 */
-    streamVisionFetch(paperId, message, { onToken, onDone, onFail, regenerate, extraIds, images } = {}) {
-      const W = window;
-      const cp = (W.getChatParams && W.getChatParams()) || {};
-      const chatParams = {};
-      // thinking 透传字符串（router 转对象），其余为数值
-      if (cp.thinking === 'enabled' || cp.thinking === 'disabled') chatParams.thinking = cp.thinking;
-      for (const k of ['temperature', 'topP']) {
-        if (cp[k] != null && cp[k] !== '' && !Number.isNaN(cp[k])) chatParams[k] = Number(cp[k]);
-      }
-      if (cp.maxTokens != null && cp.maxTokens !== '' && !Number.isNaN(cp.maxTokens)) chatParams.maxTokens = parseInt(cp.maxTokens, 10);
-      const selModel = W.getSelectedModel ? W.getSelectedModel() : '';
-      if (selModel) chatParams.model = selModel;
-      const body = JSON.stringify({
-        message: message || '',
-        regenerate: !!regenerate,
-        extraIds: Array.isArray(extraIds) && extraIds.length ? extraIds : undefined,
-        images: Array.isArray(images) ? images : [],
-        chatParams,
-      });
-      const url = sp('/api/papers/' + encodeURIComponent(paperId) + '/chat/vision');
-      const ctrl = new AbortController();
-      let finished = false;
-      const close = () => { finished = true; try { ctrl.abort(); } catch {} };
-      (async () => {
-        let res;
-        try {
-          res = await fetch(url, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body,
-            signal: ctrl.signal,
-          });
-        } catch (e) {
-          if (!finished && typeof onFail === 'function') onFail('连接中断，请重试');
-          return;
-        }
-        if (!res.ok) {
-          // 视觉模型不可用 / 鉴权失败等：读错误信息
-          let msg = '视觉问答失败（HTTP ' + res.status + '）';
-          try { const j = await res.json(); if (j && j.error) msg = j.error; } catch {}
-          // 常见：当前模型不支持图片输入
-          if (res.status === 400 || res.status === 404 || res.status === 422) {
-            msg = msg + '。当前模型可能不支持图片输入，请在右下角切换到视觉模型（如 gpt-4o / glm-4.5v）。';
-          }
-          if (typeof onFail === 'function') onFail(msg);
-          return;
-        }
-        const reader = res.body && res.body.getReader ? res.body.getReader() : null;
-        if (!reader) { if (typeof onFail === 'function') onFail('浏览器不支持流式读取'); return; }
-        const decoder = new TextDecoder('utf-8');
-        let buffer = '';
-        // 简易 SSE 解析：块间 \n\n 分隔，每块形如 `event: xx\ndata: {...}`
-        const dispatch = (block) => {
-          const lines = block.split('\n');
-          let event = 'message', dataStr = '';
-          for (const ln of lines) {
-            if (ln.startsWith('event:')) event = ln.slice(6).trim();
-            else if (ln.startsWith('data:')) dataStr += ln.slice(5).trim();
-          }
-          if (!dataStr) return;
-          let obj = null; try { obj = JSON.parse(dataStr); } catch { return; }
-          if (event === 'token' && obj && obj.t && typeof onToken === 'function') onToken(obj.t, obj.kind || 'content');
-          else if (event === 'done') { finished = true; if (typeof onDone === 'function') onDone(obj); }
-          else if (event === 'fail') { finished = true; if (typeof onFail === 'function') onFail((obj && obj.error) || 'AI 回答失败'); }
-        };
-        try {
-          for (;;) {
-            const chunk = await reader.read();
-            if (chunk.done) break;
-            buffer += decoder.decode(chunk.value, { stream: true });
-            let sep;
-            while ((sep = buffer.indexOf('\n\n')) >= 0) {
-              const block = buffer.slice(0, sep);
-              buffer = buffer.slice(sep + 2);
-              dispatch(block);
-              if (finished) break;
-            }
-            if (finished) break;
-          }
-        } catch (e) {
-          if (!finished && typeof onFail === 'function') onFail('连接中断，请重试');
-        }
-      })();
-      return close;
-    }
+    // v3.16：streamChatFetch / streamVisionFetch 已迁入 core/stream.js（与详情 tab 共用）。
+    // reader 经 window.streamChatFetch 桥调用（sendChat 内），不再各保留一份副本。
     /** 按 elementId 实时重查目标节点追加消息（绝不用 stale 闭包引用）。
      *  reader 抽屉虽无 10s 定时刷新，但切换论文/重开抽屉会清空 list，故同样用实时重查保稳健。
      *  全宽扁平结构：用 chat-view.js 的 chatMsgHtml（含 markdown/角色/时间戳）。 */
