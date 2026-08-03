@@ -2333,7 +2333,8 @@ test('GET /api/ai/models 上游不可达（127.0.0.1:1）→ 回退 config 候�
   const r = await call(port, 'GET', '/api/ai/models');
   assert.strictEqual(r.status, 200, '上游失败不应 500（listModels 自带兜底）');
   assert.strictEqual(r.json.data.source, 'config');
-  assert.deepStrictEqual(r.json.data.models, [{ id: 'm1' }]);
+  // v3.11：listModels fallback 也带 contextLength:null（网关不返回该字段时的占位）
+  assert.deepStrictEqual(r.json.data.models, [{ id: 'm1', contextLength: null }]);
   server.close();
 });
 

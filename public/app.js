@@ -41,7 +41,7 @@ function sp(url) {
 }
 
 const state = {
-  papers: [], tags: [], topics: [], folders: [], concepts: [],
+  papers: [], tags: [], topics: [], folders: [], concepts: [], formulas: [],
   stats: null, // 全局统计（total/starred/unread 等），不随筛选变，供侧栏徽标
   globalCounts: null, // 兜底：旧后端 stats 无 starred/unread 时，前端独立算的全局计数
   current: null, detail: null, tab: 'summary',
@@ -371,7 +371,8 @@ function renderStats(stats) {
     <span class="stat-pill good">${stats.ready}/${stats.total} 就绪</span>
     ${processingHtml}
     ${stats.error ? `<span class="stat-pill bad">${stats.error} 错误</span>` : ''}
-    <span class="stat-pill">${stats.concepts} 概念</span>`;
+    <span class="stat-pill">${stats.concepts} 概念</span>
+    ${stats.formulas ? `<span class="stat-pill">${stats.formulas} 公式</span>` : ''}`;
 }
 
 // ---- 刷新数据 ----
@@ -408,7 +409,7 @@ async function refresh() {
   if (tags.ok) state.tags = tags.data || [];
   if (topics.ok) state.topics = topics.data || [];
   if (folders.ok) state.folders = folders.data || [];
-  if (stats.ok) renderStats(stats.data || { ready: 0, total: 0, processing: 0, error: 0, concepts: 0 });
+  if (stats.ok) renderStats(stats.data || { ready: 0, total: 0, processing: 0, error: 0, concepts: 0, formulas: 0 });
   // 旧后端 stats 不含 starred/unread 字段（需重启才有）→ 此处兜底：独立拉一次无筛选 papers 算全局计数，
   // 供侧栏徽标用（不随当前筛选变）。新后端有字段时跳过（stats 优先）。
   const stData = stats.ok ? stats.data : {};
@@ -614,6 +615,7 @@ function renderFulltextResults(ul) {
   for (const p of ft.results) {
     const li = document.createElement('li');
     li.className = 'paper-item ft-item' + (state.current === p.id ? ' active' : '');
+    li.dataset.id = p.id;
     const title = escapeHtml(p.title || '') + (p.rating > 0 ? starBadge(p.rating) : '');
     const meta = escapeHtml(`${(p.authors || [])[0] || '未知作者'}${p.year ? ' · ' + p.year : ''}`);
     li.innerHTML = `
@@ -664,6 +666,7 @@ function renderList() {
   for (const p of state.papers) {
     const li = document.createElement('li');
     li.className = 'paper-item' + (state.current === p.id ? ' active' : '');
+    li.dataset.id = p.id;
     li.dataset.status = p.status || '';
     li.setAttribute('aria-selected', state.current === p.id ? 'true' : 'false');
     const sel = state.pickMode && state.selected.has(p.id) ? '☑' : (state.pickMode ? '☐' : '');
@@ -726,10 +729,33 @@ function renderList() {
   }
 }
 
+// 「全部状态」自定义下拉：触发器文案 + active 态 + 菜单项高亮。
+// status（ready/error/pending 处理状态）与 readStatus（unread/reading/done 阅读状态）分属两个字段，
+// 菜单项的 data-field 标记写入哪个字段；renderStatusMenu 读两个字段综合判定当前选中。
+const STATUS_LABELS = { '': '全部状态', ready: '已就绪', unread: '未读', reading: '在读', done: '已读', error: '出错', pending: '处理中' };
+function statusCurrentValue() {
+  if (state.filter.status) return state.filter.status;
+  if (state.filter.readStatus) return state.filter.readStatus;
+  return '';
+}
+function renderStatusMenu() {
+  const val = statusCurrentValue();
+  const trig = $('filter-status-trigger');
+  if (trig) trig.classList.toggle('active', !!val);
+  const label = $('ft-status-label');
+  if (label) label.textContent = STATUS_LABELS[val] || '全部状态';
+  // 高亮当前项：item 的 data-value 匹配（status 与 readStatus 值不重叠，故按值匹配即可）
+  document.querySelectorAll('#filter-status-menu .fsm-item').forEach((it) => {
+    it.classList.toggle('active', it.dataset.value === val);
+  });
+}
+function openStatusMenu() { const m = $('filter-status-menu'); if (m) { m.hidden = false; $('filter-status-wrap').classList.add('open'); } }
+function closeStatusMenu() { const m = $('filter-status-menu'); if (m) { m.hidden = true; $('filter-status-wrap').classList.remove('open'); } }
+function toggleStatusMenu() { const m = $('filter-status-menu'); if (!m) return; m.hidden ? openStatusMenu() : closeStatusMenu(); }
+
 function renderFilters() {
-  const statusSel = $('filter-status');
-  const statusVal = state.filter.status || state.filter.readStatus || '';
-  if (statusSel) { statusSel.value = statusVal; statusSel.classList.toggle('active', !!statusVal); }
+  // 「全部状态」改为自定义按钮下拉：回填触发器文案 + active 态 + 菜单项高亮
+  renderStatusMenu();
   $('filter-starred').checked = state.filter.starred;
   // 主题/标签触发器：同步选中数徽标；并剔除已删除/合并的失效项（保留仍存在的）。
   const tagSet = new Set(state.tags.map((t) => t.name));
@@ -1074,7 +1100,7 @@ function renderDetail() {
     else toast(r.error || '重新打标失败', 'error');
   };
   $('b-delete').onclick = async () => {
-    if (!confirm(`删除论文「${p.title || p.filename}」？\n将同时删除本地 PDF 与全文文本，且不可恢复。`)) return;
+    if (!(await PWDialog.confirm(`删除论文「${p.title || p.filename}」？\n将同时删除本地 PDF 与全文文本，且不可恢复。`, { title: '删除论文', danger: true, okText: '删除' }))) return;
     const btn = $('b-delete');
     setBusy(btn, true, '删除中…');
     const r = await DEL('/api/papers/' + p.id);
@@ -1394,7 +1420,7 @@ function NotesPanel(container, opts = {}) {
     }
     if (act === 'generate') {
       if (busyGen) return;
-      if (cards.length && !confirm('基于全文生成六段式笔记骨架（研究问题/贡献/方法/实验/局限/可复用），插入到现有笔记开头？')) return;
+      if (cards.length && !(await PWDialog.confirm('基于全文生成六段式笔记骨架（研究问题/贡献/方法/实验/局限/可复用），插入到现有笔记开头？', { title: '生成笔记骨架', okText: '生成' }))) return;
       busyGen = true;
       render();
       try {
@@ -1432,7 +1458,7 @@ function NotesPanel(container, opts = {}) {
     }
     if (editingId != null) return; // 编辑态下锁定其它卡操作（防重建丢输入）
     if (act === 'delete' && idx >= 0) {
-      if (!confirm('删除这张卡片？')) return;
+      if (!(await PWDialog.confirm('删除这张卡片？', { title: '删除笔记卡', danger: true, okText: '删除' }))) return;
       cards.splice(idx, 1);
       await save();
       return;
@@ -1632,6 +1658,17 @@ function getSelectedModel() {
   }
   return m;
 }
+/** token 数 → 紧凑显示（128000→128K、1000000→1M、32000→32K）。供模型切换器展示上下文窗口。 */
+function formatTokens(n) {
+  const v = Number(n);
+  if (!Number.isFinite(v) || v <= 0) return '';
+  if (v >= 1000000) {
+    const m = v / 1000000;
+    return (Number.isInteger(m) ? m : m.toFixed(1)) + 'M';
+  }
+  return Math.round(v / 1000) + 'K';
+}
+
 /** 模型切换下拉（详情 tab + reader 抽屉共用，锚定到触发按钮上方）。
  *  window.toggleModelSwitcher 暴露给 reader.js 复用。 */
 function toggleModelSwitcher(btn) {
@@ -1649,7 +1686,9 @@ function toggleModelSwitcher(btn) {
     models.map((m) => {
       const isSel = (m.id === selected) || (!selected && m.id === def);
       const tag = m.id === def ? '<span class="cmp-tag">默认</span>' : '';
-      return `<button class="cmp-item${isSel ? ' active' : ''}" data-model="${escapeHtml(m.id)}" type="button"><span class="cmp-id"></span>${tag}<span class="cmp-check">${isSel ? '✓' : ''}</span></button>`;
+      // contextLength 徽标（网关返回才显示，OpenAI 原生 /v1/models 不返回此字段）
+      const ctx = m.contextLength ? `<span class="cmp-ctx" title="${m.contextLength} tokens 上下文">${formatTokens(m.contextLength)}</span>` : '';
+      return `<button class="cmp-item${isSel ? ' active' : ''}" data-model="${escapeHtml(m.id)}" type="button"><span class="cmp-id"></span>${tag}${ctx}<span class="cmp-check">${isSel ? '✓' : ''}</span></button>`;
     }).join('') +
     '</div>';
   document.body.appendChild(pop);
@@ -2028,6 +2067,8 @@ function handleMentionKeydown(e, inputEl) {
 // 暴露给 reader.js（ESM，无法 import 本文件）：抽屉 AI 对话复用同一份全宽扁平渲染 + 辅助函数。
 if (typeof window !== 'undefined') {
   window.formatChatTime = formatChatTime;
+  // 阅读器框选补录公式后「查看公式清单」用（v3.9）
+  window.showFormulas = (...a) => showFormulas(...a);
   window.CHAT_ROLE_ICO = CHAT_ROLE_ICO;
   window.chatMsgHtml = chatMsgHtml;
   window.chatEmptyHtml = chatEmptyHtml;
@@ -2120,8 +2161,12 @@ function renderChatTab(body, p) {
   const selModel = typeof getSelectedModel === 'function' ? getSelectedModel() : '';
   const currentModel = selModel || (state.aiModels && state.aiModels.default) || '默认模型';
   body.innerHTML = `<div class="chat-tab">
-    <div class="chat-list" id="chat-list">${listHtml}<button class="scroll-bottom-btn" id="chat-scroll-bottom" title="滚动到底部" aria-label="滚动到底部"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M19 12l-7 7-7-7"/></svg></button></div>
+    <div class="chat-list" id="chat-list">${listHtml}</div>
     <div class="chat-input-shell">
+      <!-- 滚动到底部 FAB：作为 .chat-input-shell（position:sticky → 含定位上下文）子元素，
+           position:absolute; bottom:100% 整颗浮在输入框正上方（留 6px 缝），与阅读器抽屉一致。
+           滚动容器是外层 .detail-pane（.chat-list 自身不滚），见 wireChatExtras。 -->
+      <button class="scroll-bottom-btn" id="chat-scroll-bottom" title="滚动到底部" aria-label="滚动到底部"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M19 12l-7 7-7-7"/></svg></button>
       <div class="chat-composer" id="chat-composer">
         <div class="chat-composer-context" id="chat-mentions-row"></div>
         <textarea id="chat-input" rows="1" placeholder="问问 AI 关于这篇论文…  @ 引用其它论文">${escapeHtml(chatState.draft || '')}</textarea>
@@ -2154,7 +2199,8 @@ function renderChatTab(body, p) {
     </div>
   </div>`;
   const list = $('chat-list');
-  if (list) list.scrollTop = list.scrollHeight;
+  // 滚动容器是外层 .detail-pane（.chat-list 自身不滚），进 tab 即贴底
+  scrollChatListToBottom();
   const input = $('chat-input'), sendBtn = $('chat-send');
   if (chatState.busy) { input.disabled = true; sendBtn.classList.add('sending'); }
   // 实时同步 draft 到 chatState（任何 input 变化即存），renderDetail 重建后由上方回填，杜绝「打字被清空」
@@ -2266,7 +2312,7 @@ function renderChatTab(body, p) {
         const body2 = accNode2.querySelector('.chat-body');
         if (body2) body2.innerHTML = '<div class="chat-bubble thinking-skeleton"><div class="chat-content thinking"><span class="sk-line"></span><span class="sk-line"></span><span class="sk-line"></span></div></div>';
       }
-      if (accList2) accList2.scrollTop = accList2.scrollHeight;
+      scrollChatListToBottom();
     }
     // morphing 发送键：圆→红方块停止
     setBusyUI(true);
@@ -2308,7 +2354,7 @@ function renderChatTab(body, p) {
       if (content) {
         content.innerHTML = renderChatMd(accumulated, { final: false });  // markdown 增量重渲（流式不折叠代码块）
       }
-      const ll = document.getElementById('chat-list'); if (ll) ll.scrollTop = ll.scrollHeight;
+      scrollChatListToBottom();
     };
     const renderReasoning = () => {
       const body = lastAssistantNode() ? lastAssistantNode().querySelector('.chat-body') : null;
@@ -2325,7 +2371,7 @@ function renderChatTab(body, p) {
         // 思考体有独立的 max-height+overflow，必须滚它自己，否则超长时新 token 不可见（像卡住）
         rb.scrollTop = rb.scrollHeight;
       }
-      const ll = document.getElementById('chat-list'); if (ll) ll.scrollTop = ll.scrollHeight;
+      scrollChatListToBottom();
     };
     myClose = streamChatFetch(p.id, message, {
       regenerate,
@@ -2454,7 +2500,7 @@ function renderChatTab(body, p) {
   // 注：点击外部关闭浮层由 picker 内部的全局 mousedown 监听器统一处理（detail tab / reader 抽屉共用）
   const clearBtn = $('chat-clear');
   if (clearBtn) clearBtn.onclick = async () => {
-    if (!confirm('清空这篇论文的聊天记录？')) return;
+    if (!(await PWDialog.confirm('清空这篇论文的聊天记录？', { title: '清空聊天记录', danger: true, okText: '清空' }))) return;
     p.chat = [];
     await PATCH('/api/papers/' + p.id, { chat: [] });
     renderDetail();
@@ -2480,6 +2526,15 @@ function autoResizeInput(el) {
   el.style.height = '38px';
   el.style.height = Math.min(142, el.scrollHeight) + 'px';
 }
+/** 把外部聊天（详情 AI tab）滚动到底部。滚动容器是 .detail-pane（.chat-list 自身不滚，
+ *  详见 styles.css 滚动模型注释）；找不到时回退 #chat-list 兜底。 */
+function scrollChatListToBottom() {
+  const list = document.getElementById('chat-list');
+  if (!list) return;
+  const sc = list.closest('.detail-pane') || list;
+  sc.scrollTop = sc.scrollHeight;
+}
+
 /** 接线：空状态建议卡片（点即发）、滚动到底部 FAB（滚动检测+点击）、消息操作（复制/重新生成/编辑/删除/显示原文）、代码块复制/展开。
  *  全部用事件委托（消息 DOM 会被流式/重建替换，委托到 list 最稳）。doSend 透传 renderChatTab 的闭包。 */
 function wireChatExtras(p, list, input, doSend) {
@@ -2488,19 +2543,29 @@ function wireChatExtras(p, list, input, doSend) {
   list.querySelectorAll('.chat-suggest').forEach((chip) => {
     chip.onclick = () => { input.value = chip.dataset.q || ''; chatState.draft = input.value; autoResizeInput(input); doSend && doSend(); };
   });
-  // 滚动到底部 FAB：滚动时检测距底，点击滚到底
-  const fabEl = list.querySelector('.scroll-bottom-btn');
-  if (fabEl) {
+  // 滚动到底部 FAB：滚动容器是外层 .detail-pane（#detail，持久元素；.chat-list 自身不滚，详见 styles.css 滚动模型注释）。
+  // FAB 现挂在 .chat-input-shell 下（浮在输入框上方）。#detail 在每次 renderDetail 全量重建其子树时本身不变，
+  // 故 scroll 监听用 dataset 守卫一次性绑定，handler 内 getElementById 实时重查 FAB（避免闭包持有 stale 引用 + 监听器堆积）。
+  const scrollCt = list.closest('.detail-pane') || list.parentElement;
+  const fabEl = document.getElementById('chat-scroll-bottom');
+  if (scrollCt && !scrollCt.dataset.chatScrollWired) {
+    scrollCt.dataset.chatScrollWired = '1';
     const updateFab = () => {
-      const near = list.scrollHeight - list.scrollTop - list.clientHeight < 200;
-      fabEl.classList.toggle('show', !near && list.scrollHeight > list.clientHeight + 50);
+      const fab = document.getElementById('chat-scroll-bottom');
+      if (!fab) return;
+      const near = scrollCt.scrollHeight - scrollCt.scrollTop - scrollCt.clientHeight < 200;
+      fab.classList.toggle('show', !near && scrollCt.scrollHeight > scrollCt.clientHeight + 50);
     };
-    list.addEventListener('scroll', updateFab, { passive: true });
-    updateFab();
-    fabEl.onclick = () => { list.scrollTo({ top: list.scrollHeight, behavior: 'smooth' }); };
+    scrollCt.addEventListener('scroll', updateFab, { passive: true });
+    window.addEventListener('resize', updateFab, { passive: true });
+    scrollCt._updateChatScrollFab = updateFab;
+  }
+  if (fabEl && scrollCt) {
+    fabEl.onclick = () => { scrollCt.scrollTo({ top: scrollCt.scrollHeight, behavior: 'smooth' }); };
+    if (typeof scrollCt._updateChatScrollFab === 'function') scrollCt._updateChatScrollFab();
   }
   // 消息操作 + 代码块操作（事件委托，适应流式重建）
-  list.addEventListener('click', (e) => {
+  list.addEventListener('click', async (e) => {
     // —— 代码块复制 / 展开 ——
     const cbCopy = e.target.closest('.cb-copy');
     if (cbCopy) {
@@ -2560,7 +2625,7 @@ function wireChatExtras(p, list, input, doSend) {
       // user：删该 user + 紧随的 assistant；assistant：删该 assistant
       const cut = [mi];
       if (msg.role === 'user' && (p.chat || [])[mi + 1] && (p.chat || [])[mi + 1].role === 'assistant') cut.push(mi + 1);
-      if (!confirm('删除这条消息？' + (cut.length > 1 ? '（及其回复也会删除）' : ''))) return;
+      if (!(await PWDialog.confirm('删除这条消息？' + (cut.length > 1 ? '（及其回复也会删除）' : ''), { title: '删除消息', danger: true, okText: '删除' }))) return;
       p.chat = (p.chat || []).filter((_, idx) => !cut.includes(idx));
       PATCH('/api/papers/' + p.id, { chat: p.chat }).then(() => { state.detail.chat = p.chat; renderDetail(); });
     }
@@ -2595,11 +2660,9 @@ function appendChatMsgById(elementId, m) {
   if (empty) empty.remove();
   const idx = list.querySelectorAll('.chat-msg').length;
   const html = chatMsgHtml(m, idx);
-  // insertAdjacentHTML：保留 FAB（scroll-bottom-btn，是 .chat-list 直接子元素，在 .chat-msg 之后）
-  const fab = list.querySelector('.scroll-bottom-btn');
-  if (fab) fab.insertAdjacentHTML('beforebegin', html);
-  else list.insertAdjacentHTML('beforeend', html);
-  list.scrollTop = list.scrollHeight;
+  list.insertAdjacentHTML('beforeend', html);
+  // 滚动容器是外层 .detail-pane（.chat-list 自身不滚）。FAB 已移出 .chat-list，无需保留。
+  scrollChatListToBottom();
 }
 
 /** 详情 AI tab 的「问答大纲」浮窗：列出每个用户提问（Q1/Q2…），点击实时重查 #chat-list 跳转到对应消息。
@@ -2706,6 +2769,11 @@ function renderInfoTab(body, p) {
         <button class="btn ghost sm field-action" id="b-concepts-this">重新抽取并追加</button>
       </div>
       <div class="field">
+        <label>公式贡献</label>
+        <div class="v save-hint">本篇涉及 ${(p.formulaIds || []).length} 个公式。</div>
+        <button class="btn ghost sm field-action" id="b-formulas-this">重新抽取并追加</button>
+      </div>
+      <div class="field">
         <label>文件</label>
         <div class="v save-hint">${escapeHtml(p.filename)}${p.fulltextChars ? ' · ' + Math.round(p.fulltextChars / 1000) + 'k 字' : ''}</div>
       </div>
@@ -2749,6 +2817,20 @@ function renderInfoTab(body, p) {
     if (r.data && r.data.added != null) toast(`完成：处理 ${r.data.processed} 篇，新增 ${r.data.added} 个概念`);
     else toast(r.error || '抽取失败', 'error');
     // 重新拉取详情视图（含 conceptIds），让信息 tab 的概念数量实时更新（refresh 拉的是 summaryView 无 conceptIds）
+    try {
+      const { data: fresh } = await jget('/api/papers/' + encodeURIComponent(p.id));
+      if (fresh) { state.detail = fresh; renderDetail(); }
+    } catch { /* ignore */ }
+    refresh();
+  };
+  // 对本篇抽取公式（同概念：抽完重拉详情刷新计数）
+  const bf = $('b-formulas-this');
+  if (bf) bf.onclick = async () => {
+    setBusy(bf, true, '抽取中…');
+    const r = await POST('/api/papers/formulas', { ids: [p.id] });
+    setBusy(bf, false);
+    if (r.data && r.data.added != null) toast(`完成：处理 ${r.data.processed} 篇，新增 ${r.data.added} 个公式`);
+    else toast(r.error || '抽取失败', 'error');
     try {
       const { data: fresh } = await jget('/api/papers/' + encodeURIComponent(p.id));
       if (fresh) { state.detail = fresh; renderDetail(); }
@@ -2827,10 +2909,11 @@ async function openReader(paper) {
 function showView(name) {
   $('library-view').style.display = (name === 'library') ? '' : 'none';
   $('concepts-view').style.display = (name === 'concepts') ? '' : 'none';
+  $('formulas-view').style.display = (name === 'formulas') ? '' : 'none';
   $('settings-view').style.display = (name === 'settings') ? '' : 'none';
   document.body.dataset.view = name;
   $('btn-concepts').classList.toggle('active', name === 'concepts');
-  $('btn-prompt').classList.toggle('active', name === 'settings');
+  $('btn-formulas').classList.toggle('active', name === 'formulas');
 }
 
 // ---- 概念清单视图 ----
@@ -2840,14 +2923,162 @@ async function showConcepts() {
   // 概念 Markdown 下载链接带当前空间（静态 <a href> 不经 sp()，这里手动注入）
   const dl = document.querySelector('a[href="/api/concepts.md"]');
   if (dl) dl.href = sp('/api/concepts.md');
+  // 总览图制品元信息（从 settings 回显，html 按需 GET 单个）
+  try { const s = await jget('/api/settings'); state.conceptMaps = (s && s.data && s.data.conceptMaps) || []; } catch { state.conceptMaps = []; }
   showView('concepts');
   renderConcepts();
+  switchConceptView(_conceptView); // 应用持久化的视图（清单/总览图），内部按需 renderConceptMaps
 }
+
+// ---- 概念总览图制品（v3.10）：基于概念清单 AI 生成单文件 HTML 全览图，保留历史制品可优化 ----
+/** 生成新总览图：可选自定义 prompt → POST /api/concepts/map → 刷新制品列表。 */
+async function generateConceptMap() {
+  if (!(state.concepts && state.concepts.length)) { toast('概念清单为空，先抽取概念', 'error'); return; }
+  const prompt = await PWDialog.prompt('可选：输入生成要求（留空用默认提示词，如"按分类分组，矩阵图样式，强调高频概念"）：', {
+    title: '生成概念总览图', multiline: true, okText: '生成',
+  });
+  if (prompt === null) return; // 取消
+  const btn = $('btn-concept-map');
+  const orig = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = '生成中…（大产出需数分钟，请勿离开页面）'; }
+  try {
+    // 客户端超时 10 分钟兜底（与后端 callChat 的 timeoutMs 覆盖一致；AI 生成单文件 HTML 耗时长）
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 600000);
+    const res = await fetch(sp('/api/concepts/map'), {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt: prompt || undefined }), signal: ctrl.signal,
+    });
+    clearTimeout(timer);
+    const r = await res.json();
+    if (r && r.ok) {
+      toast('总览图已生成');
+      // 刷新制品列表（重新拉 settings 元信息）
+      const s = await jget('/api/settings');
+      if (s && s.data) state.conceptMaps = s.data.conceptMaps || [];
+      renderConceptMaps();
+      // 直接打开新生成的制品
+      if (r.data && r.data.id) viewConceptMap(r.data.id, r.data.html);
+    } else toast((r && r.error) || '生成失败', 'error');
+  } catch (e) {
+    const msg = (e && e.name === 'AbortError') ? '生成超时（10 分钟），请减少概念数量或重试' : ('生成失败：' + (e && e.message || e));
+    toast(msg, 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = orig; }
+  }
+}
+/** 渲染制品列表（元信息从 state.conceptMaps；html 按需 GET 单个）。 */
+function renderConceptMaps() {
+  const box = $('concept-maps-list');
+  if (!box) return;
+  const maps = state.conceptMaps || [];
+  if (!maps.length) { box.innerHTML = '<div class="cms-empty">暂无总览图。点上方「生成总览图」基于当前概念清单创建。</div>'; return; }
+  box.innerHTML = maps.map((m) => {
+    const t = new Date(m.createdAt || 0).toLocaleString();
+    return '<div class="cms-item" data-id="' + m.id + '">' +
+      '<div class="cms-item-main"><span class="cms-item-name">' + escapeHtml(m.name || '总览图') + '</span>' +
+      '<span class="cms-item-time">' + t + (m.updatedAt && m.updatedAt !== m.createdAt ? '（优化过）' : '') + '</span></div>' +
+      '<div class="cms-item-actions">' +
+      '<button class="btn ghost sm" data-cm-view="' + m.id + '">查看</button>' +
+      '<button class="btn ghost sm" data-cm-opt="' + m.id + '">优化</button>' +
+      '<button class="btn ghost sm" data-cm-newtab="' + m.id + '">新标签页</button>' +
+      '<button class="btn ghost sm danger" data-cm-del="' + m.id + '">删除</button>' +
+      '</div></div>';
+  }).join('');
+  box.querySelectorAll('[data-cm-view]').forEach((b) => (b.onclick = () => viewConceptMap(b.dataset.cmView)));
+  box.querySelectorAll('[data-cm-opt]').forEach((b) => (b.onclick = () => optimizeConceptMap(b.dataset.cmOpt)));
+  box.querySelectorAll('[data-cm-newtab]').forEach((b) => (b.onclick = () => openConceptMapNewTab(b.dataset.cmNewtab)));
+  box.querySelectorAll('[data-cm-del]').forEach((b) => (b.onclick = async () => {
+    if (!(await PWDialog.confirm('删除这个总览图制品？', { title: '删除制品', danger: true, okText: '删除' }))) return;
+    const r = await DEL('/api/concepts/map/' + b.dataset.cmDel);
+    if (r && r.ok) { toast('已删除'); state.conceptMaps = (state.conceptMaps || []).filter((x) => x.id !== b.dataset.cmDel); renderConceptMaps(); }
+    else toast((r && r.error) || '删除失败', 'error');
+  }));
+}
+/** 查看制品：按需 GET 单个 html → iframe srcdoc 全屏覆盖层。传 html 则免请求。 */
+async function viewConceptMap(id, html) {
+  if (!html) {
+    const r = await jget('/api/concepts/map/' + id);
+    if (!r || !r.data) { toast('加载失败', 'error'); return; }
+    html = r.data.html;
+  }
+  openConceptMapOverlay(id, html);
+}
+/** iframe 全屏覆盖层（带返回 + 新标签页按钮）。 */
+function openConceptMapOverlay(id, html) {
+  let ov = $('concept-map-overlay');
+  if (!ov) {
+    ov = document.createElement('div');
+    ov.id = 'concept-map-overlay';
+    ov.className = 'concept-map-overlay';
+    document.body.appendChild(ov);
+  }
+  ov.innerHTML =
+    '<div class="cmo-bar"><button class="btn ghost sm" id="cmo-close">← 返回</button>' +
+    '<span class="cmo-title"></span>' +
+    '<button class="btn ghost sm" id="cmo-newtab">新标签页打开</button></div>' +
+    '<iframe class="cmo-frame" sandbox="allow-scripts allow-same-origin allow-popups"></iframe>';
+  ov.classList.add('open');
+  ov.querySelector('.cmo-title').textContent = ((state.conceptMaps || []).find((m) => m.id === id) || {}).name || '概念总览图';
+  const frame = ov.querySelector('.cmo-frame');
+  frame.srcdoc = html || '';
+  ov.querySelector('#cmo-close').onclick = () => { ov.classList.remove('open'); frame.srcdoc = ''; };
+  ov.querySelector('#cmo-newtab').onclick = () => openConceptMapNewTab(id, html);
+}
+/** 新标签页打开（blob URL，避免 srcdoc 在新标签无法直接打开）。 */
+async function openConceptMapNewTab(id, html) {
+  if (!html) { const r = await jget('/api/concepts/map/' + id); html = r && r.data ? r.data.html : ''; }
+  if (!html) { toast('加载失败', 'error'); return; }
+  const blob = new Blob([html], { type: 'text/html' });
+  const url = URL.createObjectURL(blob);
+  window.open(url, '_blank');
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+}
+/** 优化已有制品：输入自定义 prompt → PUT（传 prevHtml 让 AI 在原基础上改）。 */
+async function optimizeConceptMap(id) {
+  const prompt = await PWDialog.prompt('输入优化要求（如"把架构图改成矩阵图""增加概念间的连线""只保留高频概念"）：', {
+    title: '优化总览图', multiline: true, okText: '优化',
+  });
+  if (prompt === null || !prompt) return;
+  toast('优化中…（大产出需数分钟）');
+  try {
+    const r = await PUT('/api/concepts/map', { id, prompt });
+    if (r && r.ok) {
+      toast('优化完成');
+      const s = await jget('/api/settings');
+      if (s && s.data) state.conceptMaps = s.data.conceptMaps || [];
+      renderConceptMaps();
+      viewConceptMap(id, r.data.html); // 直接看优化结果
+    } else toast((r && r.error) || '优化失败', 'error');
+  } catch (e) { toast('优化失败：' + (e.message || e), 'error'); }
+}
+
 // 概念页排序状态（localStorage 持久化用户选择）
 let _conceptSort = localStorage.getItem('pw-concept-sort') || 'freq';
+// 概念页显示方式：masonry（瀑布流，默认）/ list（紧凑清单）
+let _conceptLayout = localStorage.getItem('pw-concept-layout') || 'masonry';
+// 概念页视图：list（概念清单，默认）/ maps（总览图制品）
+let _conceptView = localStorage.getItem('pw-concept-view') || 'list';
+/** 切换概念页视图（清单 / 总览图），持久化用户选择，控制两个 pane 显隐 + 工具栏控件可见性。 */
+function switchConceptView(view) {
+  _conceptView = view;
+  localStorage.setItem('pw-concept-view', view);
+  const isMaps = view === 'maps';
+  const listPane = $('concept-list-pane');
+  const mapsPane = $('concept-maps-pane');
+  if (listPane) listPane.hidden = isMaps;
+  if (mapsPane) mapsPane.hidden = !isMaps;
+  // 总览图视图下隐藏搜索/布局/排序（它们只对清单有意义）
+  document.querySelectorAll('#concept-q, #concept-layout, #concept-sort').forEach((el) => {
+    el.style.display = isMaps ? 'none' : '';
+  });
+  document.querySelectorAll('#concept-view button').forEach((b) => b.classList.toggle('active', b.dataset.view === view));
+  if (isMaps) renderConceptMaps();
+}
 function renderConcepts() {
   const q = ($('concept-q').value || '').trim().toLowerCase();
   const sort = _conceptSort;
+  const layout = _conceptLayout;
   // 筛选
   let list = state.concepts.filter((c) => !q || (c.term + ' ' + (c.definition || '')).toLowerCase().includes(q));
   // 排序
@@ -2865,10 +3096,13 @@ function renderConcepts() {
   if (cb) cb.textContent = list.length;
   // 排序切换按钮 active 态
   document.querySelectorAll('#concept-sort button').forEach((b) => b.classList.toggle('active', b.dataset.sort === sort));
+  // 显示方式切换按钮 active 态 + 容器 class 切换（瀑布流 / 清单）
+  document.querySelectorAll('#concept-layout button').forEach((b) => b.classList.toggle('active', b.dataset.layout === layout));
   // 字母索引条（仅字母排序 + 无搜索词时显示）
   renderConceptAlphaBar(sort, q, list);
   // 卡片渲染
   const g = $('concepts-grid');
+  g.className = 'concepts-grid' + (layout === 'list' ? ' list-view' : ' masonry-view');
   g.innerHTML = '';
   if (!list.length) {
     g.innerHTML = '<div class="empty-state">' + (q ? '没有匹配「' + escapeHtml(q) + '」的概念' : '无概念。在论文详情「信息」tab 点「重新抽取并追加」，或多选论文后批量抽取。') + '</div>';
@@ -2879,28 +3113,70 @@ function renderConcepts() {
     const card = document.createElement('div');
     card.className = 'concept-card';
     const freq = (c.paperIds || []).length;
-    const papers = (c.paperIds || []).map((id) => {
-      const p = state.papers.find((x) => x.id === id);
-      return p ? (p.title || p.filename) : id;
-    });
-    const metaHtml = papers.length
-      ? `<span class="meta-papers" title="${escapeHtml(papers.join('\n'))}">出现于 ${escapeHtml(papers.slice(0, 2).join(' / '))}${papers.length > 2 ? ' 等 ' + papers.length + ' 篇' : ''}</span>`
-      : '<span class="meta-papers">（独立条目）</span>';
-    card.innerHTML = `
-      <div class="ct"><h3>${escapeHtml(c.term)}</h3>${freq ? `<span class="freq-badge" data-freq="${freq}" title="出现在 ${freq} 篇论文中">${freq} 篇</span>` : ''}
+    // 论文胶囊：最多平铺 3 个，其余折叠为「+N」（点击展开）；已不在库内的 id 跳过
+    const gotoable = (c.paperIds || [])
+      .map((id) => ({ id, p: state.papers.find((x) => x.id === id) }))
+      .filter((x) => x.p);
+    const allNames = gotoable.map((x) => x.p.title || x.p.filename);
+    const chipsHtml = gotoable
+      .slice(0, 3)
+      .map((x) => {
+        const label = x.p.title || x.p.filename;
+        return `<button class="paper-chip" data-goto="${x.id}" title="打开「${escapeHtml(label)}」">${escapeHtml(label)}</button>`;
+      })
+      .join('');
+    const moreHtml =
+      gotoable.length > 3
+        ? `<button class="paper-chip more" data-more title="${escapeHtml(allNames.join('\n'))}">+${gotoable.length - 3} 篇</button>`
+        : '';
+    const restHtml =
+      gotoable.length > 3
+        ? gotoable
+            .slice(3)
+            .map((x) => {
+              const label = x.p.title || x.p.filename;
+              return `<button class="paper-chip" data-goto="${x.id}" title="打开「${escapeHtml(label)}」" hidden>${escapeHtml(label)}</button>`;
+            })
+            .join('')
+        : '';
+    const metaHtml = gotoable.length
+      ? `<span class="meta-label">出现于</span>${chipsHtml}${moreHtml}${restHtml}`
+      : '<span class="meta-label">（独立条目）</span>';
+    if (layout === 'list') {
+      // 清单视图：单行紧凑——频次徽章 + 术语 + 解释摘要（一行省略）+ 论文数
+      card.innerHTML = `
+        <span class="lc-freq ${freq > 1 ? '' : 'dim'}"${freq ? ` title="出现在 ${freq} 篇论文中"` : ''}>${freq || '·'}</span>
+        <span class="lc-term" title="${escapeHtml(c.term)}">${escapeHtml(c.term)}</span>
+        <span class="lc-def" title="${escapeHtml(c.definition || '')}">${escapeHtml(c.definition || '（无解释）')}</span>
+        <span class="lc-count">${gotoable.length} 篇</span>
         <div class="row-actions">
           <button class="btn ghost sm" data-edit="${c.id}" title="编辑解释">编辑</button>
           <button class="btn ghost sm danger" data-del="${c.id}" title="删除概念">删除</button>
+        </div>`;
+    } else {
+      card.innerHTML = `
+        <div class="ct"><h3>${escapeHtml(c.term)}</h3>${c.category && c.category !== 'other' ? `<span class="cat-badge" title="分类">${escapeHtml(c.category)}</span>` : ''}${freq ? `<span class="freq-badge" data-freq="${freq}" title="出现在 ${freq} 篇论文中">${freq} 篇</span>` : ''}
+          <div class="row-actions">
+            <button class="btn ghost sm" data-edit="${c.id}" title="编辑解释">编辑</button>
+            <button class="btn ghost sm danger" data-del="${c.id}" title="删除概念">删除</button>
+          </div>
         </div>
-      </div>
-      <div class="cd">${escapeHtml(c.definition || '（无解释）')}</div>
-      <div class="meta-line">${metaHtml}</div>`;
+        <div class="cd">${escapeHtml(c.definition || '（无解释）')}</div>
+        <div class="meta-line">${metaHtml}</div>`;
+    }
     frag.appendChild(card);
   }
   g.appendChild(frag);
+  // 论文胶囊跳转：回论文库 → 选中该论文 → 列表滚动定位 + 高亮
+  g.querySelectorAll('[data-goto]').forEach((b) => b.onclick = () => gotoPaper(b.dataset.goto));
+  // 「+N 篇」展开剩余胶囊
+  g.querySelectorAll('[data-more]').forEach((b) => b.onclick = () => {
+    b.closest('.meta-line').querySelectorAll('.paper-chip[hidden]').forEach((x) => { x.hidden = false; });
+    b.remove();
+  });
   g.querySelectorAll('[data-del]').forEach((b) => b.onclick = async () => {
     const c = state.concepts.find((x) => x.id === b.dataset.del);
-    if (!confirm(`删除概念「${c ? c.term : b.dataset.del}」？`)) return;
+    if (!(await PWDialog.confirm(`删除概念「${c ? c.term : b.dataset.del}」？`, { title: '删除概念', danger: true, okText: '删除' }))) return;
     const r = await DEL('/api/concepts/' + b.dataset.del);
     if (r.ok) toast('概念已删除');
     else toast(r.error || '删除失败', 'error');
@@ -2908,7 +3184,7 @@ function renderConcepts() {
   });
   g.querySelectorAll('[data-edit]').forEach((b) => b.onclick = async () => {
     const c = state.concepts.find((x) => x.id === b.dataset.edit);
-    const def = prompt('编辑「' + c.term + '」的解释：', c.definition || '');
+    const def = await PWDialog.prompt('编辑「' + c.term + '」的解释：', { title: '编辑概念解释', value: c.definition || '', multiline: true, okText: '保存' });
     if (def != null) {
       const r = await PATCH('/api/concepts/' + c.id, { definition: def });
       if (r.ok) toast('概念解释已更新');
@@ -2916,6 +3192,347 @@ function renderConcepts() {
       showConcepts();
     }
   });
+}
+// ---- 公式清单视图（v3.9）----
+// 与概念清单同构：跨论文按 canonicalName 归并，卡片走 KaTeX display 渲染。
+// 「归一化到一般形式」的展示落点在 occurrences[].symbolMap：清单页给一般形式，
+// 展开某篇论文能看到「这篇里 d_k 写作 d」。
+async function showFormulas() {
+  const { data } = await jget('/api/formulas');
+  state.formulas = data || [];
+  const dl = document.querySelector('a[href="/api/formulas.md"]');
+  if (dl) dl.href = sp('/api/formulas.md');
+  showView('formulas');
+  renderFormulas();
+}
+let _formulaSort = localStorage.getItem('pw-formula-sort') || 'freq';
+let _formulaLayout = localStorage.getItem('pw-formula-layout') || 'masonry';
+// 懒加载：公式清单可能数百条，每张卡跑同步 KaTeX，一次性 innerHTML 会卡顿。
+// 故保留「全量排序后的 list」，但分批渲染（首批 _FORMULA_FIRST_BATCH，之后每批 _FORMULA_NEXT_BATCH），
+// 用 IntersectionObserver 观察末尾 sentinel 触发追加。jsdom/老浏览器无此 API 时一次性渲染全部（兼容）。
+const _FORMULA_FIRST_BATCH = 60;
+const _FORMULA_NEXT_BATCH = 40;
+let _formulaList = []; // 当前排序后的完整列表（renderFormulas 计算）
+let _formulaShown = 0; // 已渲染条数
+let _formulaObserver = null; // IntersectionObserver 实例（复用，root 滚动容器不变）
+
+/** KaTeX 安全渲染：模型给的 LaTeX 可能超出 KaTeX 子集，throwOnError:false 会渲染成红字而非抛错；
+ *  再兜一层 try/catch 防 KaTeX 自身异常把整页卡片渲染链打断。 */
+function renderKatex(latex, display) {
+  try {
+    return katex.renderToString(String(latex || ''), { displayMode: !!display, throwOnError: false });
+  } catch {
+    return '<code>' + escapeHtml(latex || '') + '</code>';
+  }
+}
+
+const VAR_ROLE_LABEL = { input: '输入', param: '参数', output: '输出', const: '常量' };
+
+function renderFormulas() {
+  const q = ($('formula-q').value || '').trim().toLowerCase();
+  const sort = _formulaSort;
+  const layout = _formulaLayout;
+  let list = (state.formulas || []).filter(
+    (f) => !q || [f.name, f.canonicalName, f.latex, f.description, f.category].join(' ').toLowerCase().includes(q),
+  );
+  const byName = (a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'zh-Hans-CN-u-co-pinyin');
+  if (sort === 'freq') {
+    list = list.slice().sort((a, b) => (b.paperIds || []).length - (a.paperIds || []).length || byName(a, b));
+  } else if (sort === 'category') {
+    list = list.slice().sort((a, b) => String(a.category || '~').localeCompare(String(b.category || '~')) || byName(a, b));
+  } else {
+    list = list.slice().sort(byName);
+  }
+  const cb = $('formulas-count');
+  if (cb) cb.textContent = list.length;
+  document.querySelectorAll('#formula-sort button').forEach((b) => b.classList.toggle('active', b.dataset.sort === sort));
+  document.querySelectorAll('#formula-layout button').forEach((b) => b.classList.toggle('active', b.dataset.layout === layout));
+
+  const g = $('formulas-grid');
+  g.className = 'formulas-grid' + (layout === 'list' ? ' list-view' : ' masonry-view');
+  g.style.height = ''; // 清掉瀑布流遗留的绝对定位容器高度（切布局 / 重渲时复位）
+  _formulaMasonryCols = 0;
+  g.innerHTML = '';
+  _wireFormulaGridOnce(g); // grid 级事件委托（一次性，懒加载追加批次不重复绑）
+  if (!list.length) {
+    g.innerHTML =
+      '<div class="empty-state">' +
+      (q
+        ? '没有匹配「' + escapeHtml(q) + '」的公式'
+        : '无公式。在论文详情「信息」tab 点「重新抽取并追加」，或多选论文后批量抽取；也可在阅读器里框选公式区域补录。') +
+      '</div>';
+    return;
+  }
+  _formulaList = list;
+  _formulaShown = 0;
+  _renderFormulaBatch(_FORMULA_FIRST_BATCH);
+}
+
+/** 构造单张公式卡 DOM（masonry / list 两布局）。KaTeX 在此同步渲染（首批/每批 ≤60，可接受）。 */
+function _buildFormulaCard(f, layout) {
+  const card = document.createElement('div');
+  card.className = 'formula-card';
+  const freq = (f.paperIds || []).length;
+  const occs = (f.occurrences || [])
+    .map((o) => ({ o, p: state.papers.find((x) => x.id === o.paperId) }))
+    .filter((x) => x.p);
+  const chipsHtml = occs
+    .map((x) => {
+      const label = x.p.title || x.p.filename;
+      const bits = [];
+      if (x.o.context) bits.push(x.o.context);
+      const map = Object.entries(x.o.symbolMap || {});
+      if (map.length) bits.push('符号 ' + map.map(([k, v]) => `${k}→${v}`).join('、'));
+      const tip = `打开「${label}」${bits.length ? '\n' + bits.join('；') : ''}`;
+      return `<button class="paper-chip" data-goto="${x.o.paperId}" title="${escapeHtml(tip)}">${escapeHtml(label)}</button>`;
+    })
+    .join('');
+  const metaHtml = occs.length ? `<span class="meta-label">出现于</span>${chipsHtml}` : '<span class="meta-label">（独立条目）</span>';
+
+  if (layout === 'list') {
+    card.innerHTML = `
+      <span class="lc-freq ${freq > 1 ? '' : 'dim'}"${freq ? ` title="出现在 ${freq} 篇论文中"` : ''}>${freq || '·'}</span>
+      <span class="lc-term" title="${escapeHtml(f.name)}">${escapeHtml(f.name)}</span>
+      <span class="lc-formula">${renderKatex(f.latex, false)}</span>
+      <span class="lc-count">${occs.length} 篇</span>
+      <div class="row-actions">
+        <button class="btn ghost sm" data-edit="${f.id}" title="编辑公式">编辑</button>
+        <button class="btn ghost sm danger" data-del="${f.id}" title="删除公式">删除</button>
+      </div>`;
+  } else {
+    const varsHtml = (f.variables || []).length
+      ? `<details class="fc-vars"><summary>符号表（${f.variables.length}）</summary><table>${f.variables
+          .map(
+            (v) =>
+              `<tr><td class="vs">${renderKatex(v.symbol, false)}</td><td>${escapeHtml(v.meaning || '')}</td><td class="vr">${VAR_ROLE_LABEL[v.role] || v.role}</td></tr>`,
+          )
+          .join('')}</table></details>`
+      : '';
+    card.innerHTML = `
+      <div class="ct">
+        <h3>${escapeHtml(f.name)}</h3>
+        ${freq ? `<span class="freq-badge" data-freq="${freq}" title="出现在 ${freq} 篇论文中">${freq} 篇</span>` : ''}
+        <div class="row-actions">
+          <button class="btn ghost sm" data-edit="${f.id}" title="编辑公式">编辑</button>
+          <button class="btn ghost sm danger" data-del="${f.id}" title="删除公式">删除</button>
+        </div>
+      </div>
+      <div class="fc-canon"><code>${escapeHtml(f.canonicalName)}</code>${f.category ? `<span class="fc-cat">${escapeHtml(f.category)}</span>` : ''}${f.source === 'vision' ? '<span class="fc-src" title="由阅读器框选补录">框选</span>' : ''}${f.source === 'mineru' ? '<span class="fc-src" title="由 MinerU 抽取">MinerU</span>' : ''}${f.source === 'manual' ? '<span class="fc-src" title="已人工修订">人工</span>' : ''}</div>
+      <div class="fc-latex">${renderKatex(f.latex, true)}</div>
+      ${f.description ? `<div class="fc-desc">${renderMd(f.description)}</div>` : '<div class="fc-desc muted">（无解读）</div>'}
+      ${varsHtml}
+      <div class="meta-line">${metaHtml}</div>`;
+    // 符号表 <details> 展开/折叠会改变卡片高度 → 绝对定位瀑布流需重排（仅重算纵向，列宽不变）。
+    // 注意 toggle 事件不冒泡（spec），不能靠 grid 级事件委托，必须直挂在 <details> 上。
+    const det = card.querySelector('details.fc-vars');
+    if (det) det.addEventListener('toggle', () => { if (_formulaLayout === 'masonry') _layoutFormulaMasonry(true); });
+  }
+  return card;
+}
+
+/** 瀑布流参数：最小列宽与间距（与 CSS grid minmax(340px) / gap:12px 对齐）。 */
+const _FORMULA_MASONRY_MIN = 340;
+const _FORMULA_MASONRY_GAP = 12;
+/** resize 防抖句柄（复用单 timer，避免每次 layout 都新增 listener）。 */
+let _formulaResizeTimer = null;
+let _formulaResizeWired = false;
+/** 上次布局时的列数（resize 改变列数才需重排；纯高度变化由 reflow 触发）。 */
+let _formulaMasonryCols = 0;
+
+/** JS 绝对定位瀑布流布局（Pinterest 式）：保留扁平有序 DOM（排序即 document order），
+ *  逐卡测高后放进「最短列」设 top/left/width → 顶行从左到右是排序 1..N、下行紧贴上方无竖向空隙。
+ *  - 行优先：所有列初始高 0，首张卡放第 1 列、第 2 张放第 2 列…第 N 张放第 N 列（取首个最短列即 round-robin），
+ *    之后继续取最短列 → 视觉顶行严格 1..N，下行紧贴。
+ *  - 无空隙：每列是独立堆叠，下一张贴在该列已堆内容的正下方（gap 留缝）。
+ *  - 兜底：jsdom / 容器未挂载 / 宽度为 0 / 卡高测不到时跳过定位并移除 .js-masonry，
+ *    回退到 CSS grid 行优先（有空隙但可读，测试不依赖定位）。
+ *  @param {boolean} reflowOnlyHeight true=列数不变只重算高度（如展开符号表），不重置 width */
+function _layoutFormulaMasonry(reflowOnlyHeight) {
+  const g = $('formulas-grid');
+  if (!g || _formulaLayout !== 'masonry') return;
+  const cards = g.querySelectorAll(':scope > .formula-card');
+  if (!cards.length) { g.classList.remove('js-masonry'); g.style.height = ''; return; }
+  const width = g.clientWidth;
+  // 兜底：宽度测不到（jsdom / 不可见 / display:none）→ 不做绝对定位，回退 CSS grid
+  if (!width || width < _FORMULA_MASONRY_MIN / 2) {
+    _formulaMasonryCols = 0;
+    g.classList.remove('js-masonry');
+    cards.forEach((c) => { c.style.position = ''; c.style.top = ''; c.style.left = ''; c.style.width = ''; });
+    g.style.height = '';
+    return;
+  }
+  const gap = _FORMULA_MASONRY_GAP;
+  let cols = Math.max(1, Math.floor((width + gap) / (_FORMULA_MASONRY_MIN + gap)));
+  // 列数受卡片数封顶（3 张卡别开 4 列留大片空白）
+  cols = Math.min(cols, cards.length);
+  const colWidth = (width - (cols - 1) * gap) / cols;
+  // reflowOnlyHeight：列数未变时复用列宽，只重排纵向位置
+  if (reflowOnlyHeight && cols !== _formulaMasonryCols) reflowOnlyHeight = false;
+  _formulaMasonryCols = cols;
+  const colHeights = new Array(cols).fill(0);
+  g.classList.add('js-masonry');
+  cards.forEach((card) => {
+    // 测高前先给确定列宽，避免换行差异导致测高偏差（首次定位 & 列数变化时）
+    card.style.width = colWidth + 'px';
+    card.style.position = 'absolute';
+    const h = card.offsetHeight;
+    // 卡高测不到（0）→ 无法精确堆叠，但仍按列宽横向排（纵向会重叠，优于全部压在 top:0）
+    const target = colHeights.indexOf(Math.min(...colHeights));
+    card.style.top = colHeights[target] + 'px';
+    card.style.left = target * (colWidth + gap) + 'px';
+    colHeights[target] += (h || 0) + gap;
+  });
+  const maxH = Math.max(...colHeights, 0);
+  g.style.height = maxH ? maxH + 'px' : '';
+  // sentinel（懒加载提示）贴在最长列底部之下
+  const sentinel = g.querySelector(':scope > #formula-sentinel');
+  if (sentinel) {
+    sentinel.style.position = 'absolute';
+    sentinel.style.top = maxH + 'px';
+    sentinel.style.left = '0';
+    sentinel.style.width = '100%';
+  }
+}
+
+/** 防抖重排（resize / 字体载入后）：列数可能变，全量重排。 */
+function _scheduleFormulaMasonryRelayout() {
+  if (_formulaResizeTimer) clearTimeout(_formulaResizeTimer);
+  _formulaResizeTimer = setTimeout(() => { _formulaResizeTimer = null; _layoutFormulaMasonry(false); }, 120);
+}
+
+/** 渲染 count 张卡（从 _formulaShown 开始追加），插 sentinel 并挂/复用 IntersectionObserver。
+ *  无 IntersectionObserver（jsdom/老浏览器）时一次性渲染全部。
+ *  渲染后跑瀑布流定位（KaTeX 同步渲染完成即可测高；字体/图片异步回流另由 resize 兜底）。 */
+function _renderFormulaBatch(count) {
+  const g = $('formulas-grid');
+  if (!g || !_formulaList.length) return;
+  const layout = _formulaLayout;
+  const total = _formulaList.length;
+  const end = Math.min(_formulaShown + count, total);
+  if (end <= _formulaShown) return;
+  const frag = document.createDocumentFragment();
+  for (let i = _formulaShown; i < end; i++) frag.appendChild(_buildFormulaCard(_formulaList[i], layout));
+  // 移除旧 sentinel（若有）再追加新批次
+  const oldSentinel = g.querySelector('#formula-sentinel');
+  if (oldSentinel) oldSentinel.remove();
+  g.appendChild(frag);
+  _formulaShown = end;
+  if (_formulaShown < total) {
+    // 还有未渲染 → 插 sentinel 并 observe（旧 sentinel 已在上面移除，新批次会重新 observe）
+    const sentinel = document.createElement('div');
+    sentinel.id = 'formula-sentinel';
+    sentinel.className = 'lazy-sentinel';
+    sentinel.textContent = `已加载 ${_formulaShown}/${total}，滚动加载更多…`;
+    g.appendChild(sentinel);
+    _observeFormulaSentinel(sentinel);
+  }
+  // 瀑布流定位：双 rAF 确保 KaTeX/字体回流后再测高（首帧测高可能偏小）；list 布局不动
+  if (layout === 'masonry') {
+    // wire resize 一次性（监听窗口/侧栏宽度变化）
+    if (!_formulaResizeWired) {
+      _formulaResizeWired = true;
+      window.addEventListener('resize', _scheduleFormulaMasonryRelayout, { passive: true });
+    }
+    const run = () => _layoutFormulaMasonry(false);
+    if (typeof requestAnimationFrame === 'function') { requestAnimationFrame(() => requestAnimationFrame(run)); }
+    else run();
+  }
+}
+
+/** 让 observer 观察 sentinel。无 IntersectionObserver（jsdom/老浏览器）时一次性渲染剩余全部。 */
+function _observeFormulaSentinel(sentinel) {
+  if (typeof IntersectionObserver === 'undefined') {
+    // jsdom/老浏览器无此 API：一次性渲染剩余全部（兼容；数据量小或测试场景）
+    if (_formulaShown < _formulaList.length) _renderFormulaBatch(_formulaList.length - _formulaShown);
+    return;
+  }
+  // 复用 observer（root=滚动容器 #formulas-view 不变）；建一次后只对新 sentinel observe
+  if (!_formulaObserver) {
+    const root = $('formulas-view');
+    _formulaObserver = new IntersectionObserver(
+      (entries) => {
+        for (const e of entries) {
+          if (e.isIntersecting && _formulaShown < _formulaList.length) {
+            _renderFormulaBatch(_FORMULA_NEXT_BATCH);
+          }
+        }
+      },
+      { root, rootMargin: '300px 0px', threshold: 0 },
+    );
+  }
+  _formulaObserver.observe(sentinel);
+}
+
+/** grid 级事件委托（一次性 dataset.wired 守卫）：懒加载追加批次无需重复绑。
+ *  data-goto→跳转论文；data-del→删除（局部更新，免重拉）；data-edit→编辑。 */
+function _wireFormulaGridOnce(g) {
+  if (g.dataset.wired) return;
+  g.dataset.wired = '1';
+  g.addEventListener('click', async (e) => {
+    const goto = e.target.closest('[data-goto]');
+    if (goto) { gotoPaper(goto.dataset.goto); return; }
+    const del = e.target.closest('[data-del]');
+    if (del) {
+      const f = state.formulas.find((x) => x.id === del.dataset.del);
+      const name = f ? f.name : del.dataset.del;
+      if (!(await PWDialog.confirm(`删除公式「${name}」？`, { title: '删除公式', danger: true, okText: '删除' }))) return;
+      const r = await DEL('/api/formulas/' + del.dataset.del);
+      if (r.ok) {
+        toast('公式已删除');
+        // 局部更新：从 state.formulas 删除该条后重渲（免 showFormulas 重拉全量）
+        state.formulas = (state.formulas || []).filter((x) => x.id !== del.dataset.del);
+        renderFormulas();
+      } else toast(r.error || '删除失败', 'error');
+      return;
+    }
+    const edit = e.target.closest('[data-edit]');
+    if (edit) {
+      const f = state.formulas.find((x) => x.id === edit.dataset.edit);
+      if (f) await editFormula(f);
+    }
+  });
+}
+
+/** 编辑公式：两步 PWDialog（LaTeX → 解读）。canonicalName 是合并 key 不可改，故不提供入口。 */
+async function editFormula(f) {
+  const latex = await PWDialog.prompt(`编辑「${f.name}」的 LaTeX（一般形式，不含 $ 包裹）：`, {
+    title: '编辑公式',
+    value: f.latex || '',
+    multiline: true,
+    okText: '下一步',
+  });
+  if (latex == null) return;
+  const description = await PWDialog.prompt(`编辑「${f.name}」的解读（支持 Markdown 与 $公式$）：`, {
+    title: '编辑解读',
+    value: f.description || '',
+    multiline: true,
+    okText: '保存',
+  });
+  if (description == null) return;
+  const r = await PATCH('/api/formulas/' + f.id, { latex, description });
+  if (r.ok) {
+    toast('公式已更新');
+    // 局部更新：PATCH 不返回新对象，用提交值就地改 state.formulas 后重渲（免 showFormulas 重拉全量）
+    const idx = (state.formulas || []).findIndex((x) => x.id === f.id);
+    if (idx >= 0) {
+      state.formulas[idx] = { ...state.formulas[idx], latex, description, source: 'manual', updatedAt: Date.now() };
+      renderFormulas();
+    }
+  } else toast(r.error || '保存失败', 'error');
+}
+
+/** 从概念清单跳转到论文：回论文库视图 → 选中（加载详情）→ 列表定位并高亮。
+ *  论文被当前筛选/搜索排除时列表里没有对应项，仅打开详情，不报错。 */
+async function gotoPaper(id) {
+  if (!id) return;
+  showLibrary();
+  await select(id);
+  const el = document.querySelector('.paper-list .paper-item[data-id="' + CSS.escape(id) + '"]');
+  if (el) {
+    el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    el.classList.add('flash');
+    setTimeout(() => el.classList.remove('flash'), 1300);
+  }
 }
 /** 字母索引条：列出 A-Z + 中文首字（按拼音），点击滚动到对应字母段。仅字母排序 + 无搜索词时显示。 */
 function renderConceptAlphaBar(sort, q, list) {
@@ -2935,7 +3552,7 @@ function renderConceptAlphaBar(sort, q, list) {
   for (let i = 0; i < 26; i++) {
     const L = String.fromCharCode(65 + i);
     const has = heads.has(L);
-    links.push(`<a href="#concept-${L}" class="${has ? '' : 'empty'}" data-letter="${L}">${L}</a>`);
+    links.push(`<a href="#concept-${L}" class="${has ? '' : 'off'}" data-letter="${L}">${L}</a>`);
   }
   // 中文首字单独列（#分隔后）
   const cjkHeads = [...heads].filter((h) => /[^A-Z]/.test(h)).sort();
@@ -2946,7 +3563,7 @@ function renderConceptAlphaBar(sort, q, list) {
   bar.innerHTML = links.join('');
   bar.hidden = false;
   // 点击：滚动到第一个 term 以该字母开头的卡片
-  bar.querySelectorAll('a:not(.empty)').forEach((a) => {
+  bar.querySelectorAll('a:not(.off)').forEach((a) => {
     a.onclick = (e) => {
       e.preventDefault();
       const letter = decodeURIComponent(a.dataset.letter);
@@ -2983,13 +3600,39 @@ function togglePick(id) {
 function togglePickMode(on) {
   state.pickMode = on;
   $('bulk-bar').classList.toggle('active', on);
-  if (!on) state.selected.clear();
+  if (!on) { state.selected.clear(); closeBulkMenu(); }
   syncPickUI();
   const pickBtn = $('btn-pick');
   pickBtn.querySelector('.btn-text').textContent = on ? '退出多选' : '多选';
   pickBtn.classList.toggle('active', on);
   pickBtn.classList.toggle('subtle', !on);
   renderList();
+}
+// 批量操作下拉（底部栏，菜单上弹）。仿 space-menu 模式：触发器 stopPropagation + document 外部关闭。
+function openBulkMenu() { const m = $('bulk-menu'); if (m) { m.hidden = false; $('bulk-actions').classList.add('open'); } }
+function closeBulkMenu() { const m = $('bulk-menu'); if (m) { m.hidden = true; $('bulk-actions').classList.remove('open'); } }
+function toggleBulkMenu() { const m = $('bulk-menu'); if (!m) return; m.hidden ? openBulkMenu() : closeBulkMenu(); }
+/** 统一 busy 门：开启时给底部栏加 .bulk-busy（CSS 统一禁用菜单项/触发器/删除键的交互）+ 显示进度条 + 关菜单；
+ *  结束时恢复。取代每个动作里 5 处手动 disabled。 */
+function setBulkBusy(on, label) {
+  const bar = $('bulk-bar');
+  if (!bar) return;
+  bar.classList.toggle('bulk-busy', on);
+  const bp = $('bulk-progress');
+  if (bp) {
+    bp.hidden = !on;
+    if (on && label && $('bp-text')) $('bp-text').textContent = label;
+  }
+  if (on) closeBulkMenu();
+}
+/** 真实百分比进度：done/total。批量端点是一次性 await 整批、无流式，故前端逐篇循环拿真实进度。 */
+function updateBulkProgress(done, total, label) {
+  const bp = $('bulk-progress'), bpText = $('bp-text'), bpFill = $('bp-fill'), bpPct = $('bp-pct');
+  if (bp) bp.hidden = false;
+  if (bpText && label) bpText.textContent = label + '（' + done + '/' + total + '）…';
+  const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+  if (bpFill) { bpFill.style.width = pct + '%'; bpFill.classList.remove('indeterminate'); }
+  if (bpPct) bpPct.textContent = pct + '%';
 }
 
 // ---- 收藏夹模态 ----
@@ -3014,8 +3657,32 @@ function openFolderModal(folder) {
 // ---- 视图切换（概念/库/设置） ----
 function showLibrary() { showView('library'); }
 
+/** 点击左上角 logo：回到初始页面（库视图 + 全部论文 + 清筛选/搜索/选中）。
+ *  - 阅读器开着先关掉（不强制落盘外的副作用）
+ *  - 切回 library 视图（沿用 settings/concepts 的「← 返回」同等语义）
+ *  - 重置筛选为「全部论文」（与侧栏「全部论文」项一致），保留 sort
+ *  - 清空搜索框 / 退出全文检索模式 / 取消选中论文
+ *  空间不变（与 switchSpace 的清场逻辑区分）。 */
+function goHome() {
+  if (reader && $('reader-view').classList.contains('active')) reader.close();
+  if (document.body.dataset.view !== 'library') showLibrary();
+  state.current = null;
+  state.detail = null;
+  state.selected = new Set();
+  state.pickMode = false;
+  state.filter = { q: '', status: '', readStatus: '', tags: [], topics: [], tagOp: 'or', topicOp: 'or', starred: false, folder: '', mode: '', sort: state.filter.sort };
+  $('search').value = '';
+  syncAdvancedPanelFromDsl('');
+  if (state.ft) { state.ft = null; }
+  refresh();
+  renderDetail();
+}
+
 // ---- 设置中心（迁移并扩展原 prompt-view） ----
 const APIKEY_MASK = '********'; // 占位，表示「未改动」
+// 每任务输入上限的任务键（v3.9）。顺序 = 设置页输入框顺序；
+// 与后端 ai.js 的 INPUT_BUDGET_TASKS 必须一致（后端按白名单校验，多余键被忽略）。
+const TASK_BUDGET_KEYS = ['summary', 'tags', 'notes', 'concepts', 'formulas', 'chat'];
 
 async function openSettings(tab) {
   showView('settings');
@@ -3037,6 +3704,52 @@ function fmtDef(v) {
   return v === undefined || v === null || v === '' ? '未设置' : v;
 }
 
+// ---- 设置页自定义下拉（v3.10：原生 <select> 改自定义按钮+菜单，与顶栏「全部状态」同设计语言）----
+// sdRegistry：wrapId → { value, opts }，供 saveXxx 读当前值
+const sdRegistry = {};
+/** 在 .sd-wrap 容器挂载自定义下拉（触发按钮 + 菜单，仿 filter-status-menu/fsm-item）。
+ *  options: [{value, label}]，initialValue: 初始选中值，onChange(value): 选中回调。
+ *  返回控制器 { get, set }，供 loadSettings/save 读写当前值。 */
+function mountSettingDropdown(wrapId, options, initialValue, onChange) {
+  const wrap = $(('' + wrapId).replace(/^#/, ''));
+  if (!wrap) return null;
+  const opts = Array.isArray(options) ? options : [];
+  const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+  const labelOf = (v) => { const o = opts.find((x) => x.value === v); return o ? o.label : v; };
+  wrap.innerHTML =
+    '<button class="filter-trigger sd-trigger" type="button">' +
+    '<span class="ft-label sd-label">' + esc(labelOf(initialValue)) + '</span>' +
+    '<span class="ft-chev"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></span>' +
+    '</button>' +
+    '<div class="sd-menu" hidden>' + opts.map((o) => '<button class="fsm-item" type="button" data-v="' + esc(o.value) + '">' + esc(o.label) + '</button>').join('') + '</div>';
+  const trigger = wrap.querySelector('.sd-trigger');
+  const menu = wrap.querySelector('.sd-menu');
+  const labelEl = wrap.querySelector('.sd-label');
+  const state = { value: initialValue, opts };
+  sdRegistry[wrapId] = state;
+  const syncActive = () => {
+    menu.querySelectorAll('.fsm-item').forEach((it) => it.classList.toggle('active', it.dataset.v === state.value));
+    if (labelEl) labelEl.textContent = labelOf(state.value);
+    trigger.classList.toggle('active', !!state.value && state.value !== opts[0]?.value);
+  };
+  syncActive();
+  trigger.onclick = (e) => { e.stopPropagation(); menu.hidden = !menu.hidden; };
+  menu.querySelectorAll('.fsm-item').forEach((it) => {
+    it.onclick = (e) => {
+      e.stopPropagation();
+      state.value = it.dataset.v;
+      menu.hidden = true;
+      syncActive();
+      if (onChange) onChange(state.value);
+    };
+  });
+  document.addEventListener('click', (e) => { if (!wrap.contains(e.target)) menu.hidden = true; });
+  return {
+    get: () => state.value,
+    set: (v) => { state.value = v; syncActive(); },
+  };
+}
+
 async function loadSettingsData() {
   try {
     const { data } = await jget('/api/settings');
@@ -3045,8 +3758,22 @@ async function loadSettingsData() {
     $('ai-apikey').value = data.ai.hasApiKey ? APIKEY_MASK : '';
     $('ai-apikey').dataset.masked = data.ai.hasApiKey ? '1' : '';
     $('ai-model').value = data.ai.model || '';
-    $('ai-maxinput').value = data.ai.maxInputChars || '';
+    // v3.11：输入上限以 tokens 为准（OpenAI 标准）。后端同时回显旧 maxInputChars（兼容存量），
+    // 这里优先取 tokens；tokens 缺失时说明是旧部署未保存过 → 回显空让用户填（默认值由 placeholder 暗示）。
+    $('ai-maxinput').value = data.ai.maxInputTokens || '';
     $('ai-timeout').value = Math.round((data.ai.timeoutMs || 120000) / 1000);
+    // 每任务输入上限：null = 跟随全局，输入框留空 + placeholder 显示全局 tokens 值
+    const tb = data.ai.taskMaxInputTokens || {};
+    const globalTokens = data.ai.maxInputTokens || '';
+    for (const t of TASK_BUDGET_KEYS) {
+      const el = $('tb-' + t);
+      if (!el) continue;
+      el.value = tb[t] == null ? '' : tb[t];
+      el.placeholder = globalTokens ? '跟随全局 ' + globalTokens : '跟随全局';
+    }
+    // 有任一任务级覆盖时展开折叠区，避免用户以为没生效
+    const tbBox = $('task-budget');
+    if (tbBox) tbBox.open = TASK_BUDGET_KEYS.some((t) => tb[t] != null);
     $('ai-hint').textContent = '';
     $('ai-config-ref').innerHTML =
       `<span><span class="ref-k">Base URL</span><span class="ref-v">${escapeHtml(data.configAi.baseURL || '（未设置）')}</span></span>` +
@@ -3056,6 +3783,11 @@ async function loadSettingsData() {
     $('summary-prompt-default-pre').textContent = data.defaultPrompt || '';
     $('tags-prompt-edit').value = data.tagsPrompt || '';
     $('tags-prompt-default-pre').textContent = data.defaultTagsPrompt || '';
+    $('formula-prompt-edit').value = data.formulaPrompt || '';
+    $('formula-prompt-default-pre').textContent = data.defaultFormulaPrompt || '';
+    // 概念提示词（v3.10）
+    if ($('concept-prompt-edit')) $('concept-prompt-edit').value = data.conceptPrompt || '';
+    if ($('concept-prompt-default-pre')) $('concept-prompt-default-pre').textContent = data.defaultConceptPrompt || '';
     // ---- 聊天预置 Prompt（输入框上方快捷提问按钮，store.settings.chatPresets 覆盖内置默认）----
     chatPresetsOverride = Array.isArray(data.chatPresets) ? data.chatPresets : null;
     // ---- v3.2 保存的搜索预设（高级搜索命名预设）----
@@ -3088,13 +3820,51 @@ async function loadSettingsData() {
     $('disc-maxresults-hint').textContent = `config 默认：${fmtDef(cd.maxResults)}`;
     $('disc-peraxis-hint').textContent = `config 默认：${fmtDef(cd.perAxis)}`;
     renderWeightProp();
-    // ---- 划线翻译 ----
-    if ($('translate-engine')) {
-      $('translate-engine').value = data.translate.engine || 'google';
-      $('translate-lang').value = data.translate.targetLang || 'zh-CN';
-      $('translate-engine-hint').textContent = `config 默认：${data.configTranslate.engine || 'google'} · Google 免费端点秒回（推荐），AI 流式保留术语，Bing 走外链`;
-      $('translate-lang-hint').textContent = `config 默认：${data.configTranslate.targetLang || 'zh-CN'}`;
-      $('translate-hint').textContent = '';
+    // ---- 划线翻译（自定义下拉） ----
+    {
+      const engineOpts = [
+        { value: 'google', label: 'Google 翻译（免费端点，秒回，推荐）' },
+        { value: 'ai', label: 'AI 翻译（流式，保留术语/公式）' },
+        { value: 'bing', label: '必应 Bing 翻译（外链）' },
+        { value: 'none', label: '关闭（不显示翻译按钮）' },
+      ];
+      const langOpts = [
+        { value: 'zh-CN', label: '简体中文 zh-CN' }, { value: 'zh-TW', label: '繁体中文 zh-TW' },
+        { value: 'en', label: '英文 en' }, { value: 'ja', label: '日文 ja' },
+        { value: 'ko', label: '韩文 ko' }, { value: 'fr', label: '法文 fr' }, { value: 'de', label: '德文 de' },
+      ];
+      const ev = data.translate.engine || 'google';
+      const lv = data.translate.targetLang || 'zh-CN';
+      if (!sdRegistry['sd-translate-engine-wrap']) {
+        mountSettingDropdown('sd-translate-engine-wrap', engineOpts, ev);
+        mountSettingDropdown('sd-translate-lang-wrap', langOpts, lv);
+      } else {
+        sdRegistry['sd-translate-engine-wrap'].value = ev;
+        sdRegistry['sd-translate-lang-wrap'].value = lv;
+      }
+      if ($('translate-engine-hint')) $('translate-engine-hint').textContent = `config 默认：${data.configTranslate.engine || 'google'} · Google 免费端点秒回（推荐），AI 流式保留术语，Bing 走外链`;
+      if ($('translate-lang-hint')) $('translate-lang-hint').textContent = `config 默认：${data.configTranslate.targetLang || 'zh-CN'}`;
+      if ($('translate-hint')) $('translate-hint').textContent = '';
+    }
+    // ---- 公式抽取引擎（AI | MinerU，自定义下拉） ----
+    {
+      const engineOpts = [
+        { value: 'ai', label: 'AI 抽取（默认，从全文识别）' },
+        { value: 'mineru', label: 'MinerU 服务（高保真 LaTeX，需填地址）' },
+      ];
+      const ev = data.formulas.engine || 'ai';
+      if (!sdRegistry['sd-formula-engine-wrap']) {
+        mountSettingDropdown('sd-formula-engine-wrap', engineOpts, ev);
+      } else {
+        sdRegistry['sd-formula-engine-wrap'].value = ev;
+      }
+      if ($('formula-mineru-url')) $('formula-mineru-url').value = data.formulas.mineruUrl || '';
+      if ($('formula-engine-hint')) $('formula-engine-hint').textContent = `config 默认：${data.configFormulas.engine || 'ai'} · MinerU 解析 PDF 出高保真 LaTeX，再用 AI 命名/解读`;
+      if ($('formula-engine-hint-save')) $('formula-engine-hint-save').textContent = '';
+      // MinerU 命名提示词（与公式引擎配置同页）
+      if ($('mineru-naming-prompt-edit')) $('mineru-naming-prompt-edit').value = data.formulas.namingPrompt || '';
+      if ($('mineru-naming-default-pre')) $('mineru-naming-default-pre').textContent = data.defaultNamingPrompt || '';
+      if ($('mineru-naming-hint')) $('mineru-naming-hint').textContent = '';
     }
     // ---- 概览 / 系统 / 覆盖徽标 ----
     renderOverview(data);
@@ -3198,6 +3968,8 @@ function markOverrides(ov) {
   show('ovr-ai', (ov.ai || []).length > 0);
   show('ovr-summary', !!ov.summaryPrompt);
   show('ovr-tags', !!ov.tagsPrompt);
+  show('ovr-formula', !!ov.formulaPrompt);
+  show('ovr-concept', !!ov.conceptPrompt);
   show('ovr-scan', !!ov.scan);
   const ax = ov.arxiv || [];
   show('ovr-arxiv-enabled', ax.includes('enabled'));
@@ -3220,6 +3992,11 @@ function markOverrides(ov) {
   const tr = ov.translate || [];
   show('ovr-translate-engine', tr.includes('engine'));
   show('ovr-translate-lang', tr.includes('targetLang'));
+  // 公式抽取引擎
+  const fm = ov.formulas || [];
+  show('ovr-formulas', fm.length > 0);
+  show('ovr-formulas-engine', fm.includes('engine'));
+  show('ovr-formulas-mineruUrl', fm.includes('mineruUrl'));
 }
 
 async function saveAiConfig() {
@@ -3228,9 +4005,19 @@ async function saveAiConfig() {
   const payload = {
     baseURL: $('ai-baseurl').value.trim(),
     model: $('ai-model').value.trim(),
-    maxInputChars: parseInt($('ai-maxinput').value, 10) || 24000,
+    // v3.11：输入上限按 tokens 发（OpenAI 标准）；空值 → 后端用默认 32000
+    maxInputTokens: parseInt($('ai-maxinput').value, 10) || undefined,
     timeoutMs: (parseInt($('ai-timeout').value, 10) || 120) * 1000,
+    // 每任务输入上限：留空 → null（跟随全局），后端按白名单校验
+    taskMaxInputTokens: TASK_BUDGET_KEYS.reduce((acc, t) => {
+      const el = $('tb-' + t);
+      const v = el ? el.value.trim() : '';
+      acc[t] = v === '' ? null : parseInt(v, 10) || null;
+      return acc;
+    }, {}),
   };
+  // maxInputTokens 空时从 payload 删掉（undefined 不发），让后端保留原值而非覆盖成默认
+  if (payload.maxInputTokens == null) delete payload.maxInputTokens;
   // apiKey：用户没改（仍是占位）则不传，避免误清空；改成新值或清空则传
   const keyVal = $('ai-apikey').value;
   if (keyVal !== APIKEY_MASK) payload.apiKey = keyVal;
@@ -3319,6 +4106,40 @@ async function saveTagsPrompt() {
     hint.textContent = '保存失败：' + (e.message || e);
     toast('保存失败', 'error');
   }
+  setBusy(btn, false);
+}
+
+async function saveFormulaPrompt() {
+  const ta = $('formula-prompt-edit');
+  const btn = $('btn-formula-prompt-save');
+  const hint = $('formula-prompt-hint');
+  setBusy(btn, true, '保存中…');
+  try {
+    const r = await PUT('/api/settings/formula-prompt', { value: ta.value });
+    if (r.ok) {
+      hint.textContent = '已保存 · ' + new Date().toLocaleTimeString();
+      toast('公式提示词已保存');
+    } else {
+      hint.textContent = '保存失败：' + (r.error || '');
+      toast(r.error || '保存失败', 'error');
+    }
+  } catch (e) {
+    hint.textContent = '保存失败：' + (e.message || e);
+    toast('保存失败', 'error');
+  }
+  setBusy(btn, false);
+}
+/** 概念抽取提示词保存（v3.10，仿 saveFormulaPrompt）。空串=恢复默认。 */
+async function saveConceptPrompt() {
+  const ta = $('concept-prompt-edit');
+  const btn = $('btn-concept-prompt-save');
+  const hint = $('concept-prompt-hint');
+  setBusy(btn, true, '保存中…');
+  try {
+    const r = await PUT('/api/settings/concept-prompt', { value: ta.value });
+    if (r.ok) { hint.textContent = '已保存 · ' + new Date().toLocaleTimeString(); toast('概念提示词已保存'); }
+    else { hint.textContent = '保存失败：' + (r.error || ''); toast(r.error || '保存失败', 'error'); }
+  } catch (e) { hint.textContent = '保存失败：' + (e.message || e); toast('保存失败', 'error'); }
   setBusy(btn, false);
 }
 
@@ -3460,8 +4281,8 @@ async function saveTranslate() {
   const btn = $('btn-translate-save');
   const hint = $('translate-hint');
   const payload = {
-    engine: $('translate-engine').value,
-    targetLang: $('translate-lang').value,
+    engine: (sdRegistry['sd-translate-engine-wrap'] || {}).value || 'google',
+    targetLang: (sdRegistry['sd-translate-lang-wrap'] || {}).value || 'zh-CN',
   };
   setBusy(btn, true, '保存中…');
   try {
@@ -3472,8 +4293,44 @@ async function saveTranslate() {
   } catch (e) { setBusy(btn, false); hint.textContent = '保存失败：' + (e.message || e); hint.className = 'save-hint bad'; }
 }
 
+/** 公式抽取引擎（AI | MinerU）保存。引擎选 mineru 时 mineruUrl 必填，前端预校验。 */
+async function saveFormulaEngine() {
+  const btn = $('btn-formula-engine-save');
+  const hint = $('formula-engine-hint-save');
+  const engine = (sdRegistry['sd-formula-engine-wrap'] || {}).value || 'ai';
+  const mineruUrl = $('formula-mineru-url').value.trim();
+  if (engine === 'mineru' && !mineruUrl) {
+    hint.textContent = '引擎选 MinerU 时必须填写 MinerU 服务地址';
+    hint.className = 'save-hint bad';
+    toast('请填写 MinerU 服务地址', 'error');
+    return;
+  }
+  const payload = { engine, mineruUrl };
+  setBusy(btn, true, '保存中…');
+  try {
+    const r = await PUT('/api/settings/formulas', payload);
+    setBusy(btn, false);
+    if (r.ok) { hint.textContent = '已保存，公式抽取引擎立即生效'; hint.className = 'save-hint good'; await loadSettingsData(); toast('公式引擎配置已保存'); }
+    else { hint.textContent = r.error || '保存失败'; hint.className = 'save-hint bad'; }
+  } catch (e) { setBusy(btn, false); hint.textContent = '保存失败：' + (e.message || e); hint.className = 'save-hint bad'; }
+}
+
+/** MinerU 命名提示词保存（namingPrompt，单独保存按钮，与引擎配置同页）。空串=回退默认。 */
+async function saveMineruNamingPrompt() {
+  const btn = $('btn-mineru-naming-save');
+  const hint = $('mineru-naming-hint');
+  const namingPrompt = $('mineru-naming-prompt-edit').value;
+  setBusy(btn, true, '保存中…');
+  try {
+    const r = await PUT('/api/settings/formulas', { namingPrompt });
+    setBusy(btn, false);
+    if (r.ok) { hint.textContent = '已保存，MinerU 命名提示词立即生效'; hint.className = 'save-hint good'; await loadSettingsData(); toast('MinerU 命名提示词已保存'); }
+    else { hint.textContent = r.error || '保存失败'; hint.className = 'save-hint bad'; }
+  } catch (e) { setBusy(btn, false); hint.textContent = '保存失败：' + (e.message || e); hint.className = 'save-hint bad'; }
+}
+
 async function resetSection(section, label) {
-  if (!confirm(`将「${label}」恢复为 config.json 默认？这会清除该项的运行时覆盖。`)) return;
+  if (!(await PWDialog.confirm(`将「${label}」恢复为 config.json 默认？这会清除该项的运行时覆盖。`, { title: '恢复默认', okText: '恢复默认' }))) return;
   try {
     const r = await POST('/api/settings/reset', { section });
     if (r.ok) {
@@ -3487,7 +4344,7 @@ async function resetSection(section, label) {
 
 /** 清空全部运行时覆盖。 */
 async function resetAllSettings() {
-  if (!confirm('清空全部运行时覆盖，所有设置恢复为 config.json 默认？此操作不可撤销。')) return;
+  if (!(await PWDialog.confirm('清空全部运行时覆盖，所有设置恢复为 config.json 默认？此操作不可撤销。', { title: '全部恢复默认', danger: true, okText: '全部恢复' }))) return;
   try {
     const r = await POST('/api/settings/reset', { all: true });
     if (r.ok) {
@@ -3808,7 +4665,7 @@ function taxConfirmDelete(row, it, kind) {
 async function taxBatchDelete() {
   const names = [...taxState.selected];
   if (!names.length) return toast('未选择任何项');
-  if (!confirm('删除选中的 ' + names.length + ' 个' + taxLabel(taxState.kind) + '？将从相关论文移除。')) return;
+  if (!(await PWDialog.confirm('删除选中的 ' + names.length + ' 个' + taxLabel(taxState.kind) + '？将从相关论文移除。', { title: '批量删除', danger: true, okText: '删除' }))) return;
   for (const n of names) await taxPatch(taxState.kind, { delete: n });
   toast('已删除 ' + names.length + ' 个' + taxLabel(taxState.kind));
   taxState.selected.clear();
@@ -3969,12 +4826,27 @@ function bind() {
   });
   // 输入框失焦时关补全（延迟，让点击事件先触发）
   $('search').addEventListener('blur', () => { setTimeout(closeSuggest, 200); });
-  $('filter-status').onchange = (e) => {
-    state.filter.status = e.target.value;
-    state.filter.readStatus = '';
-    state.filter.mode = '';
-    refresh();
-  };
+  // 「全部状态」自定义下拉：触发器 toggle + 菜单项点击写对应字段 + 外部关闭（仿 space-menu）
+  const statusTrig = $('filter-status-trigger');
+  if (statusTrig) statusTrig.onclick = (e) => { e.stopPropagation(); toggleStatusMenu(); };
+  document.querySelectorAll('#filter-status-menu .fsm-item').forEach((item) => {
+    item.onclick = (e) => {
+      e.stopPropagation();
+      const v = item.dataset.value;
+      const field = item.dataset.field; // ''|'status'|'readStatus'
+      // 选「全部状态」(field='') 清两个字段；否则按 field 写、清另一字段 + 清 mode（避免与侧栏视图冲突）
+      state.filter.status = field === 'status' ? v : '';
+      state.filter.readStatus = field === 'readStatus' ? v : '';
+      state.filter.mode = '';
+      renderStatusMenu();
+      closeStatusMenu();
+      refresh();
+    };
+  });
+  document.addEventListener('click', (e) => {
+    const w = $('filter-status-wrap');
+    if (w && !w.contains(e.target)) closeStatusMenu();
+  });
   const tagTrig = $('filter-tag-trigger');
   if (tagTrig) tagTrig.onclick = () => openFilterPop('tag');
   const topicTrig = $('filter-topic-trigger');
@@ -4298,9 +5170,48 @@ function bind() {
     closeDiscoverModal();
     setTimeout(refresh, 300);
   };
+  // 左上角 logo：点击回到初始页面（库视图 + 全部论文 + 清筛选/搜索/选中）
+  const brand = document.querySelector('.brand');
+  if (brand) {
+    brand.setAttribute('data-clickable', '');
+    brand.setAttribute('role', 'button');
+    brand.setAttribute('tabindex', '0');
+    brand.setAttribute('title', '回到全部论文');
+    brand.setAttribute('aria-label', '回到全部论文');
+    brand.onclick = goHome;
+    brand.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); goHome(); }
+    });
+  }
   $('btn-concepts').onclick = showConcepts;
   $('btn-concepts-close').onclick = showLibrary;
   $('concept-q').oninput = renderConcepts;
+  // 公式清单视图（v3.9，与概念视图同构）
+  $('btn-formulas').onclick = showFormulas;
+  $('btn-formulas-close').onclick = showLibrary;
+  $('formula-q').oninput = renderFormulas;
+  document.querySelectorAll('#formula-layout button').forEach((b) => {
+    b.onclick = () => {
+      _formulaLayout = b.dataset.layout;
+      localStorage.setItem('pw-formula-layout', _formulaLayout);
+      renderFormulas();
+    };
+  });
+  document.querySelectorAll('#formula-sort button').forEach((b) => {
+    b.onclick = () => {
+      _formulaSort = b.dataset.sort;
+      localStorage.setItem('pw-formula-sort', _formulaSort);
+      renderFormulas();
+    };
+  });
+  // 显示方式切换（瀑布流 / 清单），持久化用户选择
+  document.querySelectorAll('#concept-layout button').forEach((b) => {
+    b.onclick = () => {
+      _conceptLayout = b.dataset.layout;
+      localStorage.setItem('pw-concept-layout', _conceptLayout);
+      renderConcepts();
+    };
+  });
   // 排序切换（频次/字母），持久化用户选择
   document.querySelectorAll('#concept-sort button').forEach((b) => {
     b.onclick = () => {
@@ -4309,9 +5220,12 @@ function bind() {
       renderConcepts();
     };
   });
+  // 视图切换（清单/总览图），持久化用户选择
+  document.querySelectorAll('#concept-view button').forEach((b) => {
+    b.onclick = () => switchConceptView(b.dataset.view);
+  });
 
-  // 设置中心（原「提示词」入口）
-  $('btn-prompt').onclick = () => openSettings('summary'); // 顶栏「提示词」→ 设置中心·总结提示词
+  // 设置中心（统一从左下角「设置」进入）
   $('btn-settings').onclick = () => openSettings('overview'); // 左下角「设置」→ 概览
   $('btn-settings-close').onclick = showLibrary;
   // 设置 tab 导航
@@ -4323,8 +5237,8 @@ function bind() {
   $('btn-ai-test').onclick = testAiConnection;
   // 总结提示词
   $('btn-summary-prompt-save').onclick = saveSummaryPrompt;
-  $('btn-summary-prompt-default').onclick = () => {
-    if (confirm('清空当前编辑内容并恢复为内置默认总结提示词？（保存后生效）')) {
+  $('btn-summary-prompt-default').onclick = async () => {
+    if (await PWDialog.confirm('清空当前编辑内容并恢复为内置默认总结提示词？（保存后生效）', { title: '恢复默认提示词', okText: '恢复默认' })) {
       $('summary-prompt-edit').value = $('summary-prompt-default-pre').textContent || '';
       $('summary-prompt-hint').textContent = '已载入默认提示词，尚未保存';
       toast('已载入默认提示词');
@@ -4332,13 +5246,35 @@ function bind() {
   };
   // 标签/主题提示词
   $('btn-tags-prompt-save').onclick = saveTagsPrompt;
-  $('btn-tags-prompt-default').onclick = () => {
-    if (confirm('清空当前编辑内容并恢复为内置默认标签/主题提示词？（保存后生效）')) {
+  $('btn-tags-prompt-default').onclick = async () => {
+    if (await PWDialog.confirm('清空当前编辑内容并恢复为内置默认标签/主题提示词？（保存后生效）', { title: '恢复默认提示词', okText: '恢复默认' })) {
       $('tags-prompt-edit').value = $('tags-prompt-default-pre').textContent || '';
       $('tags-prompt-hint').textContent = '已载入默认提示词，尚未保存';
       toast('已载入默认提示词');
     }
   };
+  // 公式抽取提示词
+  $('btn-formula-prompt-save').onclick = saveFormulaPrompt;
+  $('btn-formula-prompt-default').onclick = async () => {
+    if (await PWDialog.confirm('清空当前编辑内容并恢复为内置默认公式提示词？（保存后生效）', { title: '恢复默认提示词', okText: '恢复默认' })) {
+      $('formula-prompt-edit').value = $('formula-prompt-default-pre').textContent || '';
+      $('formula-prompt-hint').textContent = '已载入默认提示词，尚未保存';
+      toast('已载入默认提示词');
+    }
+  };
+  // 概念抽取提示词（v3.10）
+  if ($('btn-concept-prompt-save')) $('btn-concept-prompt-save').onclick = saveConceptPrompt;
+  if ($('btn-concept-prompt-default')) {
+    $('btn-concept-prompt-default').onclick = async () => {
+      if (await PWDialog.confirm('清空当前编辑内容并恢复为内置默认概念提示词？（保存后生效）', { title: '恢复默认提示词', okText: '恢复默认' })) {
+        $('concept-prompt-edit').value = $('concept-prompt-default-pre').textContent || '';
+        $('concept-prompt-hint').textContent = '已载入默认提示词，尚未保存';
+        toast('已载入默认提示词');
+      }
+    };
+  }
+  // 概念总览图生成按钮（v3.10）
+  if ($('btn-concept-map')) $('btn-concept-map').onclick = generateConceptMap;
   // 采集：文件扫描 / arXiv / 主题发现
   $('btn-scan-save').onclick = saveScan;
   $('btn-scan-reset').onclick = () => resetSection('scan', '文件扫描');
@@ -4348,6 +5284,15 @@ function bind() {
   $('btn-discover-reset').onclick = () => resetSection('discover', '主题发现');
   $('btn-translate-save').onclick = saveTranslate;
   $('btn-translate-reset').onclick = () => resetSection('translate', '划线翻译');
+  $('btn-formula-engine-save').onclick = saveFormulaEngine;
+  $('btn-formula-engine-reset').onclick = () => resetSection('formulas', '公式抽取引擎');
+  $('btn-mineru-naming-save').onclick = saveMineruNamingPrompt;
+  if ($('btn-mineru-naming-default')) {
+    $('btn-mineru-naming-default').onclick = () => {
+      const pre = $('mineru-naming-default-pre');
+      if (pre && $('mineru-naming-prompt-edit')) $('mineru-naming-prompt-edit').value = pre.textContent;
+    };
+  }
   // 主题发现：权重三联实时占比条 + 一键归一化为 1
   ['disc-w-rel', 'disc-w-auth', 'disc-w-rec'].forEach((id) => { const el = $(id); if (el) el.oninput = renderWeightProp; });
   const wNorm = $('btn-w-norm');
@@ -4398,6 +5343,12 @@ function bind() {
   bindListSplitter();
   window.addEventListener('resize', () => applyListWidth(state.listWidth));
   $('btn-pick-cancel').onclick = () => togglePickMode(false);
+  // 批量操作下拉触发器：stopPropagation 后 toggle，document click 外部关闭（仿 space-menu）
+  const bulkTrig = $('bulk-trigger');
+  if (bulkTrig) bulkTrig.onclick = (e) => { e.stopPropagation(); toggleBulkMenu(); };
+  document.addEventListener('click', (e) => {
+    if (!$('bulk-actions').contains(e.target)) closeBulkMenu();
+  });
   // 全选/取消全选当前列表
   $('btn-pick-all').onclick = () => {
     const total = state.papers.length;
@@ -4407,102 +5358,105 @@ function bind() {
     syncPickUI();
     renderList();
   };
+  // 批量抽取概念：逐篇循环拿真实进度（批量端点是一次性 await 整批、无流式）。
+  // 后端 /api/papers/concepts 按 ids 数组处理，传单 id 等价单篇，行为与整批一致（串行 AI 调用）。
   $('btn-pick-concepts').onclick = async () => {
     const ids = [...state.selected];
     if (!ids.length) { toast('请先选择论文', 'error'); return; }
-    const btn = $('btn-pick-concepts');
-    // 进度展示：抽取是逐篇 AI 调用，可能较久。显示不确定进度条 + 「抽取中 N 篇…」。
-    const bp = $('bulk-progress'), bpText = $('bp-text'), bpFill = $('bp-fill');
-    if (bp) { bp.hidden = false; bpFill.style.width = '100%'; bpFill.classList.add('indeterminate'); }
-    if (bpText) bpText.textContent = `抽取中（${ids.length} 篇）…`;
-    setBusy(btn, true, '抽取中…');
-    $('btn-pick-cancel').disabled = true;
-    $('btn-pick-all').disabled = true;
-    $('btn-pick-delete').disabled = true;
-    $('btn-pick-retag').disabled = true;
-    $('btn-pick-resume').disabled = true;
-    const r = await POST('/api/papers/concepts', { ids });
-    setBusy(btn, false);
-    $('btn-pick-cancel').disabled = false;
-    $('btn-pick-all').disabled = false;
-    $('btn-pick-delete').disabled = false;
-    $('btn-pick-retag').disabled = false;
-    $('btn-pick-resume').disabled = false;
-    if (bp) { bp.hidden = true; bpFill.classList.remove('indeterminate'); }
-    if (r.data) toast(`完成：处理 ${r.data.processed} 篇，新增 ${r.data.added} 个概念`);
-    else toast(r.error || '抽取失败', 'error');
-    if (r.ok) togglePickMode(false);
+    setBulkBusy(true);
+    let processed = 0, added = 0, failed = 0, aborted = false;
+    try {
+      for (let i = 0; i < ids.length; i++) {
+        const r = await POST('/api/papers/concepts', { ids: [ids[i]] });
+        if (r.ok && r.data) { processed += r.data.processed || 0; added += r.data.added || 0; }
+        else failed++;
+        updateBulkProgress(i + 1, ids.length, '抽取概念');
+      }
+    } catch (e) { aborted = true; toast('抽取中断：' + (e && e.message ? e.message : '网络错误'), 'error'); }
+    finally { setBulkBusy(false); }
+    if (!aborted) {
+      if (failed) toast(`完成：处理 ${processed} 篇，新增 ${added} 个概念（${failed} 篇失败）`, failed && !processed ? 'error' : undefined);
+      else toast(`完成：处理 ${processed} 篇，新增 ${added} 个概念`);
+    }
+    togglePickMode(false);
     refresh();
   };
-  // 批量删除：确认后调 bulk-delete（后端会删文件 + 清理空 tags/topics/概念）
+  // 批量删除：确认后调 bulk-delete（后端会删文件 + 清理空 tags/topics/概念）。删除无需逐篇进度。
   $('btn-pick-delete').onclick = async () => {
     const ids = [...state.selected];
     if (!ids.length) { toast('请先选择论文', 'error'); return; }
-    if (!confirm(`删除已选的 ${ids.length} 篇论文？\n将同时删除本地 PDF 与全文文本，并清理仅被这些论文使用的标签/主题/概念。此操作不可恢复。`)) return;
-    const btn = $('btn-pick-delete');
-    setBusy(btn, true, '删除中…');
-    $('btn-pick-cancel').disabled = true;
-    $('btn-pick-all').disabled = true;
-    $('btn-pick-concepts').disabled = true;
-    $('btn-pick-retag').disabled = true;
-    $('btn-pick-resume').disabled = true;
-    const r = await POST('/api/papers/bulk-delete', { ids });
-    setBusy(btn, false);
+    if (!(await PWDialog.confirm(`删除已选的 ${ids.length} 篇论文？\n将同时删除本地 PDF 与全文文本，并清理仅被这些论文使用的标签/主题/概念。此操作不可恢复。`, { title: '批量删除论文', danger: true, okText: '删除' }))) return;
+    setBulkBusy(true, '删除中…');
+    let r;
+    try { r = await POST('/api/papers/bulk-delete', { ids }); }
+    catch (e) { setBulkBusy(false); toast('删除中断：' + (e && e.message ? e.message : '网络错误'), 'error'); refresh(); return; }
+    setBulkBusy(false);
     if (r.ok) { toast(`已删除 ${r.data.deleted} 篇`); togglePickMode(false); }
     else toast(r.error || '删除失败', 'error');
     refresh();
   };
-  // 批量重新打标：用当前标签提示词重新生成标签/主题（标签库联动增删）
+  // 批量抽取公式：逐篇循环拿真实进度（同 concepts）
+  $('btn-pick-formulas').onclick = async () => {
+    const ids = [...state.selected];
+    if (!ids.length) { toast('请先选择论文', 'error'); return; }
+    setBulkBusy(true);
+    let processed = 0, added = 0, failed = 0, aborted = false;
+    try {
+      for (let i = 0; i < ids.length; i++) {
+        const r = await POST('/api/papers/formulas', { ids: [ids[i]] });
+        if (r.ok && r.data) { processed += r.data.processed || 0; added += r.data.added || 0; }
+        else failed++;
+        updateBulkProgress(i + 1, ids.length, '抽取公式');
+      }
+    } catch (e) { aborted = true; toast('抽取中断：' + (e && e.message ? e.message : '网络错误'), 'error'); }
+    finally { setBulkBusy(false); }
+    if (!aborted) {
+      if (failed) toast(`完成：处理 ${processed} 篇，新增 ${added} 个公式（${failed} 篇失败）`, failed && !processed ? 'error' : undefined);
+      else toast(`完成：处理 ${processed} 篇，新增 ${added} 个公式`);
+    }
+    togglePickMode(false);
+    refresh();
+  };
+  // 批量重新打标：走已有的单篇端点 /api/papers/:id/retag，逐篇拿真实进度
   $('btn-pick-retag').onclick = async () => {
     const ids = [...state.selected];
     if (!ids.length) { toast('请先选择论文', 'error'); return; }
-    const btn = $('btn-pick-retag');
-    const bp = $('bulk-progress'), bpText = $('bp-text'), bpFill = $('bp-fill');
-    if (bp) { bp.hidden = false; bpFill.style.width = '100%'; bpFill.classList.add('indeterminate'); }
-    if (bpText) bpText.textContent = `打标中（${ids.length} 篇）…`;
-    setBusy(btn, true, '打标中…');
-    $('btn-pick-cancel').disabled = true;
-    $('btn-pick-all').disabled = true;
-    $('btn-pick-concepts').disabled = true;
-    $('btn-pick-delete').disabled = true;
-    $('btn-pick-resume').disabled = true;
-    const r = await POST('/api/papers/retag', { ids });
-    setBusy(btn, false);
-    $('btn-pick-cancel').disabled = false;
-    $('btn-pick-all').disabled = false;
-    $('btn-pick-concepts').disabled = false;
-    $('btn-pick-delete').disabled = false;
-    $('btn-pick-resume').disabled = false;
-    if (bp) { bp.hidden = true; bpFill.classList.remove('indeterminate'); }
-    if (r.ok) { toast(`已重新打标 ${r.data.processed} 篇`); togglePickMode(false); }
-    else toast(r.error || '重新打标失败', 'error');
+    setBulkBusy(true);
+    let okN = 0, failed = 0, aborted = false;
+    try {
+      for (let i = 0; i < ids.length; i++) {
+        const r = await POST('/api/papers/' + ids[i] + '/retag');
+        if (r.ok) okN++; else failed++;
+        updateBulkProgress(i + 1, ids.length, '重新打标');
+      }
+    } catch (e) { aborted = true; toast('打标中断：' + (e && e.message ? e.message : '网络错误'), 'error'); }
+    finally { setBulkBusy(false); }
+    if (!aborted) {
+      if (okN) toast(`已重新打标 ${okN} 篇` + (failed ? `（${failed} 篇失败）` : ''));
+      else toast('重新打标失败', 'error');
+    }
+    togglePickMode(false);
     refresh();
   };
-  // 批量重新总结：逐篇加入串行队列（processOne 会重做解析/元数据/总结/打标）
+  // 批量重新总结：逐篇加入串行队列（POST summarize 每篇独立入队，串行 pipeline 处理）
   $('btn-pick-resume').onclick = async () => {
     const ids = [...state.selected];
     if (!ids.length) { toast('请先选择论文', 'error'); return; }
-    const btn = $('btn-pick-resume');
-    setBusy(btn, true, '排队中…');
-    $('btn-pick-cancel').disabled = true;
-    $('btn-pick-all').disabled = true;
-    $('btn-pick-concepts').disabled = true;
-    $('btn-pick-delete').disabled = true;
-    $('btn-pick-retag').disabled = true;
-    // 逐篇入队（POST summarize 每篇独立入队，串行 pipeline 处理）
-    let okN = 0;
-    for (const id of ids) {
-      const r = await POST('/api/papers/' + id + '/summarize');
-      if (r.ok) okN++;
+    setBulkBusy(true);
+    let okN = 0, aborted = false;
+    try {
+      for (let i = 0; i < ids.length; i++) {
+        const r = await POST('/api/papers/' + ids[i] + '/summarize');
+        if (r.ok) okN++;
+        updateBulkProgress(i + 1, ids.length, '排队总结');
+      }
+    } catch (e) { aborted = true; toast('排队中断：' + (e && e.message ? e.message : '网络错误'), 'error'); }
+    finally { setBulkBusy(false); }
+    if (!aborted) {
+      if (okN) toast(`已把 ${okN} 篇加入重新总结队列`);
+      else toast('重新总结失败', 'error');
     }
-    setBusy(btn, false);
-    $('btn-pick-cancel').disabled = false;
-    $('btn-pick-all').disabled = false;
-    $('btn-pick-concepts').disabled = false;
-    $('btn-pick-delete').disabled = false;
-    $('btn-pick-retag').disabled = false;
-    if (okN) { toast(`已把 ${okN} 篇加入重新总结队列`); togglePickMode(false); }
-    else toast('重新总结失败', 'error');
+    togglePickMode(false);
     refresh();
   };
 
@@ -4525,7 +5479,7 @@ function bind() {
   };
   $('folder-modal-delete').onclick = async () => {
     if (!editingFolder) return;
-    if (!confirm(`删除收藏夹「${editingFolder.name}」？论文不会被删除。`)) return;
+    if (!(await PWDialog.confirm(`删除收藏夹「${editingFolder.name}」？论文不会被删除。`, { title: '删除收藏夹', danger: true, okText: '删除' }))) return;
     const r = await DEL('/api/folders/' + editingFolder.id);
     if (!r.ok) { toast(r.error || '收藏夹删除失败', 'error'); return; }
     if (state.filter.folder === editingFolder.id) state.filter.folder = '';
@@ -4763,7 +5717,7 @@ function renderSpaceAdminEdit(card, s, isDefault) {
   cancelBtn.onclick = () => renderSpaceAdmin();
   if (delBtn) {
     delBtn.onclick = async () => {
-      if (!confirm(`确认删除空间「${s.name}」？\n\n仅删除该空间的论文/标签/概念等数据，保留物理 PDF 文件夹（${s.papersDir}）。此操作不可撤销。`)) return;
+      if (!(await PWDialog.confirm(`确认删除空间「${s.name}」？\n\n仅删除该空间的论文/标签/概念等数据，保留物理 PDF 文件夹（${s.papersDir}）。此操作不可撤销。`, { title: '删除空间', danger: true, okText: '删除空间' }))) return;
       try {
         const r = await DEL('/api/spaces/' + encodeURIComponent(s.id));
         if (r && r.ok) {
@@ -5399,7 +6353,7 @@ function setSavedSearches(arr) { _savedSearches = Array.isArray(arr) ? arr : [];
 async function saveCurrentSearch() {
   const dsl = ($('search').value || '').trim();
   if (!dsl) { toast('请先输入搜索条件', 'info'); return; }
-  const name = prompt('为这个搜索命名：', dsl.slice(0, 30));
+  const name = await PWDialog.prompt('为这个搜索命名：', { title: '保存搜索', value: dsl.slice(0, 30), placeholder: '搜索名称', okText: '保存' });
   if (!name) return;
   const arr = getSavedSearches().slice();
   arr.push({ name: name.trim() || dsl.slice(0, 20), dsl, createdAt: Date.now() });

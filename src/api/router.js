@@ -1,15 +1,33 @@
 const path = require('path');
 const fs = require('fs');
-const { mergeTopics, deleteConcept, conceptsToMarkdown, addFolder, deleteFolder } = require('../core/store');
+const { mergeTopics, mergeConcepts, deleteConcept, removePaperFromConcepts, conceptsToMarkdown, addFolder, deleteFolder } = require('../core/store');
 const {
   DEFAULT_SUMMARY_PROMPT,
   DEFAULT_TAGS_PROMPT,
+  DEFAULT_FORMULA_PROMPT,
+  DEFAULT_CONCEPT_PROMPT,
+  DEFAULT_CONCEPT_MAP_PROMPT,
   applySettingsOverride,
   callChat,
   callChatStream,
   listModels,
+  extractFormulasViaEngine,
+  extractConcepts,
+  generateConceptMap,
+  INPUT_BUDGET_TASKS,
+  DEFAULT_MAX_INPUT_TOKENS,
   TRANSLATE_SYSTEM_PROMPT,
 } = require('../services/ai');
+const { DEFAULT_MINERU_NAMING_PROMPT } = require('../services/mineru');
+const {
+  normalizeFormula,
+  normalizeVariables,
+  normalizePlotHint,
+  deleteFormula,
+  removePaperFromFormulas,
+  formulasToMarkdown,
+  mergeFormulas,
+} = require('../core/formulas');
 const { sha1OfFile, parseArxivUrl, buildPaperFilename, proxyFetchJson } = require('../core/util');
 const { normalizeAnnotations } = require('../core/annotations');
 const { normalizeNoteCards } = require('../core/notes');
@@ -32,9 +50,25 @@ function aiSettingsView(effConfig) {
     model: effConfig.ai.model || '',
     apiKeyMasked: maskKey(effConfig.ai.apiKey),
     hasApiKey: !!effConfig.ai.apiKey,
+    // v3.11：输入上限以 tokens 为准（OpenAI 标准）；旧 maxInputChars 作废弃别名仍回显（兼容存量）
+    maxInputTokens: effConfig.ai.maxInputTokens ?? DEFAULT_MAX_INPUT_TOKENS,
     maxInputChars: effConfig.ai.maxInputChars ?? 24000,
     timeoutMs: effConfig.ai.timeoutMs ?? 120000,
+    // 每任务输入上限：null = 跟随全局
+    taskMaxInputTokens: taskBudgetView(effConfig.ai.taskMaxInputTokens),
+    taskMaxInputChars: taskBudgetView(effConfig.ai.taskMaxInputChars),
   };
+}
+
+/** 每任务输入上限只读视图：补齐全部任务键，未设置/非正数一律回显 null（= 跟随全局）。 */
+function taskBudgetView(raw) {
+  const src = raw && typeof raw === 'object' ? raw : {};
+  const out = {};
+  for (const t of INPUT_BUDGET_TASKS) {
+    const v = Number(src[t]);
+    out[t] = Number.isFinite(v) && v > 0 ? v : null;
+  }
+  return out;
 }
 
 /** arXiv 段只读视图（enabled 默认 true：scanner 以 `!== false` 判定开启）。 */
@@ -53,6 +87,16 @@ function translateSettingsView(t) {
   return {
     engine: t.engine || 'google',
     targetLang: t.targetLang || 'zh-CN',
+  };
+}
+
+/** formulas 段只读视图（公式抽取引擎：engine 默认 ai；mineruUrl 默认空，引擎选 mineru 时必填）。 */
+function formulasSettingsView(f) {
+  f = f || {};
+  return {
+    engine: f.engine || 'ai',
+    mineruUrl: f.mineruUrl || '',
+    namingPrompt: f.namingPrompt || '',
   };
 }
 
@@ -132,6 +176,7 @@ function summaryView(p) {
     hasNotes: !!(p.notes || (Array.isArray(p.noteCards) && p.noteCards.length)),
     summaryExcerpt: p.summary ? p.summary.slice(0, 160) : '',
     conceptCount: (p.conceptIds || []).length,
+    formulaCount: (p.formulaIds || []).length,
   };
 }
 
@@ -145,6 +190,7 @@ function detailView(p) {
     abstract: p.abstract || '',
     fulltextChars: p.fulltextChars || 0,
     conceptIds: p.conceptIds || [],
+    formulaIds: p.formulaIds || [],
     // 读取时归一化：把历史上被 JSON 写坏的 quadPoints/ink 坐标（Float32Array→{"0":..}）
     // 还原成真数组，使前端 pdf.js deserialize 能正确重建高亮/手写（自愈存量脏数据）。
     annotations: normalizeAnnotations(p.annotations) || null,
@@ -197,6 +243,8 @@ function deletePapersCleanup(store, ids, papersDir) {
     }
     store.concepts = store.concepts.filter((c) => Array.isArray(c.paperIds) && c.paperIds.length > 0);
   }
+  // 清理公式 occurrences（occurrence 清空的条目整条移除，与概念同语义）
+  for (const id of removed) removePaperFromFormulas(store, id);
   // 重新聚合标签/主题字典（从论文重建）→ 自动清除计数归零的项
   const tagSet = new Set();
   const topicSet = new Set();
@@ -628,6 +676,116 @@ function createApiRouter(ctx) {
       if (!scanner.extractConcepts) return fail(res, 501, 'scanner.extractConcepts unavailable');
       const r = await scanner.extractConcepts(spaceId, ids);
       return ok(res, r);
+    }
+
+    // POST /api/papers/formulas  body: { ids: [...] }  对选中论文重新抽取公式并归并入清单
+    if (pathname === '/api/papers/formulas' && method === 'POST') {
+      const op = JSON.parse(body || '{}');
+      const ids = Array.isArray(op.ids) ? op.ids.filter((id) => store.papers[id]) : [];
+      if (!ids.length) return fail(res, 400, 'no valid ids');
+      if (!scanner.extractFormulas) return fail(res, 501, 'scanner.extractFormulas unavailable');
+      const r = await scanner.extractFormulas(spaceId, ids);
+      return ok(res, r);
+    }
+
+    // POST /api/papers/:id/formulas/candidates  整篇公式抽取「返回候选不入库」。
+    //   阅读器右上角「抽取公式」按钮调用：走 extractFormulasViaEngine dispatcher（引擎=ai/mineru），
+    //   引擎=mineru 时 MinerU 解析 PDF + AI 批量命名一次性完成；引擎=ai 时喂全文给 LLM。
+    //   返回 { items, source }：items 形状与 mergeFormulas 入参一致；前端勾选后调 /formulas/merge 入库。
+    const formulaCands = /^\/api\/papers\/([\w.-]+)\/formulas\/candidates$/.exec(pathname);
+    if (formulaCands && method === 'POST') {
+      const id = formulaCands[1];
+      const p = store.papers[id];
+      if (!p) return fail(res, 404, 'Not found');
+      const effConfig = applySettingsOverride(config, store.settings || {});
+      const engine = (effConfig.formulas && effConfig.formulas.engine) || 'ai';
+      // MinerU 引擎需要 PDF 文件路径；AI 引擎需要全文。dispatcher 按 engine 自取所需字段
+      const ts = manager.textStoreBinder ? manager.textStoreBinder(spaceId) : null;
+      const text = ts ? (await ts.load(id).catch(() => null)) || '' : '';
+      let items = [];
+      try {
+        items = await extractFormulasViaEngine({
+          filepath: p.filepath,
+          title: p.title,
+          abstract: p.abstract,
+          fulltext: text,
+          existingFormulas: store.formulas || [],
+          config: effConfig,
+        });
+      } catch (e) {
+        return fail(res, 502, isProd ? '公式抽取失败' : `公式抽取失败：${e.message}`);
+      }
+      return ok(res, { items: Array.isArray(items) ? items : [], source: engine });
+    }
+    // POST /api/papers/:id/formulas/merge  body: { items, mode? }  把前端勾选的候选公式批量入库。
+    //   mode='replace'（重新抽取）：先 removePaperFromFormulas 清掉本篇所有公式 occurrence，再 merge。
+    //   默认（追加）：mergeFormulas（命中已有条目只补空字段，幂等）。
+    const formulaMerge = /^\/api\/papers\/([\w.-]+)\/formulas\/merge$/.exec(pathname);
+    if (formulaMerge && method === 'POST') {
+      const id = formulaMerge[1];
+      const p = store.papers[id];
+      if (!p) return fail(res, 404, 'Not found');
+      const op = JSON.parse(body || '{}');
+      const items = Array.isArray(op.items) ? op.items : [];
+      if (op.mode === 'replace') removePaperFromFormulas(store, id);
+      if (!items.length) {
+        p.formulaIds = (store.formulas || []).filter((f) => (f.occurrences || []).some((o) => o.paperId === id)).map((f) => f.id);
+        p.updatedAt = Date.now();
+        await save(store);
+        return ok(res, { added: 0 });
+      }
+      const newIds = mergeFormulas(store, items, id);
+      p.formulaIds = (store.formulas || [])
+        .filter((f) => (f.occurrences || []).some((o) => o.paperId === id))
+        .map((f) => f.id);
+      p.updatedAt = Date.now();
+      await save(store);
+      return ok(res, { added: newIds.length });
+    }
+    // POST /api/papers/:id/concepts/candidates  整篇概念抽取「返回候选不入库」（v3.10，仿公式）。
+    //   走 extractConcepts（AI 引擎，用 conceptPrompt 三级回退），返回 { items } 不入库。
+    const conceptCands = /^\/api\/papers\/([\w.-]+)\/concepts\/candidates$/.exec(pathname);
+    if (conceptCands && method === 'POST') {
+      const id = conceptCands[1];
+      const p = store.papers[id];
+      if (!p) return fail(res, 404, 'Not found');
+      const effConfig = applySettingsOverride(config, store.settings || {});
+      const ts = manager.textStoreBinder ? manager.textStoreBinder(spaceId) : null;
+      const text = ts ? (await ts.load(id).catch(() => null)) || '' : '';
+      const existingTerms = (store.concepts || []).map((c) => c.term);
+      const conceptPrompt = store.settings.conceptPrompt || config.conceptPrompt || undefined;
+      let items = [];
+      try {
+        items = await extractConcepts({
+          title: p.title, abstract: p.abstract, fulltext: text,
+          existingTerms, config: effConfig, prompt: conceptPrompt,
+        });
+      } catch (e) {
+        return fail(res, 502, isProd ? '概念抽取失败' : `概念抽取失败：${e.message}`);
+      }
+      return ok(res, { items: Array.isArray(items) ? items : [] });
+    }
+    // POST /api/papers/:id/concepts/merge  body: { items, mode? }  概念批量入库（v3.10，仿公式 merge）。
+    //   mode='replace'（重新抽取）：先 removePaperFromConcepts 清本篇，再 mergeConcepts。默认追加。
+    const conceptMerge = /^\/api\/papers\/([\w.-]+)\/concepts\/merge$/.exec(pathname);
+    if (conceptMerge && method === 'POST') {
+      const id = conceptMerge[1];
+      const p = store.papers[id];
+      if (!p) return fail(res, 404, 'Not found');
+      const op = JSON.parse(body || '{}');
+      const items = Array.isArray(op.items) ? op.items : [];
+      if (op.mode === 'replace') removePaperFromConcepts(store, id);
+      if (!items.length) {
+        p.conceptIds = (store.concepts || []).filter((c) => (c.paperIds || []).includes(id)).map((c) => c.id);
+        p.updatedAt = Date.now();
+        await save(store);
+        return ok(res, { added: 0 });
+      }
+      const newIds = mergeConcepts(store, items, id);
+      p.conceptIds = [...new Set([...(p.conceptIds || []), ...newIds])];
+      p.updatedAt = Date.now();
+      await save(store);
+      return ok(res, { added: newIds.length });
     }
 
     // POST /api/papers/:id/retag —— 单篇重新打标（用当前标签提示词）
@@ -1102,10 +1260,20 @@ function createApiRouter(ctx) {
         defaultPrompt: DEFAULT_SUMMARY_PROMPT,
         tagsPrompt: store.settings.tagsPrompt || '',
         defaultTagsPrompt: DEFAULT_TAGS_PROMPT,
+        formulaPrompt: store.settings.formulaPrompt || '',
+        defaultFormulaPrompt: DEFAULT_FORMULA_PROMPT,
+        // --- 概念抽取提示词（v3.10，三级回退，同 formulaPrompt 模式）---
+        conceptPrompt: store.settings.conceptPrompt || '',
+        defaultConceptPrompt: DEFAULT_CONCEPT_PROMPT,
+        defaultConceptMapPrompt: DEFAULT_CONCEPT_MAP_PROMPT,
         // --- 聊天预置 Prompt（@ 引用之外，输入框上方的快捷提问按钮，用户可自定义）---
         chatPresets: Array.isArray(store.settings.chatPresets) ? store.settings.chatPresets : [],
         // --- v3.2 保存的搜索预设（高级搜索命名预设，per-space）---
         savedSearches: Array.isArray(store.settings.savedSearches) ? store.settings.savedSearches : [],
+        // --- v3.10 概念总览图制品（只回显元信息，html 按需 GET 单个，避免此接口变重）---
+        conceptMaps: (Array.isArray(store.settings.conceptMaps) ? store.settings.conceptMaps : []).map((m) => ({
+          id: m.id, name: m.name, prompt: m.prompt, createdAt: m.createdAt, updatedAt: m.updatedAt,
+        })),
         // 生效 AI 配置（store.settings.ai 覆盖 config.ai 后）+ config 原值
         ai: aiSettingsView(effConfig),
         configAi: { baseURL: (config.ai && config.ai.baseURL) || '', model: (config.ai && config.ai.model) || '' },
@@ -1119,15 +1287,22 @@ function createApiRouter(ctx) {
         // --- 阅读：划线翻译（生效值 + config 原值）---
         translate: translateSettingsView(effConfig.translate),
         configTranslate: translateSettingsView(config.translate),
+        // --- 公式抽取引擎（生效值 + config 原值）：ai | mineru + MinerU 服务地址 + 命名提示词 ---
+        formulas: formulasSettingsView(effConfig.formulas),
+        configFormulas: formulasSettingsView(config.formulas),
+        defaultNamingPrompt: DEFAULT_MINERU_NAMING_PROMPT,
         // --- 哪些字段被 store.settings 覆盖（驱动「已覆盖 config」徽标 / 计数）---
         overrides: {
           ai: Object.keys(ov.ai || {}),
           arxiv: Object.keys(ov.arxiv || {}),
           discover: Object.keys(ov.discover || {}),
           translate: Object.keys(ov.translate || {}),
+          formulas: Object.keys(ov.formulas || {}),
           scan: ov.scanIntervalMinutes !== undefined,
           summaryPrompt: !!ov.summaryPrompt,
           tagsPrompt: !!ov.tagsPrompt,
+          formulaPrompt: !!ov.formulaPrompt,
+          conceptPrompt: !!ov.conceptPrompt,
         },
         // --- 系统只读（host/port 全局；papersDir 现为当前空间绑定的文件夹，可在空间管理中修改）---
         system: {
@@ -1176,6 +1351,24 @@ function createApiRouter(ctx) {
       await save(store);
       return ok(res, { tagsPrompt: store.settings.tagsPrompt });
     }
+    // PUT /api/settings/formula-prompt  body: { value }  空串=恢复默认（公式抽取提示词）
+    if (pathname === '/api/settings/formula-prompt' && method === 'PUT') {
+      const op = JSON.parse(body || '{}');
+      store.settings = store.settings || {};
+      store.settings.formulaPrompt = typeof op.value === 'string' ? op.value.trim() : '';
+      store.settings.updatedAt = Date.now();
+      await save(store);
+      return ok(res, { formulaPrompt: store.settings.formulaPrompt });
+    }
+    // PUT /api/settings/concept-prompt  body: { value }  空串=恢复默认（概念抽取提示词，v3.10）
+    if (pathname === '/api/settings/concept-prompt' && method === 'PUT') {
+      const op = JSON.parse(body || '{}');
+      store.settings = store.settings || {};
+      store.settings.conceptPrompt = typeof op.value === 'string' ? op.value.trim() : '';
+      store.settings.updatedAt = Date.now();
+      await save(store);
+      return ok(res, { conceptPrompt: store.settings.conceptPrompt });
+    }
     // PUT /api/settings/chat-presets  body: { value: [{label,prompt}] }  空数组=恢复内置默认
     //   聊天输入框上方的快捷提问按钮（用户可自定义 label/prompt）。规整：去空项、限 20 条、截断长度。
     if (pathname === '/api/settings/chat-presets' && method === 'PUT') {
@@ -1222,9 +1415,10 @@ function createApiRouter(ctx) {
       await save(store);
       return ok(res, { savedSearches: store.settings.savedSearches });
     }
-    // PUT /api/settings/ai  body: { baseURL?, apiKey?, model?, maxInputChars?, timeoutMs? }
+    // PUT /api/settings/ai  body: { baseURL?, apiKey?, model?, maxInputTokens?, maxInputChars?, timeoutMs?, taskMaxInputTokens?, taskMaxInputChars? }
     //   运行时覆盖 config.ai（写入 store.settings.ai，热生效，无需重启）。
     //   - 白名单字段，未传的不覆盖。
+    //   - v3.11：maxInputTokens（token 计，主字段）+ 旧 maxInputChars（废弃别名）并存；前端只发 tokens。
     //   - apiKey 为空串 → 清空；为掩码 '****' 或未传 → 保持原值（前端掩码回显误传保护）。
     if (pathname === '/api/settings/ai' && method === 'PUT') {
       const op = JSON.parse(body || '{}');
@@ -1233,8 +1427,23 @@ function createApiRouter(ctx) {
       const next = { ...cur };
       if (typeof op.baseURL === 'string') next.baseURL = op.baseURL.trim();
       if (typeof op.model === 'string') next.model = op.model.trim();
+      if (op.maxInputTokens != null) next.maxInputTokens = Number(op.maxInputTokens) || DEFAULT_MAX_INPUT_TOKENS;
       if (op.maxInputChars != null) next.maxInputChars = Number(op.maxInputChars) || 24000;
       if (op.timeoutMs != null) next.timeoutMs = Number(op.timeoutMs) || 120000;
+      // taskMaxInputTokens / taskMaxInputChars（每任务输入预算）：只收白名单任务键；null/空/非正数写 null（= 跟随全局）
+      const mergeTaskBudget = (field) => {
+        if (op[field] === undefined) return;
+        const src = op[field] && typeof op[field] === 'object' ? op[field] : {};
+        const t = { ...(cur[field] || {}) };
+        for (const k of INPUT_BUDGET_TASKS) {
+          if (!(k in src)) continue;
+          const v = Number(src[k]);
+          t[k] = Number.isFinite(v) && v > 0 ? Math.round(v) : null;
+        }
+        next[field] = t;
+      };
+      mergeTaskBudget('taskMaxInputTokens');
+      mergeTaskBudget('taskMaxInputChars');
       // apiKey：显式空串=清空；掩码或未传=保持原值
       if (op.apiKey === '') next.apiKey = '';
       else if (typeof op.apiKey === 'string' && op.apiKey.trim() && !/^\*+$/i.test(op.apiKey)) {
@@ -1321,6 +1530,21 @@ function createApiRouter(ctx) {
       await save(store);
       const eff = applySettingsOverride(config, store.settings);
       return ok(res, { translate: translateSettingsView(eff.translate) });
+    }
+    // PUT /api/settings/formulas  公式抽取引擎：engine=ai|mineru，mineruUrl，namingPrompt（MinerU 命名提示词）。
+    //   仿 translate 段：白名单枚举校验 + trim；空串 mineruUrl/namingPrompt=未设置（回退 config/默认）。
+    if (pathname === '/api/settings/formulas' && method === 'PUT') {
+      const op = JSON.parse(body || '{}');
+      store.settings = store.settings || {};
+      const next = { ...(store.settings.formulas || {}) };
+      if (op.engine === 'ai' || op.engine === 'mineru') next.engine = op.engine;
+      if (typeof op.mineruUrl === 'string') next.mineruUrl = op.mineruUrl.trim();
+      if (typeof op.namingPrompt === 'string') next.namingPrompt = op.namingPrompt.trim();
+      store.settings.formulas = next;
+      store.settings.updatedAt = Date.now();
+      await save(store);
+      const eff = applySettingsOverride(config, store.settings);
+      return ok(res, { formulas: formulasSettingsView(eff.formulas) });
     }
 
     // GET /api/translate?text=&engine=  划线翻译（浮窗内显示译文，不跳转外链）。
@@ -1453,7 +1677,7 @@ function createApiRouter(ctx) {
         return ok(res, { ok: true });
       }
       const section = op.section;
-      const known = ['ai', 'summaryPrompt', 'tagsPrompt', 'arxiv', 'discover', 'translate', 'scan'];
+      const known = ['ai', 'summaryPrompt', 'tagsPrompt', 'formulaPrompt', 'conceptPrompt', 'arxiv', 'discover', 'translate', 'formulas', 'scan'];
       if (!known.includes(section)) return fail(res, 400, 'unknown section: ' + section);
       if (section === 'scan') {
         delete store.settings.scanIntervalMinutes;
@@ -1518,7 +1742,74 @@ function createApiRouter(ctx) {
       res.writeHead(200, { 'Content-Type': 'text/markdown; charset=utf-8' });
       return res.end(md);
     }
-    // PATCH /api/concepts/:id { term?, definition? }
+    // ---- 概念总览图制品（v3.10）：基于概念清单 AI 生成单文件 HTML 全览图，存为可复用的制品 ----
+    // POST /api/concepts/map { prompt?, name? }  生成新总览图制品
+    if (pathname === '/api/concepts/map' && method === 'POST') {
+      const op = JSON.parse(body || '{}');
+      if (!(store.concepts || []).length) return fail(res, 400, '概念清单为空，先抽取概念再生成总览图');
+      const effConfig = applySettingsOverride(config, store.settings || {});
+      const prompt = (op.prompt && String(op.prompt).trim()) || store.settings.conceptMapPrompt || DEFAULT_CONCEPT_MAP_PROMPT;
+      let html;
+      try {
+        html = await generateConceptMap({ concepts: store.concepts, config: effConfig, prompt });
+      } catch (e) {
+        return fail(res, 502, isProd ? '总览图生成失败' : `总览图生成失败：${e.message}`);
+      }
+      store.settings.conceptMaps = store.settings.conceptMaps || [];
+      const item = {
+        id: 'cm_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+        name: String(op.name || '').trim().slice(0, 80) || '概念总览图',
+        html: String(html),
+        prompt: (op.prompt && String(op.prompt).trim()) || '',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+      store.settings.conceptMaps.unshift(item); // 新的在前
+      store.settings.conceptMaps = store.settings.conceptMaps.slice(0, 50); // 限 50 个
+      store.settings.updatedAt = Date.now();
+      await save(store);
+      return ok(res, item);
+    }
+    // PUT /api/concepts/map { id, prompt }  基于自定义 prompt 优化已有制品（传 prevHtml 让 AI 在原基础上改）
+    if (pathname === '/api/concepts/map' && method === 'PUT') {
+      const op = JSON.parse(body || '{}');
+      store.settings.conceptMaps = store.settings.conceptMaps || [];
+      const it = store.settings.conceptMaps.find((x) => x.id === op.id);
+      if (!it) return fail(res, 404, '制品不存在');
+      const effConfig = applySettingsOverride(config, store.settings || {});
+      const prompt = (op.prompt && String(op.prompt).trim()) || it.prompt || DEFAULT_CONCEPT_MAP_PROMPT;
+      let html;
+      try {
+        html = await generateConceptMap({ concepts: store.concepts, config: effConfig, prompt, prevHtml: it.html });
+      } catch (e) {
+        return fail(res, 502, isProd ? '优化失败' : `优化失败：${e.message}`);
+      }
+      it.html = String(html);
+      if (op.prompt) it.prompt = String(op.prompt).trim();
+      it.updatedAt = Date.now();
+      store.settings.updatedAt = Date.now();
+      await save(store);
+      return ok(res, it);
+    }
+    // GET/DELETE /api/concepts/map/:id  取单个制品完整 html / 删除制品
+    const conceptMapMatch = /^\/api\/concepts\/map\/([\w.-]+)$/.exec(pathname);
+    if (conceptMapMatch) {
+      store.settings.conceptMaps = store.settings.conceptMaps || [];
+      const it = store.settings.conceptMaps.find((x) => x.id === conceptMapMatch[1]);
+      if (method === 'GET') {
+        if (!it) return fail(res, 404, '制品不存在');
+        return ok(res, it);
+      }
+      if (method === 'DELETE') {
+        if (!it) return fail(res, 404, '制品不存在');
+        store.settings.conceptMaps = store.settings.conceptMaps.filter((x) => x.id !== conceptMapMatch[1]);
+        store.settings.updatedAt = Date.now();
+        await save(store);
+        return ok(res, { deleted: conceptMapMatch[1] });
+      }
+    }
+
+    // PATCH /api/concepts/:id { term?, definition?, category? }
     const conceptMatch = /^\/api\/concepts\/([\w.-]+)$/.exec(pathname);
     if (conceptMatch && method === 'PATCH') {
       const c = (store.concepts || []).find((x) => x.id === conceptMatch[1]);
@@ -1526,6 +1817,7 @@ function createApiRouter(ctx) {
       const op = JSON.parse(body || '{}');
       if (op.term) c.term = String(op.term).trim();
       if ('definition' in op) c.definition = String(op.definition).trim();
+      if ('category' in op) c.category = String(op.category || '').trim().toLowerCase() || 'other';
       c.updatedAt = Date.now();
       await save(store);
       return ok(res, c);
@@ -1536,6 +1828,56 @@ function createApiRouter(ctx) {
       if (!removed) return fail(res, 404, 'Not found');
       await save(store);
       return ok(res, { deleted: conceptMatch[1] });
+    }
+
+    // ---- 公式清单（v3.9）----
+    // GET /api/formulas (?q= / ?paper=)
+    if (pathname === '/api/formulas' && method === 'GET') {
+      let list = (store.formulas || []).slice();
+      if (q.paper) list = list.filter((f) => (f.paperIds || []).includes(q.paper));
+      if (q.q) {
+        const needle = String(q.q).toLowerCase();
+        list = list.filter((f) =>
+          [f.name, f.canonicalName, f.latex, f.description, f.category].join(' ').toLowerCase().includes(needle),
+        );
+      }
+      return ok(res, list);
+    }
+    // GET /api/formulas.md  纯 Markdown 文档（KaTeX 语法，Obsidian 可直接渲染）
+    if (pathname === '/api/formulas.md' && method === 'GET') {
+      const md = formulasToMarkdown(store);
+      res.writeHead(200, { 'Content-Type': 'text/markdown; charset=utf-8' });
+      return res.end(md);
+    }
+    // PATCH /api/formulas/:id —— 人工修订（canonicalName 不可改：它是合并 key 且派生 id）
+    const formulaMatch = /^\/api\/formulas\/([\w.-]+)$/.exec(pathname);
+    if (formulaMatch && method === 'PATCH') {
+      const f = (store.formulas || []).find((x) => x.id === formulaMatch[1]);
+      if (!f) return fail(res, 404, 'Not found');
+      const op = JSON.parse(body || '{}');
+      if (typeof op.name === 'string') f.name = op.name.trim().slice(0, 200) || f.canonicalName;
+      if (typeof op.latex === 'string') {
+        // 归一化后为空视为非法（前端清空 latex 会让卡片无内容可渲染）
+        const probe = normalizeFormula({ canonicalName: f.canonicalName, latex: op.latex });
+        if (!probe) return fail(res, 400, 'invalid latex');
+        f.latex = probe.latex;
+      }
+      if (typeof op.description === 'string') f.description = op.description.trim().slice(0, 4000);
+      if (typeof op.category === 'string') f.category = String(op.category).trim().toLowerCase().replace(/\s+/g, '-');
+      if (op.variables !== undefined) f.variables = normalizeVariables(op.variables);
+      if (op.plottable !== undefined) f.plottable = !!op.plottable;
+      if (op.plotHint !== undefined) f.plotHint = normalizePlotHint(op.plotHint);
+      f.source = 'manual';
+      f.updatedAt = Date.now();
+      await save(store);
+      return ok(res, f);
+    }
+    // DELETE /api/formulas/:id
+    if (formulaMatch && method === 'DELETE') {
+      const removed = deleteFormula(store, formulaMatch[1]);
+      if (!removed) return fail(res, 404, 'Not found');
+      await save(store);
+      return ok(res, { deleted: formulaMatch[1] });
     }
 
     // GET /api/stats
@@ -1552,6 +1894,7 @@ function createApiRouter(ctx) {
         folders: (store.folders || []).length,
         topics: (store.topics || []).length,
         concepts: (store.concepts || []).length,
+        formulas: (store.formulas || []).length,
       });
     }
 

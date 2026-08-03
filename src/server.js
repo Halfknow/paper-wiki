@@ -3,6 +3,7 @@ const fs = require('fs');
 const fsp = require('fs/promises');
 const path = require('path');
 const { mergeTags, mergeTopics, mergeConcepts, backupStoreObject } = require('./core/store');
+const { mergeFormulas } = require('./core/formulas');
 const { createMultiSpaceScanner } = require('./services/scanner');
 const { createSpaceManager } = require('./services/spaces');
 const { createDb, createRepository } = require('./db');
@@ -127,6 +128,7 @@ async function main() {
     mergeTags,
     mergeTopics,
     mergeConcepts,
+    mergeFormulas,
   };
   const scanner = createMultiSpaceScanner({ manager, deps });
   const router = createApiRouter({ manager, scanner, globalConfig: config });

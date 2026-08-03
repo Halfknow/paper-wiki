@@ -5,7 +5,7 @@
 
 ## 这是什么
 
-一个**薄**的 Web 服务：扫描论文目录 `*.pdf` → 提取全文 → 查 arXiv 补元数据 → 用 OpenAI 兼容接口生成总结/标签/主题/概念，并提供一个 Indigo 主题 SPA（列表 + 详情 tab + 独立 PDF 阅读器 + 批注 + 概念清单 + 提示词编辑）。另有**按主题发现**：输入主题 → LLM 生成 arXiv 检索式 → 多轴召回 + 引用量复合排序 → 勾选导入（SSE 流式进度）。
+一个**薄**的 Web 服务：扫描论文目录 `*.pdf` → 提取全文 → 查 arXiv 补元数据 → 用 OpenAI 兼容接口生成总结/标签/主题/概念/公式，并提供一个 Indigo 主题 SPA（列表 + 详情 tab + 独立 PDF 阅读器 + 批注 + 概念/公式清单 + 总览图制品 + 提示词编辑）。另有**按主题发现**：输入主题 → LLM 生成 arXiv 检索式 → 多轴召回 + 引用量复合排序 → 勾选导入（SSE 流式进度）。公式抽取引擎可在 AI / MinerU 间切换（v3.10）。
 
 - **零构建前端**：原生 ESM，浏览器直接加载 `public/`。
 - **PostgreSQL 持久化（v3）**：全部结构化数据 + 论文全文入 PG（`src/db/index.js` repository，hash-diff 事务保存）；内存 store 形状仍是 v2 结构，上层逻辑无感知。PDF 文件本身仍在文件系统（Docker bind mount）。
@@ -41,10 +41,13 @@ src/                   后端源码（v3.2 分层：core 纯逻辑 / db 持久�
     spaces.js  ★       空间管理器：注册表/store 走 repo；papersDir 挂载根内相对路径；
                         filepath 运行时派生；textStoreBinder；改绑三步语义 preview/apply(move|rebind)
                         + assertNoDirConflict；名↔文件夹联动（createSpace 默认同名/renameSpace 物理同步）
-    scanner.js ★       增量扫描 + 串行流水线（parse→arxiv→ai）+ extractConcepts/retag/chatPaper
+    scanner.js ★       增量扫描 + 串行流水线（parse→arxiv→ai）+ extractConcepts/extractFormulas/retag/chatPaper
                         + createMultiSpaceScanner（共享串行队列/单定时器/missing 熔断/getFuseState）
-    ai.js      ★       OpenAI 兼容调用：summarize/extractTagsTopics/extractConcepts/chatPaper
-                        （流式+多模态）+ applySettingsOverride + listModels
+    ai.js      ★       OpenAI 兼容调用：summarize/extractTagsTopics/extractConcepts/extractFormulas/chatPaper
+                        （流式+多模态）+ extractFormulasViaEngine（dispatcher：ai|mineru）+ generateConceptMap
+                        + applySettingsOverride（ai/arxiv/discover/translate/formulas 段合并）+ listModels（抓 context_length）
+                        + resolveMaxInputChars（v3.11 tokens 优先级，仍返字符预算）/ tokensToCharBudget
+    mineru.js  ★       MinerU 公式抽取客户端（v3.10）：POST /file_parse → 解析 md_content LaTeX → AI 命名
     arxiv.js   ★       Atom 解析、标题相似度匹配、PDF 下载；searchArxiv(Multi)
     discover.js ★      按主题发现：检索计划(claude→网关→原始)/多轴召回/引用量/复合排序/去重
     claude.js  ★       spawn `claude -p` 子进程（永不抛错，失败回退网关）
@@ -58,7 +61,7 @@ public/                零构建前端（原生 ESM，浏览器直接加载）
 scripts/               运维脚本：scan-once（CLI 扫描）/ migrate-json-to-pg（旧数据迁移，幂等）/
                         backfill-metadata（arXiv 元数据回填，dry-run 默认）/
                         e2e-bootstrap（e2e 种子）/ backup-pg.sh（pg_dump）
-tests/                 node --test 单测（449 例，pg-mem 无需真实 PG；chat-ui/notes-panel/regression-ui 用
+tests/                 node --test 单测（572 例，pg-mem 无需真实 PG；chat-ui/notes-panel/regression-ui 用
                         jsdom 驱动真实 app.js，共享 helpers/ui.js 的 bootUi）+ e2e（Playwright 7 例，需 dev PG）
 docs/                  设计文档（superpowers/specs+plans）+ TODO + 调研报告
 Dockerfile / docker-compose.yml / .env(.example)   部署（app+postgres；PAPERS_ROOT bind mount）
@@ -77,6 +80,8 @@ backups/ logs/         运行时产物（gitignore）：JSON 快照与归档 / �
 > `spaces`（meta + tags/topics/settings JSONB）、`papers`（PK=(space_id,id)，标量列 + JSONB 列 + extra 兜底）、
 > `paper_texts`（全文独立表）、`concepts`、`folders`、`app_state`（activeSpaceId）、`schema_migrations`。
 > v3.6 起 `papers` 增 `note_cards` jsonb 列（migration 003）；`src/core/notes.js` 为卡片纯逻辑层（normalizeNoteCards/splitMarkdownToCards）。
+> v3.9 起 `papers` 增 `formula_ids` jsonb 列 + 新表 `formulas`（migration 004）；`src/core/formulas.js` 为公式纯逻辑层。
+> v3.10 起 `concepts` 增 `category` 列（migration 005）。**注意**：`filepath`/`fulltextPath` 是运行时派生字段，不落库（见陷阱 22）。
 > **注意**：`filepath`/`fulltextPath` 是运行时派生字段，不落库（见陷阱 22）。
 
 ```jsonc
@@ -105,16 +110,22 @@ backups/ logs/         运行时产物（gitignore）：JSON 快照与归档 / �
   "tags":     [...],                       // 全局标签字典
   "topics":   [...],                       // 全局主题字典
   "folders":  [ { "id", "name", "color", "createdAt" } ],
-  "concepts": [ { "id", "term", "definition", "paperIds", "createdAt", "updatedAt" } ],
+  "concepts": [ { "id", "term", "definition", "category", "paperIds", "source", "createdAt", "updatedAt" } ],
+  "formulas": [ { "id", "canonicalName", "name", "latex", "description", "category", "variables[]", "plottable", "plotHint", "occurrences[]", "paperIds", "source", "createdAt", "updatedAt" } ],  // v3.9 公式清单
   "settings": {                       // 在线编辑的设置（见陷阱 2/3/19/20）—— 运行时覆盖 config，仅存被改过的字段
     "summaryPrompt": "...",            // 总结提示词（Markdown 自由输出）
     "tagsPrompt": "...",               // 标签/主题提示词（强制 JSON）
-    "ai": { "baseURL": "...", "apiKey": "...", "model": "...", "maxInputChars": 24000, "timeoutMs": 120000 },
+    "formulaPrompt": "...",            // 公式抽取提示词（强制 JSON，v3.9 三级回退）
+    "conceptPrompt": "...",            // 概念抽取提示词（强制 JSON，v3.10 三级回退，含 category 字段）
+    "ai": { "baseURL": "...", "apiKey": "...", "model": "...", "maxInputTokens": 32000, "timeoutMs": 120000, "taskMaxInputTokens": {...}, "maxInputChars": 24000（旧别名）, "taskMaxInputChars": {...}（旧别名） },
     "scanIntervalMinutes": 5,          // 覆盖扫描间隔（热改 → scanner.reschedule；0=关闭定时扫描）
     "arxiv": { "enabled": true, "titleSimilarityThreshold": 0.75, "minIntervalMs": 3000 },
     "discover": { "maxResults": 40, "perAxis": 25, "semanticScholar": true, "openAlex": true,
                   "recencyWindowYears": 8, "titleSimThreshold": 0.85,
                   "semanticScholarApiKey": "...", "weights": { "rel": 0.45, "auth": 0.35, "rec": 0.2 } },
+    "translate": { "engine": "google", "targetLang": "zh-CN" },  // 划线翻译
+    "formulas": { "engine": "ai", "mineruUrl": "", "namingPrompt": "" },  // v3.10 公式引擎：ai|mineru + MinerU 地址 + 命名提示词
+    "conceptMaps": [ { "id", "name", "html", "prompt", "createdAt", "updatedAt" } ],  // v3.10 概念总览图制品
     "updatedAt": 0
   }
 }
@@ -127,7 +138,7 @@ backups/ logs/         运行时产物（gitignore）：JSON 快照与归档 / �
 **物理布局**：
 ```
 PostgreSQL（compose 内 postgres 服务，pgdata volume）
-  spaces / papers / paper_texts / concepts / folders / app_state   ← 全部结构化数据 + 全文
+  spaces / papers / paper_texts / concepts / formulas / folders / app_state   ← 全部结构化数据 + 全文
 <PAPERS_ROOT>/（宿主目录 bind mount → 容器 /papers）
   default/       default 空间的 PDF（v3 起 default 也绑子目录，不绑根本身）
   <spaceId>/     其他空间（新建空间默认以 id 作子目录名）
@@ -194,6 +205,10 @@ processOne(id):                     ← 串行，避免限速
      3b. ai.extractTagsTopics(prompt = tagsPrompt 三级, jsonMode:true) → {tags,topics,metadata}
          → 写 tags（小写英文）/topics（中文，≤3）/metadata 兜底（仅标题缺失时）；独立 try/catch
   4. 规范命名   裸 ID 文件名 → buildPaperFilename「作者 等 - 年份 - 标题.pdf」并 rename（id 不变）
+  5. 概念抽取   ai.extractConcepts(prompt = conceptPrompt 三级, jsonMode:true) → mergeConcepts（按 normalizeTerm 去重，
+               命中只补空 definition/category，v3.10 起含 category 字段）
+  6. 公式抽取   extractFormulasViaEngine（dispatcher，effConfig.formulas.engine=ai|mineru；见陷阱 37）
+               → mergeFormulas（按 canonicalName 去重，命中只补空字段）；独立 try/catch 不阻塞 ready
   finally: deps.saveStore(store)   ← 单参！见下方陷阱
 
 arXiv 导入 (POST /api/import { url, meta? }):
@@ -215,7 +230,12 @@ arXiv 导入 (POST /api/import { url, meta? }):
   （全文行由 repo.saveSpaceStore 检测论文删除时连带 DELETE paper_texts）
 ```
 
-**概念增量抽取**（`scanner.extractConcepts(ids)`）：复用 textStore 里的全文，把已有 term 喂给模型只返回新概念，`mergeConcepts` 按归一化 term 去重并合并 paperIds。
+**概念增量抽取**（`scanner.extractConcepts(ids)`）：复用 textStore 里的全文，把已有 term 喂给模型只返回新概念，`mergeConcepts` 按归一化 term 去重并合并 paperIds。v3.10 起概念带 `category` 字段（11 类枚举）。
+
+**公式抽取**（`scanner.extractFormulas(ids)` + processOne 步骤 6）：走 `extractFormulasViaEngine` dispatcher（引擎=ai 喂全文 / 引擎=mineru 喂 PDF filepath）；`mergeFormulas` 按 canonicalName 去重，命中只补空字段。阅读器右上角下拉菜单支持「查看本篇/追加抽取/重新抽取（replace）」，候选端点 `POST /api/papers/:id/{formulas,concepts}/candidates` 返回不入库，勾选后 `merge {items, mode?}` 入库（见陷阱 40）。
+
+**概念总览图**（`POST /api/concepts/map`，v3.10）：把概念清单喂给 `generateConceptMap`（callChat jsonMode:false）产出单文件 HTML 全览图，存 `settings.conceptMaps` 制品数组。可基于自定义 prompt 二次优化（PUT，传 prevHtml）。
+
 
 **批注持久化**（reader.js ↔ api.js ↔ annotations.js）：前端 `annotationStorage.onSetModified` → 防抖 serialize（`doc.annotationStorage.serializable.map`）→ PATCH `{annotations:{items}}` → api.js 经 `annotations.normalizeAnnotations` 归一化后存 store。回显：open 时拿 detailView.annotations → loadAnnotations 按 pageIndex 分组 → pagerendered 后 `getPageView(i).annotationEditorLayer.annotationEditorLayer.deserialize(item)`。
 
@@ -266,7 +286,12 @@ arXiv 导入 (POST /api/import { url, meta? }):
 
 18. **总结与标签/主题必须分两次调用，不能合并**（v2.4 根因修复）：历史上二者在同一次 `response_format:json_object` 调用里返回，用户自定义总结提示词（要 Markdown 章节/LaTeX）与 JSON 硬约束冲突 → 模型返回空 `{}` → 空总结 + 空标签。现 `summarize`（jsonMode:false，自由 Markdown）与 `extractTagsTopics`（jsonMode:true，JSON）分开，各自 try/catch。**改 AI 逻辑勿合并回单次调用**。`callChat` 的 `jsonMode` 参数默认 `true`（向后兼容 extractConcepts/extractTagsTopics），`summarize` 显式传 `false`。
 
-19. **配置覆盖层（store.settings）不改 config.json，已泛化到多段**：`applySettingsOverride(config, store.settings)` 返回**新对象**，把 `store.settings` 的 `ai / scanIntervalMinutes / arxiv / discover` 合并到 config 之上（`discover.weights` 深合并），不修改原 config（保持只读语义）。scanner/api 每次调用前合成 effectiveConfig。**合并规则分两类**：`ai` 段沿用历史（`!== undefined && !== ''` 才覆盖，空串 apiKey 视为未设置）；新增段（scan/arxiv/discover）用 **`!== undefined` 即覆盖**，以正确处理布尔 `false`（如 `arxiv.enabled:false`）与数值 `0`（如 `scanIntervalMinutes:0`）——**勿对新增段套 `!== ''`，会吞掉 false/0**。`semanticScholarApiKey` 空串沿用密钥语义（不覆盖、回退 config）。`config.json` 仍启动时一次性读盘，设置改动只落 `store.settings`（papers.json），无需重启；`POST /api/settings/reset {section|all}` 删除对应覆盖回到 config 默认。
+19. **配置覆盖层（store.settings）不改 config.json，已泛化到多段**：`applySettingsOverride(config, store.settings)` 返回**新对象**，把 `store.settings` 的 `ai / scanIntervalMinutes / arxiv / discover / translate / formulas` 合并到 config 之上（`discover.weights` 深合并，`ai.taskMaxInputChars`/`ai.taskMaxInputTokens` 深合并），不修改原 config（保持只读语义）。scanner/api 每次调用前合成 effectiveConfig。**合并规则分两类**：`ai` 段沿用历史（`!== undefined && !== ''` 才覆盖，空串 apiKey 视为未设置）；新增段（scan/arxiv/discover/translate/formulas）用 **`!== undefined` 即覆盖**，以正确处理布尔 `false`（如 `arxiv.enabled:false`）与数值 `0`（如 `scanIntervalMinutes:0`）——**勿对新增段套 `!== ''`，会吞掉 false/0**。`formulas.namingPrompt`/`formulas.mineruUrl`/`semanticScholarApiKey` 空串沿用密钥语义（不覆盖、回退 config/默认）。`config.json` 仍启动时一次性读盘，设置改动只落 `store.settings`（PG spaces.settings jsonb），无需重启；`POST /api/settings/reset {section|all}` 删除对应覆盖回到 config 默认。
+
+37. **输入上限以 tokens 为准（v3.11，OpenAI 标准）**：模型上下文窗口业界以 **token** 计（gpt-4o 128K、gpt-4.1/glm-4.6 1M），旧 `maxInputChars`（字符数）已作**废弃别名**保留。`resolveMaxInputChars(config, task)` 是**单一入口**（ai.js 内所有 build*Messages 一律经它），返回**字符预算**供 `.slice(0, N)` 用——签名/返回值不变，故 build 函数零改动。优先级：`taskMaxInputTokens[task]` > `maxInputTokens` > （旧）`taskMaxInputChars[task]` > （旧）`maxInputChars` > `DEFAULT_MAX_INPUT_TOKENS`(32000)。tokens 字段命中经 `tokensToCharBudget(t)` = `t × 3.5`（中英混排安全估值，英文~4 中文~1.5，偏保守）折算成字符；旧 chars 字段命中**原值直传不折算**（存量 config.json/papers.json 兼容）。
+    - **改输入预算逻辑勿绕过 resolveMaxInputChars**：新加任务先加进 `INPUT_BUDGET_TASKS`（同步 public/app.js 的 `TASK_BUDGET_KEYS` + index.html 的 `tb-<task>` 输入）。
+    - **模型上下文窗口自动检测**：`listModels` 从上游 `/v1/models` 抓 `context_length`（OpenRouter/newapi 网关扩展字段，OpenAI 原生**不返回**——`extractContextLength` 兜底 `context_length`/`contextLength`/`max_input_tokens`/`top_provider.context_length` 四种写法，无则 null），前端模型切换器显示「模型 · 1M」徽标；网关不返回时回落手动填 `maxInputTokens`。
+    - **PUT /api/settings/ai**：前端只发 `maxInputTokens`/`taskMaxInputTokens`（旧字段不再写，但收到也不拒）；`aiSettingsView` 同时回显新旧两套字段（兼容旧前端读取）。
 
 20. **扫描间隔热改 + arxiv 必须读 effConfig**：scanner 定时器在 `createScanner` 按 `scanIntervalMs` 建一次，改 `store.settings.scanIntervalMinutes` 后必须调 `scanner.reschedule(minutes)`（`PUT /api/settings/scan` 已接线）重置定时器（0=停表），否则间隔改动不生效。另：`processOne` 的 arxiv 补全段读 **`effConfig.arxiv` 而非 `deps.config.arxiv`**（历史上读死 config → 设置面板关 arxiv / 改阈值不生效）；effConfig 在 processOne 顶部算一次，ai/arxiv/discover 共用。
 
@@ -274,7 +299,7 @@ arXiv 导入 (POST /api/import { url, meta? }):
    - **模型切换**：`GET /api/ai/models` 调上游 `/v1/models`（带 apiKey）+ 合并 `config.ai.extraModels`；前端 `localStorage('pw-chat-model')` 持久化选择，经 `?model=` 透传。**白名单校验**（src/api/router.js chat 路由）：必须 ∈ {config.ai.model} ∪ extraModels ∪ 上游 models，否则静默回退默认——**勿跳过白名单直接透传用户输入**（注入风险）。`callChat/callChatStream` 用 `chatParams.model || config.ai.model`；scanner 在有显式覆盖时持久化 `assistant.model`。
    - **视觉问答走 POST `/api/papers/:id/chat/vision`**（不是 EventSource）：EventSource 无法携带 body（图片 base64），故视觉问答用 fetch + ReadableStream 手动解析 SSE（reader.js `streamVisionFetch`）；纯文本仍走 EventSource（GET /chat）保持兼容。**改流式协议勿合并回单通道**。
    - **多模态 content**：`chatPaper` 的 `images` 选项把末尾 user 消息 `content` 从字符串升级为数组 `[{type:'text'},{type:'image_url'}]`（OpenAI 格式原样透传）。图片白名单：`data:image/*;base64,` 前缀，限 4 张（防 papers.json 膨胀）。
-   - **框选截图坐标换算**（reader.js `cropRegionToImage`）：pdf.js canvas 按 devicePixelRatio 过采样，canvas.width ≫ CSS 宽度。框选用屏幕坐标（相对 canvas-wrap），裁剪须按 `canvas.width / pageRect.width` 比例换算到 canvas 内部像素，否则截错区域。长边限 1568px（OpenAI 视觉建议）。
+   - **粘贴图片压缩**（reader.js `addImageFile`/`compressImageDataUrl`，v3.10）：输入框 `paste` 监听读 clipboard 图片 + 「图片」按钮文件选择器，转 dataURL push 进 `_chatImages`（复用 chip/视觉问答链路）。长边限 1568px 压缩（防 base64 撑大 papers.json）。原框选截图（`cropRegionToImage`）已废弃删除。
    - **前端两处聊天共用渲染**：app.js 经 `window.*` 暴露 `chatMsgHtml/chatEmptyHtml/renderChatMd/toggleModelSwitcher/getSelectedModel/loadAiModels/pwState` 给 reader.js（ESM 隔离）。改聊天渲染逻辑要同步两处。
    - **@ 引用浮层 confirmMention 顺序陷阱**：`confirmMention` 必须**先捕获 `onPick` 回调到本地变量**，再 `dispatchEvent('input')`（会触发 `handleMentionTrigger → closeChatMentionPicker()` 把 `_mentionCtx` 置 null），最后调 `onPick`。顺序反了 → 选了论文但 chip 不出现。浮层是 body 级 `position:fixed` 单例，两处聊天共用 `openChatMentionPicker/closeChatMentionPicker/handleMentionKeydown`。
 
@@ -290,7 +315,7 @@ arXiv 导入 (POST /api/import { url, meta? }):
     不得与其他空间目录相同或互相嵌套（双扫描器会 rename 竞争）。前端只能走向导，不再提供自由文本改绑。
 
 24. **jsonb 参数必须 JSON.stringify；PG TEXT 不收 NUL**：node-pg 会把 JS 数组序列化成 PG 数组字面量
-    （`{a,b}`）而非 JSON——jsonb 列直接传数组必写坏，src/db/index.js 内一律 `jstr()`。全文可能含 ` `
+    （`{a,b}`）而非 JSON——jsonb 列直接传数组必写坏，src/db/index.js 内一律 `jstr()`。全文可能含 `0000`
     （pdfjs 偶发），`savePaperText` 已剥离；绕过 repo 直写 paper_texts 会踩 `invalid byte sequence`。
 
 25. **missing 熔断**：单轮 scan 中 `missing > 5 且 > 库内 50%` 视为目录挂载失效（Docker bind mount 掉了/目录清空），
@@ -332,11 +357,11 @@ arXiv 导入 (POST /api/import { url, meta? }):
     跳过 → 笔记 tab 卡死」。聊天「存入笔记」是拷贝语义（删聊天不删卡），reader 侧先 GET fresh chat
     再存（this.paper.chat 可能滞后）。notesPrompt 三级回退同 summaryPrompt 模式。
 
-31. **阅读器键盘/Esc 事件分层**：`_onKey`（document capture）Esc 处理顺序固定：框选截图 →
+31. **阅读器键盘/Esc 事件分层**：`_onKey`（document capture）Esc 处理顺序固定：
     （typing && @浮层开 → 交给输入框 handleMentionKeydown）→ 笔记卡编辑（commitOpenEditor）→
     聊天抽屉 → 批注选中/文本浮层 →（冒泡到 app.js 全局）阅读器。app.js 全局 Esc 分支有
     `e.defaultPrevented` 守卫（内层已消费不再关阅读器/模态）。**点击 PDF 关闭未钉住抽屉**
-    （wirePdfClickClose）：豁免划词选区/选区浮窗/翻译面板/框选遮罩；pin 按钮（rcd-pin-btn，
+    （wirePdfClickClose）：豁免划词选区/选区浮窗/翻译面板；pin 按钮（rcd-pin-btn，
     localStorage 持久化）钉住后不关。改键盘交互必须保持分层，勿一键全关。
 
 32. **renderDetail 轮询重建守卫**：10s 轮询对 summary/info tab 只在 `fresh.updatedAt !==
@@ -369,9 +394,45 @@ arXiv 导入 (POST /api/import { url, meta? }):
     （曾把 fixture 写进生产根）。playwright.config.js 已显式 `PAPERS_ROOT=<repo>/papers`，
     勿移除；新增 e2e 环境变量同理要防环境泄漏。
 
+37. **公式引擎 dispatcher（v3.10）**：scanner 两处公式调用（processOne + 批量 extractFormulas）统一走
+    `deps.ai.extractFormulasViaEngine`（不是直接 `extractFormulas`）。dispatcher 按 `effConfig.formulas.engine`
+    路由：`'mineru'` 调 `require('./mineru').extractFormulas`（需 `filepath`，故 scanner 必须传 filepath），
+    其余（默认 `'ai'`）走 `extractFormulas`（用 `fulltext`）。**改公式抽取勿绕过 dispatcher 直接调 ai.extractFormulas**，
+    否则 MinerU 引擎设置失效。dispatcher 用 lazy require mineru 避免循环依赖（mineru.js 反向 require ai.callChat）。
+
+38. **MinerU 服务地址在容器内必须用 host.docker.internal（v3.10）**：MinerU 跑在宿主机（端口 8000），
+    app 容器内 `127.0.0.1` 指向容器自身 → 连不上。设置页 mineruUrl 必须填 `http://host.docker.internal:8000/file_parse`。
+    MinerU 3.4.0 的 `/file_parse` 端点 multipart 字段名是 `files`（复数，FastAPI `List[UploadFile]`），不是 `file`。
+    同步返回 `{ status, results: { "<文件名去扩展>": { md_content } } }`，公式以内联 LaTeX 出现在 md_content。
+
+39. **概念 category 引入的 hash-diff 抖动（v3.10）**：`loadSpaceStore` 末尾 `snapshots.set(spaceId, buildSnapshot(store))`
+    会用**读回的 store**（concept 带 `category:''`）覆盖快照。若内存对象（testStore push 的 concept 无 category 键）
+    与读回对象（category:''）JSON 不同 → 下次 save 误判全量重写 concept。修复：`buildSnapshot` 对 concept 走
+    `conceptToHashRow(c)`（补默认 `category:''`）稳定哈希。**给已有实体加新字段时，必须在 buildSnapshot 的 hash
+    入口同步加默认值兜底**，否则 load/save 循环会触发幽灵重写。公式已有 `normalizeFormulas` 自愈做同样的事。
+
+40. **公式/概念抽取 merge 的 replace 模式（v3.10）**：`POST /api/papers/:id/{formulas,concepts}/merge`
+    支持 `mode:'replace'`：先 `removePaperFromFormulas`/`removePaperFromConcepts` 清本篇，再 merge。
+    `removePaperFromConcepts`（store.js）语义：多论文共享的概念只删该 paperId，仅剩本篇的概念整条删
+    （同 `removePaperFromFormulas` 对 occurrences 的处理）。默认（无 mode）是追加（mergeFormulas 命中只补空字段，幂等）。
+    阅读器抽取下拉菜单「重新抽取」走 replace、「追加抽取」走默认。
+
+41. **批量动作必须 try/finally 重置 UI（v3.10）**：多选工具栏的 5 个批量动作（concepts/formulas/retag/resume/delete）
+    逐篇循环时若中途网络断（dev server 重启/连接中断），`await POST` 抛错会跳过 `setBulkBusy(false)` →
+    `.bulk-busy` 类常驻 → 进度条永久卡死。全部 5 个动作必须 try/catch/finally，catch 弹「中断」toast，
+    finally 调 `setBulkBusy(false)`。`setBulkBusy` 用 CSS `.bulk-bar.bulk-busy` 类统一禁用交互（触发器/菜单/删除键），
+    取代每个动作手动 disable 5 个按钮。
+
+42. **大产出 AI 调用必须覆盖单次超时（v3.12 根因修复）**：`callChat` 默认用 `config.ai.timeoutMs`（120s），
+    对「生成单文件 HTML」（概念总览图）这类大产出远远不够——超时 abort 会被当网络错误进 4 次指数退避重试
+    （每次再超时 120s），白耗 ~10 分钟后 502，制品永远落不了库。`callChat`/`callChatStream` 现支持
+    `chatParams.timeoutMs`（单次超时）与 `chatParams.maxRetries`（重试次数）覆盖；`generateConceptMap`
+    传 `{ timeoutMs: 600000, maxRetries: 1 }`。**新增长耗时 AI 调用（整页 HTML/长文档生成）时必须显式给
+    timeoutMs 预算并调小 maxRetries**，且前端 abort 兜底要 ≥ 后端超时（总览图两端都是 10 分钟）。
+
 ## 工程化
 
-- **测试**：`npm test`（node --test，449 例，覆盖全 lib + jsdom UI（聊天/笔记面板/回归）；db/spaces/scanner/api 用 pg-mem 无需真实 PG）；
+- **测试**：`npm test`（node --test，572 例，覆盖全 lib + jsdom UI（聊天/笔记面板/回归）；db/spaces/scanner/api 用 pg-mem 无需真实 PG）；
   `npm run test:e2e`（Playwright，reader 渲染 + 高亮往返；需 dev PG，见下）。
 - **双 PG 设计（生产 + 测试）**：`docker-compose.yml` 同时维护两个 PG，用 profile 隔离默认行为：
   - **`postgres`（生产）**：端口 `25432` → 宿主，持久卷 `pgdata`（存真实论文），`restart: unless-stopped`。`docker compose up` 默认启动，app 容器连此（`DATABASE_URL=@postgres:5432`）。
@@ -401,7 +462,7 @@ docker compose --profile test up -d postgres-test   # 启测试 PG（端口 1543
 DATABASE_URL=postgres://paperwiki:dev@127.0.0.1:15432/paperwiki npm start
 DATABASE_URL=... npm run scan      # 只扫一次，不启 HTTP
 
-npm test                  # node --test（449 例，pg-mem + jsdom，无需真实 PG）
+npm test                  # node --test（572 例，pg-mem + jsdom，无需真实 PG）
 npm run test:e2e          # Playwright 7 例（先 docker compose --profile test up -d postgres-test；默认连 15432，可用 E2E_DATABASE_URL 覆盖）
 npm run lint              # ESLint
 npm run format:check      # Prettier 检查
@@ -409,8 +470,10 @@ npm run format:check      # Prettier 检查
 
 ## 待办 / 已知限制
 
-- 概念清单去重为纯文本归一化，无语义合并提示。
+- 概念/公式去重为纯文本归一化（normalizeTerm/normalizeCanonicalName），无语义合并提示。
+- 概念总览图（conceptMaps）的 HTML 存在 settings jsonb，制品多时 GET /api/settings 体积增大（已只回显元信息规避）。
 - 写锁是进程内的（repository writeChain），靠单容器单进程守护；多副本部署需改造（advisory lock 等）。
 - 批注已实现保存+回显；写回 PDF（XFDF）待办。
 - pgvector 向量检索（语义相似推荐）未启用（schema 可平滑演进）；tsvector 全文检索已于 v3.1 上线。
+- MinerU 引擎需要单独部署 MinerU 服务（非项目自带）；引擎=mineru 时概念仍走 AI（MinerU 不抽概念）。
 - 旧 `data/` 目录已归档为 `data-legacy-20260718.zip`（gitignore）后删除；解压回 `data/` 即可重跑迁移脚本回滚。

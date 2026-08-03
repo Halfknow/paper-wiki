@@ -155,6 +155,13 @@ before(async () => {
   w.fetch = globalThis.fetch;
   globalThis.requestAnimationFrame = (fn) => setTimeout(fn, 0);
   globalThis.confirm = w.confirm = () => true;
+  // PWDialog 桩：app 已改用自定义弹窗（public/dialog.js，jsdom 剥离 <script> 后不加载），
+  // 委托到上面的 confirm 桩（固定确认）。
+  globalThis.PWDialog = w.PWDialog = {
+    confirm: (msg, opts) => Promise.resolve(globalThis.confirm(msg, opts)),
+    prompt: () => Promise.resolve(null),
+    alert: () => Promise.resolve(true),
+  };
   const clipWrites = [];
   Object.defineProperty(w.navigator, 'clipboard', { value: { writeText: async (t) => { clipWrites.push(t); } }, configurable: true });
   backend.clipWrites = clipWrites;

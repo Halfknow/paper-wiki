@@ -23,6 +23,7 @@ function sampleStore() {
     topics: ['大模型'],
     folders: [{ id: 'f1', name: 'A', color: '#fff', createdAt: 1 }],
     concepts: [{ id: 'c1', term: 'MoE', definition: 'd', paperIds: ['p1'], createdAt: 1, updatedAt: 1 }],
+    formulas: [],
     settings: { summaryPrompt: 'x' },
     papers: {
       p1: {
@@ -37,6 +38,7 @@ function sampleStore() {
         topics: [],
         folders: [],
         conceptIds: ['c1'],
+        formulaIds: [],
         readProgress: null,
         annotations: null,
         rating: 0,
@@ -595,6 +597,126 @@ test('paperToRow/rowToPaper：完整 paper roundtrip 字段保真', () => {
   }
   assert.strictEqual(back.fulltextPath, null, '废弃字段固定 null');
   assert.strictEqual(back.filepath, undefined, '派生字段不回填');
+});
+
+// ---- 公式清单持久化（v3.9） ----
+
+function sampleFormula(over = {}) {
+  return {
+    id: 'fm_abc123',
+    canonicalName: 'scaled-dot-product-attention',
+    name: '缩放点积注意力',
+    latex: '\\mathrm{softmax}(QK^\\top/\\sqrt{d_k})V',
+    description: '注意力核心式',
+    category: 'attention',
+    variables: [{ symbol: 'Q', meaning: '查询矩阵', role: 'input' }],
+    plottable: false,
+    plotHint: null,
+    occurrences: [{ paperId: 'p1', rawLatex: 'QK^T', context: '式(1)', symbolMap: { d_k: 'd' } }],
+    paperIds: ['p1'],
+    source: 'ai',
+    createdAt: 10,
+    updatedAt: 10,
+    ...over,
+  };
+}
+
+test('formulas：完整往返（jsonb 列不被写成 PG 数组字面量）', async () => {
+  const { db, repo } = await repoMem();
+  await repo.upsertSpaceMeta({ id: 's1', name: 'x', papersDir: '.', createdAt: 1, scanIntervalMinutes: 5, lastScanAt: 0 });
+  const store = sampleStore();
+  store.formulas = [sampleFormula()];
+  store.papers.p1.formulaIds = ['fm_abc123'];
+  await repo.saveSpaceStore('s1', store);
+
+  const loaded = await repo.loadSpaceStore('s1');
+  assert.strictEqual(loaded.formulas.length, 1);
+  const f = loaded.formulas[0];
+  assert.strictEqual(f.id, 'fm_abc123');
+  assert.strictEqual(f.canonicalName, 'scaled-dot-product-attention');
+  assert.strictEqual(f.latex, '\\mathrm{softmax}(QK^\\top/\\sqrt{d_k})V');
+  assert.deepStrictEqual(f.variables, [{ symbol: 'Q', meaning: '查询矩阵', role: 'input' }]);
+  assert.deepStrictEqual(f.occurrences[0].symbolMap, { d_k: 'd' });
+  assert.deepStrictEqual(f.paperIds, ['p1']);
+  assert.strictEqual(f.createdAt, 10);
+  assert.deepStrictEqual(loaded.papers.p1.formulaIds, ['fm_abc123']);
+  await db.close();
+});
+
+test('formulas：formulaIds 落 PAPER_COLS 独立列，不进 extra 兜底', async () => {
+  const { db, repo } = await repoMem();
+  await repo.upsertSpaceMeta({ id: 's1', name: 'x', papersDir: '.', createdAt: 1, scanIntervalMinutes: 5, lastScanAt: 0 });
+  const store = sampleStore();
+  store.papers.p1.formulaIds = ['fm_1', 'fm_2'];
+  await repo.saveSpaceStore('s1', store);
+  const r = await db.query("SELECT formula_ids, extra FROM papers WHERE space_id='s1' AND id='p1'");
+  assert.deepStrictEqual(r.rows[0].formula_ids, ['fm_1', 'fm_2']);
+  assert.ok(!('formulaIds' in (r.rows[0].extra || {})), 'formulaIds 不应落进 extra');
+  await db.close();
+});
+
+test('formulas：hash-diff 只写变化行；删除后行消失；重复保存零写入', async () => {
+  const { db, repo } = await repoMem();
+  await repo.upsertSpaceMeta({ id: 's1', name: 'x', papersDir: '.', createdAt: 1, scanIntervalMinutes: 5, lastScanAt: 0 });
+  const store = sampleStore();
+  store.formulas = [sampleFormula(), sampleFormula({ id: 'fm_def456', canonicalName: 'elbo', name: 'ELBO' })];
+  await repo.saveSpaceStore('s1', store);
+
+  // 无变化：零写入
+  let w = repo._stats().rowsWritten;
+  await repo.saveSpaceStore('s1', store);
+  assert.strictEqual(repo._stats().rowsWritten, w, '无变化不应写库');
+
+  // 只改一条 → 只写 1 行
+  store.formulas[1].description = '证据下界';
+  await repo.saveSpaceStore('s1', store);
+  assert.strictEqual(repo._stats().rowsWritten, w + 1, '公式变更只写 1 行');
+
+  // 删一条 → 库中行消失
+  w = repo._stats().rowsWritten;
+  store.formulas = [store.formulas[0]];
+  await repo.saveSpaceStore('s1', store);
+  assert.strictEqual(repo._stats().rowsWritten, w + 1, '公式删除只写 1 行');
+  const fr = await db.query("SELECT id FROM formulas WHERE space_id='s1'");
+  assert.deepStrictEqual(
+    fr.rows.map((r) => r.id),
+    ['fm_abc123'],
+  );
+  await db.close();
+});
+
+test('formulas：读取边界经 normalizeFormulas 自愈（脏 variables/occurrences 不炸）', async () => {
+  const { db, repo } = await repoMem();
+  await repo.upsertSpaceMeta({ id: 's1', name: 'x', papersDir: '.', createdAt: 1, scanIntervalMinutes: 5, lastScanAt: 0 });
+  await db.query(
+    `INSERT INTO formulas (space_id, id, canonical_name, name, latex, description, category,
+                           variables, plottable, plot_hint, occurrences, paper_ids, source, created_at, updated_at)
+     VALUES ('s1','fm_dirty','Dirty Name','脏数据','$$x=1$$','', '', $1, false, $2, $3, $4, 'weird', 5, 5)`,
+    [JSON.stringify(['not-an-object']), JSON.stringify({ bogus: 1 }), JSON.stringify([{ noPaperId: true }]), JSON.stringify(['ghost'])],
+  );
+  const loaded = await repo.loadSpaceStore('s1');
+  const f = loaded.formulas.find((x) => x.id === 'fm_dirty');
+  assert.ok(f);
+  assert.strictEqual(f.canonicalName, 'dirty-name'); // 归一化
+  assert.strictEqual(f.latex, 'x=1'); // $$ 剥离
+  assert.deepStrictEqual(f.variables, []); // 脏项丢弃
+  assert.strictEqual(f.plotHint, null); // 非法结构降级
+  assert.deepStrictEqual(f.occurrences, []); // 无 paperId 丢弃
+  assert.deepStrictEqual(f.paperIds, []); // 不变式重建，ghost 被清掉
+  assert.strictEqual(f.source, 'ai'); // 非法 source 兜底
+  await db.close();
+});
+
+test('deleteSpaceRow：级联删除 formulas 行', async () => {
+  const { db, repo } = await repoMem();
+  await repo.upsertSpaceMeta({ id: 's1', name: 'x', papersDir: '.', createdAt: 1, scanIntervalMinutes: 5, lastScanAt: 0 });
+  const store = sampleStore();
+  store.formulas = [sampleFormula()];
+  await repo.saveSpaceStore('s1', store);
+  await repo.deleteSpaceRow('s1');
+  const fr = await db.query("SELECT id FROM formulas WHERE space_id='s1'");
+  assert.strictEqual(fr.rows.length, 0);
+  await db.close();
 });
 
 test('hash-diff：改 concepts 只写概念行；删 folder 行消失；settings 变更经 dict 路径持久化', async () => {

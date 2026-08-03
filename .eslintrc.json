@@ -29,6 +29,7 @@
         "katex": "readonly",
         "pdfjsLib": "readonly",
         "pdfjsViewer": "readonly",
+        "PWDialog": "readonly",
         "PaperReader": "writable",
         "READER_PALETTE": "writable"
       }

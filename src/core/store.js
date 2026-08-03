@@ -12,7 +12,7 @@ function ensureDataDir(storePath) {
 }
 
 function emptyStore() {
-  return { version: 2, tags: [], topics: [], folders: [], concepts: [], settings: {}, papers: {} };
+  return { version: 2, tags: [], topics: [], folders: [], concepts: [], formulas: [], settings: {}, papers: {} };
 }
 
 /** 给单篇论文补齐 v2 字段的默认值（向后兼容老数据） */
@@ -28,6 +28,7 @@ function normalizePaper(p) {
     readProgress: p.readProgress || null,
     annotations: p.annotations || null,
     conceptIds: p.conceptIds || [],
+    formulaIds: p.formulaIds || [],
     rating,
     starred: rating > 0,
     chat: Array.isArray(p.chat) ? p.chat : [],
@@ -40,6 +41,7 @@ function migrateStore(data) {
   data.topics = data.topics || [];
   data.folders = data.folders || [];
   data.concepts = data.concepts || [];
+  data.formulas = data.formulas || [];
   data.settings = data.settings || {};
   if (!Array.isArray(data.tags)) data.tags = [];
   const papers = data.papers || {};
@@ -270,14 +272,20 @@ function normalizeTerm(t) {
     .trim();
 }
 
+/** 归一化 key → 稳定短 hash（djb31 变体）。概念 / 公式共用，保证跨论文可归并。
+ *  **输出格式不可变更**：已有概念 id（c_xxx）已落库，改算法会让全库概念失联。 */
+function stableShortHash(key) {
+  let h = 0;
+  const s = String(key || '');
+  for (let i = 0; i < s.length; i++) {
+    h = (h * 31 + s.charCodeAt(i)) | 0;
+  }
+  return Math.abs(h).toString(36).padStart(6, '0').slice(0, 8);
+}
+
 /** 生成稳定的概念 id（基于归一化 term 的短 hash），保证跨论文可归并 */
 function conceptIdFor(term) {
-  const key = normalizeTerm(term);
-  let h = 0;
-  for (let i = 0; i < key.length; i++) {
-    h = (h * 31 + key.charCodeAt(i)) | 0;
-  }
-  return 'c_' + Math.abs(h).toString(36).padStart(6, '0').slice(0, 8);
+  return 'c_' + stableShortHash(normalizeTerm(term));
 }
 
 /**
@@ -298,6 +306,8 @@ function mergeConcepts(store, items, paperId) {
     let c = existing.get(key);
     if (c) {
       if (raw.definition && !c.definition) c.definition = String(raw.definition).trim();
+      // category 只在原概念缺分类时补（不覆盖已有）
+      if (raw.category && !c.category) c.category = String(raw.category).trim().toLowerCase();
       if (paperId && !c.paperIds.includes(paperId)) c.paperIds.push(paperId);
       c.updatedAt = Date.now();
     } else {
@@ -305,6 +315,7 @@ function mergeConcepts(store, items, paperId) {
         id,
         term,
         definition: String((raw && raw.definition) || '').trim(),
+        category: String((raw && raw.category) || '').trim().toLowerCase() || 'other',
         source: 'ai',
         paperIds: paperId ? [paperId] : [],
         createdAt: Date.now(),
@@ -327,6 +338,14 @@ function deleteConcept(store, id) {
     if (Array.isArray(p.conceptIds)) p.conceptIds = p.conceptIds.filter((x) => x !== id);
   }
   return before !== store.concepts.length;
+}
+/** 把某篇论文从所有概念里移除：多论文共享的概念只删该 paperId，仅剩该篇的概念整条删除（同 removePaperFromFormulas 语义）。 */
+function removePaperFromConcepts(store, paperId) {
+  if (!Array.isArray(store.concepts)) return;
+  for (const c of store.concepts) {
+    if (Array.isArray(c.paperIds)) c.paperIds = c.paperIds.filter((x) => x !== paperId);
+  }
+  store.concepts = store.concepts.filter((c) => (c.paperIds || []).length > 0);
 }
 
 /** 创建虚拟收藏夹 */
@@ -365,6 +384,7 @@ function conceptsToMarkdown(store) {
     lines.push(`## ${ch}`);
     for (const c of byFirst.get(ch)) {
       lines.push(`### ${c.term}`);
+      if (c.category) lines.push('', `_分类：${c.category}_`);
       if (c.definition) lines.push('', c.definition);
       if (c.paperIds && c.paperIds.length) {
         const names = c.paperIds.map((id) => {
@@ -397,9 +417,11 @@ module.exports = {
   mergeTopics,
   normalizeTopic,
   normalizeTerm,
+  stableShortHash,
   conceptIdFor,
   mergeConcepts,
   deleteConcept,
+  removePaperFromConcepts,
   conceptsToMarkdown,
   addFolder,
   deleteFolder,

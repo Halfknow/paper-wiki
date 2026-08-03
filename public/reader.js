@@ -162,15 +162,8 @@ import '/vendor/pdfjs-viewer.js';
           return;
         }
         // Esc 分层关闭（必须放在 typing 提前 return 之前）：
-        // 框选截图 → @ 引用浮层（输入框自己关）→ 聊天抽屉 → 批注选中/文本浮层 → 阅读器（app.js 兜底）
+        // @ 引用浮层（输入框自己关）→ 聊天抽屉 → 批注选中/文本浮层 → 阅读器（app.js 兜底）
         if (e.key === 'Escape') {
-          // 框选截图模式最优先：取消选区（框选正是从抽屉里发起的，抽屉此时必开着）
-          if (this._visionOverlay) {
-            e.preventDefault();
-            e.stopImmediatePropagation();
-            this.endVisionSelect();
-            return;
-          }
           const typing = this.isTypingTarget(e.target || document.activeElement);
           // 焦点在输入框且 @ 浮层开着：交给输入框的 handleMentionKeydown 关浮层；
           // 它会 preventDefault，app.js 全局处理器据此跳过，不会误关阅读器。
@@ -288,7 +281,7 @@ import '/vendor/pdfjs-viewer.js';
         }
       }
       if (this.elClearBtn) this.elClearBtn.onclick = async () => {
-        if (!confirm('清空这篇论文的聊天记录？')) return;
+        if (!(await PWDialog.confirm('清空这篇论文的聊天记录？', { title: '清空聊天记录', danger: true, okText: '清空' }))) return;
         try {
           await fetch(sp('/api/papers/' + encodeURIComponent(this.paper.id)), {
             method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat: [] }),
@@ -326,6 +319,7 @@ import '/vendor/pdfjs-viewer.js';
       this.wireModelSwitcher();
       // 图表框选提问按钮（Phase 3）
       this.wireAttachButton();
+      this.wireExtractButton();
       // 抽屉拖拽拉宽 splitter
       this.wireDrawerSplitter();
       // FAB 纵向拖动 + 位置持久化
@@ -372,7 +366,7 @@ import '/vendor/pdfjs-viewer.js';
       this._pdfClickCloseWired = true;
       this.wrap.addEventListener('click', (e) => {
         if (!this._chatOpen || this._chatPinned) return;
-        if (e.target.closest('.vision-select-overlay, .reader-sel-pop, .reader-tr-panel')) return;
+        if (e.target.closest('.reader-sel-pop, .reader-tr-panel')) return;
         const sel = document.getSelection();
         if (sel && !sel.isCollapsed && this.viewerEl && this.viewerEl.contains(sel.anchorNode)) return;
         this.toggleChat(false);
@@ -441,128 +435,280 @@ import '/vendor/pdfjs-viewer.js';
       // 暴露刷新方法供 app.js loadAiModels 完成后调用（state 已注入 window）
       this._refreshModelUI = refresh;
     }
-    /** Phase 3：接线「图表」框选提问按钮。
-     *  点击进入框选模式：在 #reader-canvas-wrap 上叠加半透明遮罩 + 拖拽矩形选区，
-     *  松开后从对应 page.canvas 截取该区域为 PNG dataURL，作为附图 chip 塞进 composer。 */
+    /** 接线「图片」上传按钮 + 输入框粘贴图片。
+     *  原 v3.x 是框选截图（在 PDF canvas 上拖拽矩形裁剪），现已废弃——改为：
+     *  ① 点「图片」按钮 → 文件选择器（accept=image/*，多选）；
+     *  ② 在输入框 Ctrl+V 粘贴剪贴板图片（系统截图工具截图后粘贴）。
+     *  两条入口都把图片转 dataURL push 进 _chatImages（复用 chip/视觉问答链路）。
+     *  长边限 1568px 压缩（防 base64 撑大 papers.json，对齐 OpenAI 视觉建议）。 */
     wireAttachButton() {
       this.elAttachBtn = document.getElementById('rcd-attach-btn');
       this._chatImages = []; // 附图 dataURL 数组（随请求发送）
-      if (!this.elAttachBtn) return;
-      this.elAttachBtn.onclick = () => this.startVisionSelect();
+      // 隐藏的文件选择 input（点按钮触发）
+      this._fileInput = document.createElement('input');
+      this._fileInput.type = 'file';
+      this._fileInput.accept = 'image/*';
+      this._fileInput.multiple = true;
+      this._fileInput.style.display = 'none';
+      this._fileInput.addEventListener('change', () => {
+        const files = this._fileInput.files ? Array.from(this._fileInput.files) : [];
+        for (const f of files) this.addImageFile(f);
+        this._fileInput.value = ''; // 允许重复选同一文件
+      });
+      document.body.appendChild(this._fileInput);
+      if (this.elAttachBtn) this.elAttachBtn.onclick = () => this._fileInput.click();
+      // 输入框粘贴图片：Ctrl+V 系统截图后粘贴
+      if (this.elChatInput) {
+        this.elChatInput.addEventListener('paste', (e) => {
+          const items = e.clipboardData && e.clipboardData.items;
+          if (!items) return;
+          let added = false;
+          for (const it of items) {
+            if (it.kind === 'file' && it.type && it.type.startsWith('image/')) {
+              const blob = it.getAsFile();
+              if (blob) { this.addImageFile(blob); added = true; }
+            }
+          }
+          // 含图片时阻止默认（防图片被当 base64 文本灌进 textarea）
+          if (added) e.preventDefault();
+        });
+      }
     }
-    /** 进入框选模式：叠加遮罩 + 监听拖拽。Esc/点遮罩取消。 */
-    startVisionSelect() {
-      if (this._visionOverlay) return; // 已在框选
-      const wrap = this.wrap; // #reader-canvas-wrap
+    /** 把图片 Blob/File 转 dataURL（长边限 1568 压缩）后加入 _chatImages + 刷新 chip。 */
+    addImageFile(file) {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const dataURL = String(reader.result || '');
+        if (!dataURL) return;
+        this.compressImageDataUrl(dataURL, 1568).then((compressed) => {
+          this._chatImages.push(compressed);
+          this.renderAttachChips();
+          this.setStatus('已添加图片，输入问题后发送（视觉问答）');
+          this.toggleChat(true);
+        });
+      };
+      reader.readAsDataURL(file);
+    }
+    /** dataURL 图片长边 > maxEdge 时按比例缩到 maxEdge（PNG/JPEG 重编码），否则原样返回。
+     *  防系统截图分辨率过高导致 base64 撑大 papers.json。 */
+    compressImageDataUrl(dataURL, maxEdge) {
+      return new Promise((resolve) => {
+        const img = new Image();
+        img.onload = () => {
+          const w = img.naturalWidth, h = img.naturalHeight;
+          if (Math.max(w, h) <= maxEdge) return resolve(dataURL); // 无需压缩
+          const k = maxEdge / Math.max(w, h);
+          const outW = Math.round(w * k), outH = Math.round(h * k);
+          const c = document.createElement('canvas');
+          c.width = outW; c.height = outH;
+          c.getContext('2d').drawImage(img, 0, 0, outW, outH);
+          try { resolve(c.toDataURL('image/png')); } catch { resolve(dataURL); }
+        };
+        img.onerror = () => resolve(dataURL); // 解码失败原样返回
+        img.src = dataURL;
+      });
+    }
+    /** 接线右上角「抽取公式」按钮：调 /formulas/candidates（跟随设置页引擎）→ 弹候选勾选浮层
+     *  → 确认后 /formulas/merge 入库。 */
+    /** 接线公式/概念抽取下拉菜单（rb-right 两个按钮，每个点击弹菜单：查看本篇/追加抽取/重新抽取）。 */
+    wireExtractButton() {
+      const fb = document.getElementById('reader-extract-formulas');
+      const cb = document.getElementById('reader-extract-concepts');
+      if (fb) fb.onclick = (e) => { e.stopPropagation(); this.toggleExtractMenu('formula'); };
+      if (cb) cb.onclick = (e) => { e.stopPropagation(); this.toggleExtractMenu('concept'); };
+      // 点外部关菜单
+      document.addEventListener('click', (e) => {
+        document.querySelectorAll('.reader-extract-menu').forEach((m) => {
+          if (!m.contains(e.target)) m.remove();
+        });
+      });
+    }
+    /** 切换抽取下拉菜单（kind='formula'|'concept'）。显示本篇已抽取数量。 */
+    async toggleExtractMenu(kind) {
+      const wrap = document.getElementById('rb-extract-' + kind + 's-wrap');
       if (!wrap) return;
-      const overlay = document.createElement('div');
-      overlay.className = 'vision-select-overlay';
-      overlay.innerHTML = '<div class="vs-hint">在图表上拖拽框选区域 · Esc 取消</div><div class="vs-rect" hidden></div>';
-      wrap.appendChild(overlay);
-      this._visionOverlay = overlay;
-      const rect = overlay.querySelector('.vs-rect');
-      const hint = overlay.querySelector('.vs-hint');
-      let startX = 0, startY = 0, dragging = false;
-      overlay.setPointerCapture && overlay.addEventListener('pointerdown', (e) => {
-        e.preventDefault();
-        dragging = true;
-        try { overlay.setPointerCapture(e.pointerId); } catch {}
-        const wrapRect = wrap.getBoundingClientRect();
-        startX = e.clientX - wrapRect.left;
-        startY = e.clientY - wrapRect.top;
-        rect.style.left = startX + 'px';
-        rect.style.top = startY + 'px';
-        rect.style.width = '0px';
-        rect.style.height = '0px';
-        rect.hidden = false;
-        if (hint) hint.style.display = 'none';
-      });
-      overlay.addEventListener('pointermove', (e) => {
-        if (!dragging) return;
-        const wrapRect = wrap.getBoundingClientRect();
-        const curX = Math.max(0, Math.min(wrapRect.width, e.clientX - wrapRect.left));
-        const curY = Math.max(0, Math.min(wrapRect.height, e.clientY - wrapRect.top));
-        const left = Math.min(startX, curX);
-        const top = Math.min(startY, curY);
-        rect.style.left = left + 'px';
-        rect.style.top = top + 'px';
-        rect.style.width = Math.abs(curX - startX) + 'px';
-        rect.style.height = Math.abs(curY - startY) + 'px';
-      });
-      overlay.addEventListener('pointerup', (e) => {
-        if (!dragging) return;
-        dragging = false;
-        try { overlay.releasePointerCapture(e.pointerId); } catch {}
-        const wrapRect = wrap.getBoundingClientRect();
-        const curX = Math.max(0, Math.min(wrapRect.width, e.clientX - wrapRect.left));
-        const curY = Math.max(0, Math.min(wrapRect.height, e.clientY - wrapRect.top));
-        const left = Math.min(startX, curX);
-        const top = Math.min(startY, curY);
-        const w = Math.abs(curX - startX);
-        const h = Math.abs(curY - startY);
-        // 太小的选区视为误触，取消
-        if (w < 20 || h < 20) { this.endVisionSelect(); return; }
-        try { this.cropRegionToImage(left, top, w, h); } catch (err) { this.setStatus('截图失败：' + (err && err.message), true); }
-        this.endVisionSelect();
-      });
-      // 点遮罩空白处（非拖拽）取消
-      overlay.addEventListener('click', (e) => { if (e.target === overlay) this.endVisionSelect(); });
-      // Esc 取消（吞掉事件，避免冒泡到 app.js 连带关掉阅读器）
-      this._visionKey = (e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopImmediatePropagation(); this.endVisionSelect(); } };
-      document.addEventListener('keydown', this._visionKey, true);
-    }
-    endVisionSelect() {
-      if (this._visionOverlay) { this._visionOverlay.remove(); this._visionOverlay = null; }
-      if (this._visionKey) { document.removeEventListener('keydown', this._visionKey, true); this._visionKey = null; }
-    }
-    /** 从 PDF page.canvas 截取屏幕坐标 [left,top,w,h]（相对 canvas-wrap）的区域为 PNG dataURL。
-     *  定位选区下覆盖的 page：遍历 viewerEl 的 .page，取与选区中心相交的那个。
-     *  canvas 内部分辨率 != CSS 像素（pdf.js 按 devicePixelRatio 过采样），需按比例换算裁剪坐标。 */
-    cropRegionToImage(left, top, w, h) {
-      const pages = this.viewerEl.querySelectorAll('.page');
-      if (!pages.length) throw new Error('PDF 未渲染');
-      const wrapRect = this.wrap.getBoundingClientRect();
-      const cx = left + w / 2;
-      const cy = top + h / 2;
-      // 选区中心所在的 page
-      let targetPage = null;
-      for (const pg of pages) {
-        const r = pg.getBoundingClientRect();
-        const localX = r.left - wrapRect.left;
-        const localY = r.top - wrapRect.top;
-        if (cx >= localX && cx <= localX + r.width && cy >= localY && cy <= localY + r.height) { targetPage = pg; break; }
+      // 已开则关
+      const existing = wrap.querySelector('.reader-extract-menu');
+      if (existing) { existing.remove(); return; }
+      // 关其它菜单
+      document.querySelectorAll('.reader-extract-menu').forEach((m) => m.remove());
+      // 查本篇已抽取数量
+      const id = this.paper && this.paper.id;
+      let count = 0;
+      if (id) {
+        try {
+          const r = await fetch(window.sp('/api/' + kind + 's?paper=' + encodeURIComponent(id))).then((x) => x.json());
+          count = (r && r.data && Array.isArray(r.data)) ? r.data.length : (r && Array.isArray(r.data) ? r.data.length : 0);
+        } catch {}
       }
-      if (!targetPage) throw new Error('请框选在页面范围内');
-      const canvas = targetPage.querySelector('canvas');
-      if (!canvas) throw new Error('页面未渲染（请等待加载完成）');
-      const pageRect = targetPage.getBoundingClientRect();
-      // 选区相对 page 的 CSS 坐标
-      const selLeftInPage = left - (pageRect.left - wrapRect.left);
-      const selTopInPage = top - (pageRect.top - wrapRect.top);
-      // CSS → canvas 内部像素（pdf.js canvas.width 可能远大于 CSS 宽度）
-      const scaleX = canvas.width / pageRect.width;
-      const scaleY = canvas.height / pageRect.height;
-      const sx = Math.max(0, Math.floor(selLeftInPage * scaleX));
-      const sy = Math.max(0, Math.floor(selTopInPage * scaleY));
-      const sw = Math.min(canvas.width - sx, Math.max(1, Math.floor(w * scaleX)));
-      const sh = Math.min(canvas.height - sy, Math.max(1, Math.floor(h * scaleY)));
-      // 限制输出尺寸（避免巨图撑爆 base64 / 请求体）；长边 ≤ 1568（OpenAI 视觉建议）
-      const MAX_EDGE = 1568;
-      let outW = sw, outH = sh;
-      if (Math.max(sw, sh) > MAX_EDGE) {
-        const k = MAX_EDGE / Math.max(sw, sh);
-        outW = Math.round(sw * k); outH = Math.round(sh * k);
+      const label = kind === 'formula' ? '公式' : '概念';
+      const menu = document.createElement('div');
+      menu.className = 'reader-extract-menu';
+      menu.innerHTML =
+        '<button class="rem-item" type="button" data-act="view">查看本篇' + label + (count ? '（' + count + '）' : '') + '</button>' +
+        '<button class="rem-item" type="button" data-act="append">' + (count ? '追加抽取' + label : '抽取' + label) + '</button>' +
+        (count ? '<button class="rem-item danger" type="button" data-act="replace">重新抽取（替换本篇）</button>' : '');
+      wrap.appendChild(menu);
+      const close = () => menu.remove();
+      menu.querySelector('[data-act="view"]').onclick = () => { close(); this.viewPaperExtracts(kind); };
+      menu.querySelector('[data-act="append"]').onclick = () => { close(); this.extractPaper(kind, 'append'); };
+      const rep = menu.querySelector('[data-act="replace"]');
+      if (rep) rep.onclick = () => { close(); this.extractPaper(kind, 'replace'); };
+    }
+    /** 查看本篇已抽取（GET ?paper=id → 只读浮层，底部快捷「追加抽取/重新抽取」）。 */
+    async viewPaperExtracts(kind) {
+      const id = this.paper && this.paper.id;
+      if (!id) return;
+      const label = kind === 'formula' ? '公式' : '概念';
+      this.setStatus('加载本篇' + label + '…');
+      let r;
+      try {
+        r = await fetch(window.sp('/api/' + kind + 's?paper=' + encodeURIComponent(id))).then((x) => x.json());
+      } catch (e) { this.setStatus('加载失败：' + (e && e.message), true); return; }
+      this.setStatus('');
+      const items = (r && Array.isArray(r.data)) ? r.data : [];
+      if (!items.length) { this.setStatus('本篇暂无' + label + '，点按钮抽取'); return; }
+      this.showExtractCandidates(kind, id, items, { mode: 'view' });
+    }
+    /** 整篇抽取（candidates → 勾选浮层 → merge）。mode='append'（追加，默认）|'replace'（重新，先清本篇）。 */
+    async extractPaper(kind, mode) {
+      const id = this.paper && this.paper.id;
+      if (!id) return;
+      const btn = document.getElementById('reader-extract-' + kind + 's');
+      const label = kind === 'formula' ? '公式' : '概念';
+      const busyKey = '_extractBusy_' + kind;
+      if (this[busyKey]) return;
+      this[busyKey] = true;
+      if (btn) { btn.setAttribute('aria-busy', 'true'); btn.classList.add('busy'); }
+      this.setStatus('正在抽取本篇' + label + '…（' + (mode === 'replace' ? '替换模式' : '追加') + '，约需 30 秒-3 分钟）');
+      let r;
+      try {
+        r = await fetch(window.sp('/api/papers/' + encodeURIComponent(id) + '/' + kind + 's/candidates'), {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+        }).then((x) => x.json());
+      } catch (e) {
+        this[busyKey] = false;
+        if (btn) { btn.removeAttribute('aria-busy'); btn.classList.remove('busy'); }
+        this.setStatus('抽取失败：' + (e && e.message), true);
+        return;
       }
-      const out = document.createElement('canvas');
-      out.width = outW; out.height = outH;
-      const ctx = out.getContext('2d');
-      ctx.drawImage(canvas, sx, sy, sw, sh, 0, 0, outW, outH);
-      const dataURL = out.toDataURL('image/png');
-      this._chatImages = this._chatImages || [];
-      this._chatImages.push(dataURL);
-      this.renderAttachChips();
-      this.setStatus('已截图，输入问题后发送（视觉问答）');
-      this.toggleChat(true);
+      this[busyKey] = false;
+      if (btn) { btn.removeAttribute('aria-busy'); btn.classList.remove('busy'); }
+      if (!r || !r.ok) { this.setStatus((r && r.error) || '抽取失败', true); return; }
+      const items = (r.data && r.data.items) || [];
+      this.setStatus('');
+      if (!items.length) { this.setStatus('未识别到' + label); return; }
+      this.showExtractCandidates(kind, id, items, { mode, source: r.data.source });
+    }
+    /** 通用候选/查看浮层（kind='formula'|'concept'）。
+     *  - mode='view'：只读（已抽取列表，底部「追加抽取/重新抽取」快捷按钮）。
+     *  - mode='append'|'replace'：可勾选编辑（KaTeX 渲染 + 名称可改），底部「加入清单」（replace 提示会替换）。 */
+    showExtractCandidates(kind, paperId, items, opts) {
+      const { mode, source } = opts || {};
+      const label = kind === 'formula' ? '公式' : '概念';
+      document.querySelectorAll('.formula-candidates-pop').forEach((n) => n.remove());
+      const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+      const pop = document.createElement('div');
+      pop.className = 'formula-candidates-pop';
+      const renderKatex = (latex) => {
+        try { return window.katex ? window.katex.renderToString(latex || '', { displayMode: false, throwOnError: false }) : ''; } catch { return ''; }
+      };
+      const rows = items.map((f, i) => {
+        const name = kind === 'formula' ? (f.name || f.canonicalName || '') : (f.term || '');
+        if (kind === 'formula') {
+          let rendered = renderKatex(f.latex);
+          if (!rendered) rendered = '<code>' + esc(f.latex) + '</code>';
+          return '<label class="fcp-row">' +
+            '<input type="checkbox" data-i="' + i + '" ' + (mode === 'view' ? 'disabled' : 'checked') + ' />' +
+            '<span class="fcp-latex">' + rendered + '</span>' +
+            (mode === 'view' ? '<span class="fcp-readonly-name">' + esc(name) + '</span>' : '<input class="fcp-name" data-i="' + i + '" value="' + esc(name) + '" placeholder="名称" /><input class="fcp-canon" data-i="' + i + '" value="' + esc(f.canonicalName || '') + '" placeholder="canonicalName" />') +
+            '</label>';
+        }
+        // 概念行：term + definition + category
+        return '<label class="fcp-row fcp-concept">' +
+          '<input type="checkbox" data-i="' + i + '" ' + (mode === 'view' ? 'disabled' : 'checked') + ' />' +
+          '<div class="fcp-concept-main">' +
+            (mode === 'view' ? '<span class="fcp-readonly-name">' + esc(name) + (f.category && f.category !== 'other' ? ' · ' + esc(f.category) : '') + '</span>' : '<input class="fcp-name fcp-term" data-i="' + i + '" value="' + esc(name) + '" placeholder="术语" />') +
+          '<span class="fcp-def">' + esc(f.definition || '（无解释）') + '</span>' +
+          '</div></label>';
+      }).join('');
+      const titleText = mode === 'view' ? ('本篇 ' + items.length + ' 个' + label) : ('抽取到 ' + items.length + ' 个' + label + (source ? '（' + esc(source) + '）' : ''));
+      const subText = mode === 'view' ? '已入库的' + label + '（只读）' : ('勾选要' + (mode === 'replace' ? '替换入库的' : '加入清单的') + '，可改名称');
+      let footer;
+      if (mode === 'view') {
+        footer = '<div class="fcp-actions"><span class="fcp-count">' + items.length + ' 个</span>' +
+          '<button class="btn ghost sm" data-fcp-append type="button">追加抽取</button>' +
+          '<button class="btn ghost sm danger" data-fcp-replace type="button">重新抽取</button></div>';
+      } else {
+        footer = '<div class="fcp-toolbar"><label class="fcp-all"><input type="checkbox" id="fcp-all" checked /> 全选</label></div>' +
+          '<div class="fcp-actions"><span class="fcp-count" id="fcp-count"></span>' +
+          '<button class="btn sm" id="fcp-merge" type="button">' + (mode === 'replace' ? '替换入库' : '加入清单') + '</button></div>';
+      }
+      pop.innerHTML =
+        '<div class="fcp-head"><strong>' + titleText + '</strong>' +
+        '<span class="fcp-sub">' + subText + '</span>' +
+        '<button class="fcp-x" type="button" aria-label="关闭">×</button></div>' +
+        '<div class="fcp-list">' + rows + '</div>' +
+        footer;
+      document.body.appendChild(pop);
+      const close = () => pop.remove();
+      pop.querySelector('.fcp-x').onclick = close;
+      // view 模式：底部快捷按钮触发抽取
+      if (mode === 'view') {
+        const ap = pop.querySelector('[data-fcp-append]');
+        const rp = pop.querySelector('[data-fcp-replace]');
+        if (ap) ap.onclick = () => { close(); this.extractPaper(kind, 'append'); };
+        if (rp) rp.onclick = () => { close(); this.extractPaper(kind, 'replace'); };
+      } else {
+        // append/replace：勾选 + 入库
+        const checkboxes = [...pop.querySelectorAll('.fcp-row input[type=checkbox]')];
+        const allBox = pop.querySelector('#fcp-all');
+        const countEl = pop.querySelector('#fcp-count');
+        const mergeBtn = pop.querySelector('#fcp-merge');
+        const updateCount = () => {
+          const n = checkboxes.filter((c) => c.checked).length;
+          if (countEl) countEl.textContent = '已选 ' + n + ' / ' + items.length;
+          if (mergeBtn) mergeBtn.disabled = n === 0;
+        };
+        if (allBox) allBox.onchange = () => { checkboxes.forEach((c) => { c.checked = allBox.checked; }); updateCount(); };
+        checkboxes.forEach((c) => { c.onchange = updateCount; });
+        updateCount();
+        mergeBtn.onclick = async () => {
+          const chosen = [];
+          checkboxes.forEach((c) => {
+            if (!c.checked) return;
+            const i = Number(c.dataset.i);
+            const nameInp = pop.querySelector('.fcp-name[data-i="' + i + '"]');
+            const orig = items[i] || {};
+            if (kind === 'formula') {
+              const canonInp = pop.querySelector('.fcp-canon[data-i="' + i + '"]');
+              chosen.push({ ...orig, name: (nameInp && nameInp.value.trim()) || orig.name || orig.canonicalName, canonicalName: (canonInp && canonInp.value.trim()) || orig.canonicalName });
+            } else {
+              chosen.push({ ...orig, term: (nameInp && nameInp.value.trim()) || orig.term });
+            }
+          });
+          if (!chosen.length) return;
+          mergeBtn.disabled = true;
+          mergeBtn.textContent = '入库中…';
+          try {
+            const body = { items: chosen };
+            if (mode === 'replace') body.mode = 'replace';
+            const r = await fetch(window.sp('/api/papers/' + encodeURIComponent(paperId) + '/' + kind + 's/merge'), {
+              method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+            }).then((x) => x.json());
+            if (r && r.ok) { this.setStatus('已' + (mode === 'replace' ? '替换' : '加入') + ' ' + (r.data && r.data.added != null ? r.data.added : chosen.length) + ' 个' + label); close(); }
+            else { this.setStatus((r && r.error) || '入库失败', true); mergeBtn.disabled = false; mergeBtn.textContent = mode === 'replace' ? '替换入库' : '加入清单'; }
+          } catch (e) {
+            this.setStatus('入库失败：' + (e && e.message), true);
+            mergeBtn.disabled = false; mergeBtn.textContent = mode === 'replace' ? '替换入库' : '加入清单';
+          }
+        };
+      }
+      // 点浮层外关闭
+      setTimeout(() => {
+        const off = (e) => { if (!pop.contains(e.target)) { close(); document.removeEventListener('mousedown', off, true); } };
+        document.addEventListener('mousedown', off, true);
+      }, 0);
     }
     /** 渲染附图 chip 行（composer context 容器内，可移除）。 */
     renderAttachChips() {
@@ -675,21 +821,22 @@ import '/vendor/pdfjs-viewer.js';
       }, query, atIdx);
     }
     closeMentionPop() { const W = window; if (W.closeChatMentionPicker) W.closeChatMentionPicker(); }
-    /** 注入参数浮层按钮（rcd-actions）+ 浮层（复用 app.js 的 wireChatParamsShell / CHAT_PARAM_FIELDS）。 */
+    /** 注入参数浮层按钮（composer-right 内，模型按钮左侧）+ 浮层（复用 app.js 的 wireChatParamsShell / CHAT_PARAM_FIELDS）。 */
     injectParamsButton() {
       if (this.elParamsBtn || !this.elChatDrawer) return;
       const W = window;
       if (!W.CHAT_PARAM_FIELDS || !W.getChatParams) return; // app.js 未就绪则跳过
-      const actions = this.elChatDrawer.querySelector('.rcd-actions');
-      const closeBtn = this.elChatDrawer.querySelector('#reader-chat-close');
-      if (!actions || !closeBtn) return;
+      // 放到 composer-right 内、模型按钮之前（模型按钮左侧），与模型/发送同组
+      const right = this.elChatDrawer.querySelector('.chat-composer-right');
+      const modelBtn = this.elChatDrawer.querySelector('#rcd-model-btn');
+      if (!right || !modelBtn) return;
       const btn = document.createElement('button');
       btn.className = 'chat-params-btn rcd-params-btn';
       btn.id = 'rcd-params-btn';
       btn.type = 'button';
       btn.title = '模型参数';
       btn.innerHTML = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg><span class="cp-badge"></span>';
-      actions.insertBefore(btn, closeBtn);
+      right.insertBefore(btn, modelBtn);
       this.elParamsBtn = btn;
       // 浮层
       const pop = document.createElement('div');
@@ -969,9 +1116,7 @@ import '/vendor/pdfjs-viewer.js';
         const regenerable = i === msgs.length - 1 && m.role === 'assistant';
         return W.chatMsgHtml ? W.chatMsgHtml(m, i, { regenerable }) : this.chatMsgHtml(m, i);
       }).join('');
-      // 加滚动到底部 FAB
-      const fab = '<button class="scroll-bottom-btn" id="reader-chat-scroll-bottom" title="滚动到底部" aria-label="滚动到底部"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M19 12l-7 7-7-7"/></svg></button>';
-      this.elChatList.innerHTML = html + fab;
+      this.elChatList.innerHTML = html;
       this.elChatList.scrollTop = this.elChatList.scrollHeight;
       this.wireDrawerExtras();
     }
@@ -987,19 +1132,28 @@ import '/vendor/pdfjs-viewer.js';
       const mi = i != null ? ` data-mi="${i}"` : '';
       return `<div class="chat-msg ${m.role}"${mi}><div class="chat-bubble">${content}</div></div>`;
     }
-    /** 接线抽屉的滚动FAB + 消息操作（复制/重新生成/编辑/删除/显示原文）+ 代码块复制/展开 */
+    /** 接线抽屉的滚动FAB + 消息操作（复制/重新生成/编辑/删除/显示原文）+ 代码块复制/展开。
+     *  FAB 现在是 .rcd-input-row 的静态兄弟节点（脱离滚动流、浮在输入框上方），
+     *  故从 drawer 查询；scroll 监听与 click 一次性 wire（dataset.fabWired 守卫，
+     *  避免 renderChatList 每次重渲都重复绑定累积监听器）。 */
     async wireDrawerExtras() {
       const list = this.elChatList;
       if (!list) return;
-      const fab = list.querySelector('#reader-chat-scroll-bottom');
-      if (fab) {
+      const drawer = this.elChatDrawer;
+      const fab = drawer && drawer.querySelector('#reader-chat-scroll-bottom');
+      if (fab && !fab.dataset.fabWired) {
+        fab.dataset.fabWired = '1';
         const update = () => {
           const near = list.scrollHeight - list.scrollTop - list.clientHeight < 200;
           fab.classList.toggle('show', !near && list.scrollHeight > list.clientHeight + 50);
         };
         list.addEventListener('scroll', update, { passive: true });
-        update();
         fab.onclick = () => list.scrollTo({ top: list.scrollHeight, behavior: 'smooth' });
+      }
+      // 立即反映当前滚动状态（renderChatList 后内容变长，FAB 可能需要显示）
+      if (fab) {
+        const near = list.scrollHeight - list.scrollTop - list.clientHeight < 200;
+        fab.classList.toggle('show', !near && list.scrollHeight > list.clientHeight + 50);
       }
       // 消息操作 + 代码块操作（事件委托）
       if (!list.dataset.wired) {
@@ -1069,7 +1223,7 @@ import '/vendor/pdfjs-viewer.js';
             if (!msg) return;
             const cut = [mi];
             if (msg.role === 'user' && chat[mi + 1] && chat[mi + 1].role === 'assistant') cut.push(mi + 1);
-            if (!confirm('删除这条消息？' + (cut.length > 1 ? '（及其回复也会删除）' : ''))) return;
+            if (!(await PWDialog.confirm('删除这条消息？' + (cut.length > 1 ? '（及其回复也会删除）' : ''), { title: '删除消息', danger: true, okText: '删除' }))) return;
             const next = chat.filter((_, idx) => !cut.includes(idx));
             try {
               await fetch(sp('/api/papers/' + encodeURIComponent(this.paper.id)), {
@@ -1451,10 +1605,7 @@ import '/vendor/pdfjs-viewer.js';
       const mi = list.querySelectorAll('.chat-msg').length;
       const W = window;
       const html = W.chatMsgHtml ? W.chatMsgHtml(m, mi) : this.chatMsgHtml(m, mi);
-      // 保留 FAB（若存在）
-      const fab = list.querySelector('.scroll-bottom-btn');
-      if (fab) fab.insertAdjacentHTML('beforebegin', html);
-      else list.insertAdjacentHTML('beforeend', html);
+      list.insertAdjacentHTML('beforeend', html);
       list.scrollTop = list.scrollHeight;
     }
     appendChat(m) { this.appendChatById('reader-chat-list', m); }

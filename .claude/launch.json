@@ -4,8 +4,14 @@
     {
       "name": "paperwiki",
       "runtimeExecutable": "C:\\Users\\Halfknow\\AppData\\Roaming\\fnm\\aliases\\default\\node.exe",
-      "runtimeArgs": ["server.js"],
-      "autoPort": true
+      "runtimeArgs": ["src/server.js"],
+      "port": 8899,
+      "env": {
+        "DATABASE_URL": "postgres://paperwiki:dev@127.0.0.1:15432/paperwiki",
+        "PAPERS_ROOT": "D:\\open_source_project\\0.1_inbox\\ai_paper_wiki\\papers",
+        "PORT": "8899",
+        "HOST": "127.0.0.1"
+      }
     }
   ]
 }

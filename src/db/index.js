@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { migrateStore, emptyStore } = require('../core/store');
+const { normalizeFormulas } = require('../core/formulas');
 const { hasCjk } = require('../core/search');
 
 /**
@@ -112,6 +113,7 @@ const PAPER_COLS = [
   ['tags', 'tags', true],
   ['topics', 'topics', true],
   ['conceptIds', 'concept_ids', true],
+  ['formulaIds', 'formula_ids', true],
   ['folders', 'folders', true],
   ['readProgress', 'read_progress', true],
   ['annotations', 'annotations', true],
@@ -152,6 +154,20 @@ function sha1(s) {
 }
 function hashOf(obj) {
   return sha1(JSON.stringify(obj));
+}
+
+/** 概念 → 稳定哈希行：补默认 category（''），使内存对象（无 category 键）与读回对象（category:''）
+ *  产生相同 hash，避免 loadSpaceStore 重置快照后 hash-diff 误判重写（v3.10 category 字段引入的抖动）。 */
+function conceptToHashRow(c) {
+  return {
+    id: c.id,
+    term: c.term,
+    definition: c.definition,
+    category: c.category || '',
+    paperIds: c.paperIds || [],
+    createdAt: c.createdAt,
+    updatedAt: c.updatedAt,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -212,7 +228,7 @@ function createRepository(db) {
     );
   }
 
-  /** 删空间：五表级联（spaces/papers/paper_texts/concepts/folders）+ 清快照 */
+  /** 删空间：六表级联（spaces/papers/paper_texts/concepts/formulas/folders）+ 清快照 */
   async function deleteSpaceRow(id) {
     const run = writeChain.then(async () => {
       const client = await db.pool.connect();
@@ -221,6 +237,7 @@ function createRepository(db) {
         await client.query('DELETE FROM paper_texts WHERE space_id=$1', [id]);
         await client.query('DELETE FROM papers WHERE space_id=$1', [id]);
         await client.query('DELETE FROM concepts WHERE space_id=$1', [id]);
+        await client.query('DELETE FROM formulas WHERE space_id=$1', [id]);
         await client.query('DELETE FROM folders WHERE space_id=$1', [id]);
         await client.query('DELETE FROM spaces WHERE id=$1', [id]);
         await client.query('COMMIT');
@@ -242,13 +259,15 @@ function createRepository(db) {
     const snap = {
       papers: new Map(),
       concepts: new Map(),
+      formulas: new Map(),
       folders: new Map(),
       tags: hashOf(store.tags || []),
       topics: hashOf(store.topics || []),
       settings: hashOf(store.settings || {}),
     };
     for (const p of Object.values(store.papers || {})) snap.papers.set(p.id, hashOf(paperToRow(p)));
-    for (const c of store.concepts || []) snap.concepts.set(c.id, hashOf(c));
+    for (const c of store.concepts || []) snap.concepts.set(c.id, hashOf(conceptToHashRow(c)));
+    for (const f of store.formulas || []) snap.formulas.set(f.id, hashOf(f));
     for (const f of store.folders || []) snap.folders.set(f.id, hashOf(f));
     return snap;
   }
@@ -259,7 +278,13 @@ function createRepository(db) {
     const meta = sp.rows[0] || {};
     const papersR = await db.query('SELECT * FROM papers WHERE space_id=$1', [spaceId]);
     const conceptsR = await db.query(
-      'SELECT id, term, definition, paper_ids, created_at, updated_at FROM concepts WHERE space_id=$1 ORDER BY created_at, id',
+      'SELECT id, term, definition, category, paper_ids, created_at, updated_at FROM concepts WHERE space_id=$1 ORDER BY created_at, id',
+      [spaceId],
+    );
+    const formulasR = await db.query(
+      `SELECT id, canonical_name, name, latex, description, category, variables, plottable,
+              plot_hint, occurrences, paper_ids, source, created_at, updated_at
+         FROM formulas WHERE space_id=$1 ORDER BY canonical_name, id`,
       [spaceId],
     );
     const foldersR = await db.query(
@@ -274,10 +299,30 @@ function createRepository(db) {
       id: r.id,
       term: r.term,
       definition: r.definition,
+      category: r.category || '',
       paperIds: Array.isArray(r.paper_ids) ? r.paper_ids : [],
       createdAt: Number(r.created_at) || 0,
       updatedAt: Number(r.updated_at) || 0,
     }));
+    // 读取边界过 normalizeFormulas 自愈（同 notes 的 normalizeNoteCards 模式）；
+    // 它会重建 paperIds 不变式，故 hash 与保存时一致。
+    store.formulas = normalizeFormulas(
+      formulasR.rows.map((r) => ({
+        id: r.id,
+        canonicalName: r.canonical_name,
+        name: r.name,
+        latex: r.latex,
+        description: r.description,
+        category: r.category,
+        variables: Array.isArray(r.variables) ? r.variables : [],
+        plottable: !!r.plottable,
+        plotHint: r.plot_hint || null,
+        occurrences: Array.isArray(r.occurrences) ? r.occurrences : [],
+        source: r.source,
+        createdAt: Number(r.created_at) || 0,
+        updatedAt: Number(r.updated_at) || 0,
+      })),
+    );
     store.folders = foldersR.rows.map((r) => ({
       id: r.id,
       name: r.name,
@@ -303,6 +348,8 @@ function createRepository(db) {
       const paperDeletes = [...prev.papers.keys()].filter((id) => !next.papers.has(id));
       const conceptUpserts = (store.concepts || []).filter((c) => prev.concepts.get(c.id) !== next.concepts.get(c.id));
       const conceptDeletes = [...prev.concepts.keys()].filter((id) => !next.concepts.has(id));
+      const formulaUpserts = (store.formulas || []).filter((f) => prev.formulas.get(f.id) !== next.formulas.get(f.id));
+      const formulaDeletes = [...prev.formulas.keys()].filter((id) => !next.formulas.has(id));
       const folderUpserts = (store.folders || []).filter((f) => prev.folders.get(f.id) !== next.folders.get(f.id));
       const folderDeletes = [...prev.folders.keys()].filter((id) => !next.folders.has(id));
       const dictChanged = prev.tags !== next.tags || prev.topics !== next.topics || prev.settings !== next.settings;
@@ -312,6 +359,8 @@ function createRepository(db) {
         !paperDeletes.length &&
         !conceptUpserts.length &&
         !conceptDeletes.length &&
+        !formulaUpserts.length &&
+        !formulaDeletes.length &&
         !folderUpserts.length &&
         !folderDeletes.length &&
         !dictChanged;
@@ -350,16 +399,17 @@ function createRepository(db) {
         }
         for (const c of conceptUpserts) {
           await client.query(
-            `INSERT INTO concepts (space_id, id, term, definition, paper_ids, created_at, updated_at)
-             VALUES ($1,$2,$3,$4,$5,$6,$7)
+            `INSERT INTO concepts (space_id, id, term, definition, category, paper_ids, created_at, updated_at)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
              ON CONFLICT (space_id, id) DO UPDATE SET
-               term=EXCLUDED.term, definition=EXCLUDED.definition, paper_ids=EXCLUDED.paper_ids,
+               term=EXCLUDED.term, definition=EXCLUDED.definition, category=EXCLUDED.category, paper_ids=EXCLUDED.paper_ids,
                created_at=EXCLUDED.created_at, updated_at=EXCLUDED.updated_at`,
             [
               spaceId,
               c.id,
               c.term || '',
               c.definition || '',
+              c.category || '',
               jstr(c.paperIds || []),
               c.createdAt || 0,
               c.updatedAt || 0,
@@ -369,6 +419,43 @@ function createRepository(db) {
         }
         for (const id of conceptDeletes) {
           await client.query('DELETE FROM concepts WHERE space_id=$1 AND id=$2', [spaceId, id]);
+          stats.rowsWritten++;
+        }
+        for (const f of formulaUpserts) {
+          // jsonb 列一律 jstr()（陷阱 24：node-pg 会把裸数组写成 PG 数组字面量）
+          await client.query(
+            `INSERT INTO formulas (space_id, id, canonical_name, name, latex, description, category,
+                                   variables, plottable, plot_hint, occurrences, paper_ids, source,
+                                   created_at, updated_at)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+             ON CONFLICT (space_id, id) DO UPDATE SET
+               canonical_name=EXCLUDED.canonical_name, name=EXCLUDED.name, latex=EXCLUDED.latex,
+               description=EXCLUDED.description, category=EXCLUDED.category, variables=EXCLUDED.variables,
+               plottable=EXCLUDED.plottable, plot_hint=EXCLUDED.plot_hint, occurrences=EXCLUDED.occurrences,
+               paper_ids=EXCLUDED.paper_ids, source=EXCLUDED.source,
+               created_at=EXCLUDED.created_at, updated_at=EXCLUDED.updated_at`,
+            [
+              spaceId,
+              f.id,
+              f.canonicalName || '',
+              f.name || '',
+              f.latex || '',
+              f.description || '',
+              f.category || '',
+              jstr(f.variables || []),
+              !!f.plottable,
+              jstr(f.plotHint || null),
+              jstr(f.occurrences || []),
+              jstr(f.paperIds || []),
+              f.source || 'ai',
+              f.createdAt || 0,
+              f.updatedAt || 0,
+            ],
+          );
+          stats.rowsWritten++;
+        }
+        for (const id of formulaDeletes) {
+          await client.query('DELETE FROM formulas WHERE space_id=$1 AND id=$2', [spaceId, id]);
           stats.rowsWritten++;
         }
         for (const f of folderUpserts) {

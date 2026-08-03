@@ -494,7 +494,13 @@ test('buildNotesMessages：默认用 DEFAULT_NOTES_PROMPT，含六段式章节�
 test('buildNotesMessages：自定义 prompt 覆盖 + 全文截断到 maxInputChars', () => {
   const { buildNotesMessages } = require('../src/services/ai');
   const long = 'y'.repeat(500);
-  const msgs = buildNotesMessages({ title: 'T', abstract: 'A', fulltext: long, maxInputChars: 100, prompt: '自定义笔记提示词' });
+  const msgs = buildNotesMessages({
+    title: 'T',
+    abstract: 'A',
+    fulltext: long,
+    maxInputChars: 100,
+    prompt: '自定义笔记提示词',
+  });
   assert.strictEqual(msgs[0].content, '自定义笔记提示词');
   assert.ok(msgs[1].content.length < 500);
   // 空白 prompt 回退默认
@@ -565,7 +571,8 @@ test('callChatStream 消费 SSE 流：delta.content 累积、reasoning 单独回
 
 test('callChatStream 无 body.getReader 时回退 parseSseBody（text() 整体解析）', async () => {
   const { callChatStream } = require('../src/services/ai');
-  const sse = 'data: {"choices":[{"delta":{"content":"整段"}}]}\n\ndata: {"choices":[{"delta":{"content":"回复"}}]}\n\ndata: [DONE]\n\n';
+  const sse =
+    'data: {"choices":[{"delta":{"content":"整段"}}]}\n\ndata: {"choices":[{"delta":{"content":"回复"}}]}\n\ndata: [DONE]\n\n';
   const tokens = [];
   const reply = await callChatStream({
     messages: [{ role: 'user', content: 'hi' }],
@@ -584,7 +591,8 @@ test('callChatStream 无 body.getReader 时回退 parseSseBody（text() 整体�
 
 test('callChatStream onToken 返回 false 时该块 content 不计入 reply', async () => {
   const { callChatStream } = require('../src/services/ai');
-  const sse = 'data: {"choices":[{"delta":{"content":"A"}}]}\n\ndata: {"choices":[{"delta":{"content":"B"}}]}\n\ndata: [DONE]\n\n';
+  const sse =
+    'data: {"choices":[{"delta":{"content":"A"}}]}\n\ndata: {"choices":[{"delta":{"content":"B"}}]}\n\ndata: [DONE]\n\n';
   const reply = await callChatStream({
     messages: [{ role: 'user', content: 'hi' }],
     config: CFG,
@@ -607,7 +615,8 @@ test('callChat 5xx 重试耗尽后抛最后一次错误（1+4 次尝试）', asy
   global.setTimeout = (fn, ...rest) => origSetTimeout(fn, 0);
   try {
     await assert.rejects(
-      () => callChat({ messages: [{ role: 'user', content: 'hi' }], config: CFG, fetchImpl: fakeFetch, jsonMode: false }),
+      () =>
+        callChat({ messages: [{ role: 'user', content: 'hi' }], config: CFG, fetchImpl: fakeFetch, jsonMode: false }),
       /AI HTTP 500: boom/,
       '重试耗尽后应抛最后一次错误',
     );
@@ -731,4 +740,353 @@ test('buildTagsMessages 自定义 prompt 覆盖默认标签提示词（空白回
   assert.strictEqual(blank[0].content, DEFAULT_TAGS_PROMPT, '空白 prompt 回退默认');
   const none = buildTagsMessages({ title: 'T', fulltext: 'F' });
   assert.strictEqual(none[0].content, DEFAULT_TAGS_PROMPT);
+});
+
+// ============================================================================
+// v3.9 公式抽取 + 每任务输入预算
+// ============================================================================
+
+test('resolveMaxInputChars：任务级 > 全局 > 内置默认', () => {
+  const { resolveMaxInputChars, tokensToCharBudget } = require('../src/services/ai');
+  // 无任何配置 → v3.11 起内置默认是 tokens(32000)×3.5=112000（旧 24000 字符已废弃）
+  assert.strictEqual(resolveMaxInputChars({}, 'summary'), tokensToCharBudget(32000));
+  assert.strictEqual(resolveMaxInputChars({ ai: {} }, 'summary'), tokensToCharBudget(32000));
+  // 全局 maxInputChars（旧别名，原值直传不折算）
+  assert.strictEqual(resolveMaxInputChars({ ai: { maxInputChars: 8000 } }, 'summary'), 8000);
+  // 任务级覆盖全局
+  const cfg = { ai: { maxInputChars: 8000, taskMaxInputChars: { formulas: 120000 } } };
+  assert.strictEqual(resolveMaxInputChars(cfg, 'formulas'), 120000);
+  assert.strictEqual(resolveMaxInputChars(cfg, 'summary'), 8000, '未设置的任务跟随全局');
+  // null / 空串 = 跟随全局（设置页清空即回落）
+  const cfg2 = { ai: { maxInputChars: 8000, taskMaxInputChars: { summary: null, tags: '' } } };
+  assert.strictEqual(resolveMaxInputChars(cfg2, 'summary'), 8000);
+  assert.strictEqual(resolveMaxInputChars(cfg2, 'tags'), 8000);
+  // 未知任务名安全回落
+  assert.strictEqual(resolveMaxInputChars(cfg, 'nope'), 8000);
+});
+
+test('applySettingsOverride：taskMaxInputChars 深合并且保留未覆盖的任务键', () => {
+  const config = { ai: { model: 'm', maxInputChars: 24000, taskMaxInputChars: { formulas: 100000, summary: 30000 } } };
+  const eff = applySettingsOverride(config, { ai: { taskMaxInputChars: { formulas: 200000 } } });
+  assert.strictEqual(eff.ai.taskMaxInputChars.formulas, 200000, '覆盖生效');
+  assert.strictEqual(eff.ai.taskMaxInputChars.summary, 30000, '未覆盖的键保留');
+  assert.strictEqual(config.ai.taskMaxInputChars.formulas, 100000, '不改原 config');
+  // 显式 null 写回（设置页清空 → 跟随全局）
+  const eff2 = applySettingsOverride(config, { ai: { taskMaxInputChars: { summary: null } } });
+  assert.strictEqual(eff2.ai.taskMaxInputChars.summary, null);
+});
+
+// ---- v3.11：输入上限改 tokens（OpenAI 标准），旧 chars 字段作废弃别名 ----
+
+test('tokensToCharBudget：tokens×3.5 向下取整；非正/NaN→0', () => {
+  const { tokensToCharBudget } = require('../src/services/ai');
+  assert.strictEqual(tokensToCharBudget(1000), 3500);
+  assert.strictEqual(tokensToCharBudget(1000000), 3500000);
+  assert.strictEqual(tokensToCharBudget(0), 0);
+  assert.strictEqual(tokensToCharBudget(-5), 0);
+  assert.strictEqual(tokensToCharBudget(NaN), 0);
+  assert.strictEqual(tokensToCharBudget('abc'), 0);
+  assert.strictEqual(tokensToCharBudget('1000'), 3500, '数字字符串也接受');
+});
+
+test('resolveMaxInputChars：tokens 优先级（taskTokens > globalTokens > taskChars > globalChars > 默认）', () => {
+  const { resolveMaxInputChars, tokensToCharBudget } = require('../src/services/ai');
+  // 1. 无任何配置 → 默认 tokens（32000×3.5=112000）
+  assert.strictEqual(resolveMaxInputChars({}, 'summary'), tokensToCharBudget(32000));
+  // 2. 全局 tokens
+  assert.strictEqual(resolveMaxInputChars({ ai: { maxInputTokens: 1000000 } }, 'summary'), tokensToCharBudget(1000000));
+  // 3. 任务级 tokens 覆盖全局 tokens
+  const cfg = { ai: { maxInputTokens: 1000000, taskMaxInputTokens: { formulas: 200000 } } };
+  assert.strictEqual(resolveMaxInputChars(cfg, 'formulas'), tokensToCharBudget(200000));
+  assert.strictEqual(resolveMaxInputChars(cfg, 'summary'), tokensToCharBudget(1000000), '未设置任务跟随全局 tokens');
+  // 4. tokens 优先于旧 chars：同时设了 tokens 和 chars → 走 tokens
+  const cfg2 = { ai: { maxInputTokens: 50000, maxInputChars: 8000 } };
+  assert.strictEqual(resolveMaxInputChars(cfg2, 'summary'), tokensToCharBudget(50000), 'tokens 优先于 chars');
+  // 5. 仅旧 chars（兼容存量 config.json）→ 原值直传（不折算）
+  assert.strictEqual(resolveMaxInputChars({ ai: { maxInputChars: 8000 } }, 'summary'), 8000);
+  assert.strictEqual(
+    resolveMaxInputChars({ ai: { maxInputChars: 8000, taskMaxInputChars: { formulas: 120000 } } }, 'formulas'),
+    120000,
+    '旧任务级 chars 也原值直传',
+  );
+  // 6. null / 空串 / 非正数 = 跟随（回落到下一优先级）
+  const cfg3 = { ai: { maxInputTokens: 50000, taskMaxInputTokens: { summary: null, tags: '' } } };
+  assert.strictEqual(resolveMaxInputChars(cfg3, 'summary'), tokensToCharBudget(50000));
+  assert.strictEqual(resolveMaxInputChars(cfg3, 'tags'), tokensToCharBudget(50000));
+  // 7. tokens 都没设、chars 设了 → 旧 chars 优先于默认 tokens
+  assert.strictEqual(
+    resolveMaxInputChars({ ai: { maxInputChars: 8000, maxInputTokens: 0 } }, 'summary'),
+    8000,
+    'maxInputTokens=0 视为未设→回退 chars',
+  );
+});
+
+test('applySettingsOverride：maxInputTokens / taskMaxInputTokens 覆盖 + 深合并', () => {
+  const config = {
+    ai: { model: 'm', maxInputTokens: 32000, taskMaxInputTokens: { formulas: 200000, summary: 50000 } },
+  };
+  const eff = applySettingsOverride(config, {
+    ai: { maxInputTokens: 1000000, taskMaxInputTokens: { formulas: 500000 } },
+  });
+  assert.strictEqual(eff.ai.maxInputTokens, 1000000, '全局 tokens 覆盖');
+  assert.strictEqual(eff.ai.taskMaxInputTokens.formulas, 500000, '任务 tokens 覆盖');
+  assert.strictEqual(eff.ai.taskMaxInputTokens.summary, 50000, '未覆盖任务保留');
+  assert.strictEqual(config.ai.maxInputTokens, 32000, '不改原 config');
+  // 空串视为未设（与 ai.apiKey 语义一致）
+  const eff2 = applySettingsOverride(config, { ai: { maxInputTokens: '' } });
+  assert.strictEqual(eff2.ai.maxInputTokens, 32000, '空串不覆盖');
+});
+
+test('listModels：从网关 /v1/models 抓 context_length（多字段名兜底）', async () => {
+  const { listModels } = require('../src/services/ai');
+  const config = { ai: { baseURL: 'http://gw/v1', apiKey: 'k', model: 'glm-4.6' } };
+  // OpenRouter 风格：顶层 context_length
+  const fr = (data) => async () => ({
+    ok: true,
+    status: 200,
+    headers: { get: () => 'application/json' },
+    json: async () => data,
+  });
+  let r = await listModels({
+    config,
+    fetchImpl: fr({
+      data: [
+        { id: 'glm-4.6', context_length: 1000000 },
+        { id: 'gpt-4o', context_length: 128000 },
+      ],
+    }),
+  });
+  assert.strictEqual(r.models[0].contextLength, 1000000);
+  assert.strictEqual(r.models[1].contextLength, 128000);
+  // 驼峰 contextLength
+  r = await listModels({ config, fetchImpl: fr({ data: [{ id: 'm1', contextLength: 64000 }] }) });
+  assert.strictEqual(r.models[0].contextLength, 64000);
+  // top_provider.context_length（OpenRouter 嵌套）
+  r = await listModels({ config, fetchImpl: fr({ data: [{ id: 'm2', top_provider: { context_length: 131072 } }] }) });
+  assert.strictEqual(r.models[0].contextLength, 131072);
+  // max_input_tokens 别名
+  r = await listModels({ config, fetchImpl: fr({ data: [{ id: 'm3', max_input_tokens: 8192 }] }) });
+  assert.strictEqual(r.models[0].contextLength, 8192);
+  // OpenAI 原生（无该字段）→ null
+  r = await listModels({ config, fetchImpl: fr({ data: [{ id: 'm4', object: 'model', owned_by: 'openai' }] }) });
+  assert.strictEqual(r.models[0].contextLength, null);
+  // 非正/垃圾值 → null
+  r = await listModels({
+    config,
+    fetchImpl: fr({
+      data: [
+        { id: 'm5', context_length: 0 },
+        { id: 'm6', context_length: 'abc' },
+      ],
+    }),
+  });
+  assert.strictEqual(r.models[0].contextLength, null);
+  assert.strictEqual(r.models[1].contextLength, null);
+  // fallback（上游不可达）也带 contextLength:null
+  r = await listModels({
+    config,
+    fetchImpl: async () => {
+      throw new Error('net');
+    },
+  });
+  assert.ok(r.models.every((m) => m.contextLength === null));
+});
+
+test('pickMathDenseText：未超预算原样返回', () => {
+  const { pickMathDenseText } = require('../src/services/ai');
+  const t = 'abc\n\ndef';
+  assert.strictEqual(pickMathDenseText(t, 1000), t);
+  assert.strictEqual(pickMathDenseText('', 1000), '');
+  assert.strictEqual(pickMathDenseText(null, 1000), '');
+});
+
+test('pickMathDenseText：超预算时优先保留数学密集段且保持原文顺序', () => {
+  const { pickMathDenseText } = require('../src/services/ai');
+  const filler = (tag) => `${tag} ` + 'plain narrative words here '.repeat(12);
+  // 用真实 Unicode 数学符号 —— pdfjs 抽出的正文正是这个形态（而非 LaTeX 命令）
+  const mathy = (tag) => `${tag} L(θ) = ∑ᵢ ∇θ log p ≤ ε ∈ Θ ∏ⱼ αⱼ ⊗ √λ ≥ ∂μ`;
+  // 顺序：填充 A / 数学 M1 / 填充 B / 数学 M2 / 填充 C
+  const text = [filler('A'), mathy('M1'), filler('B'), mathy('M2'), filler('C')].join('\n\n');
+  const out = pickMathDenseText(text, 400);
+  assert.ok(out.length <= 400 + 20, '大致落在预算内，实际=' + out.length);
+  assert.ok(out.includes('M1'), '保留数学段 M1');
+  assert.ok(out.includes('M2'), '保留数学段 M2');
+  assert.ok(out.indexOf('M1') < out.indexOf('M2'), '保持原文顺序');
+});
+
+test('pickMathDenseText：全篇无数学符号时退化为头部截断（不返回空）', () => {
+  const { pickMathDenseText } = require('../src/services/ai');
+  const text = 'plain paragraph text here.\n\n'.repeat(60);
+  const out = pickMathDenseText(text, 200);
+  assert.ok(out.length > 0);
+  assert.ok(out.length <= 220);
+});
+
+test('parseFormulaResult：容忍 {formulas:[…]} / 裸数组 / 代码块 / 噪声', () => {
+  const { parseFormulaResult } = require('../src/services/ai');
+  assert.deepStrictEqual(parseFormulaResult('{"formulas":[{"canonicalName":"softmax","latex":"x"}]}'), [
+    { canonicalName: 'softmax', latex: 'x' },
+  ]);
+  assert.deepStrictEqual(parseFormulaResult('[{"canonicalName":"elbo","latex":"y"}]'), [
+    { canonicalName: 'elbo', latex: 'y' },
+  ]);
+  assert.strictEqual(parseFormulaResult('```json\n{"formulas":[{"canonicalName":"a","latex":"b"}]}\n```').length, 1);
+  assert.deepStrictEqual(parseFormulaResult('not json'), []);
+  assert.deepStrictEqual(parseFormulaResult(''), []);
+  assert.deepStrictEqual(parseFormulaResult('{"formulas":"nope"}'), []);
+});
+
+test('buildFormulaMessages：注入已有公式清单 + 三级提示词回退', () => {
+  const { buildFormulaMessages, DEFAULT_FORMULA_PROMPT } = require('../src/services/ai');
+  const msgs = buildFormulaMessages({
+    title: 'T',
+    abstract: 'A',
+    fulltext: 'F',
+    existingFormulas: [
+      { canonicalName: 'softmax', latex: '\\sigma(z)' },
+      { canonicalName: 'elbo', latex: '\\mathcal{L}' },
+    ],
+  });
+  assert.strictEqual(msgs[0].content, DEFAULT_FORMULA_PROMPT);
+  assert.ok(msgs[1].content.includes('softmax'), 'user 含已有规范名');
+  assert.ok(msgs[1].content.includes('\\sigma(z)'), 'user 含已有 latex');
+  // 自定义 prompt 覆盖；空白回退
+  assert.strictEqual(
+    buildFormulaMessages({ title: 'T', fulltext: 'F', prompt: '自定义公式提示词' })[0].content,
+    '自定义公式提示词',
+  );
+  assert.strictEqual(
+    buildFormulaMessages({ title: 'T', fulltext: 'F', prompt: '  ' })[0].content,
+    DEFAULT_FORMULA_PROMPT,
+  );
+  // 无已有公式时给占位，不炸
+  assert.ok(buildFormulaMessages({ title: 'T', fulltext: 'F' })[1].content.includes('（暂无）'));
+});
+
+test('buildFormulaMessages：全文经数学密度预筛后受 maxInputChars 约束', () => {
+  const { buildFormulaMessages } = require('../src/services/ai');
+  const msgs = buildFormulaMessages({ title: 'T', fulltext: 'x'.repeat(5000), maxInputChars: 300 });
+  assert.ok(msgs[1].content.length < 1200, '全文被裁剪，实际=' + msgs[1].content.length);
+});
+
+test('extractFormulas：走 jsonMode + 注入 fetch，返回公式数组', async () => {
+  const { extractFormulas } = require('../src/services/ai');
+  let sawBody = null;
+  const fakeFetch = async (url, opt) => {
+    assert.ok(/\/chat\/completions$/.test(url));
+    sawBody = JSON.parse(opt.body);
+    return {
+      ok: true,
+      json: async () => ({
+        choices: [
+          {
+            message: {
+              // JSON 里 LaTeX 反斜杠要转义：JS 源 \\\\ → JS 串 \\ → JSON 解析出 \sigma
+              content: '{"formulas":[{"canonicalName":"softmax","name":"归一化指数函数","latex":"\\\\sigma(z)"}]}',
+            },
+          },
+        ],
+      }),
+    };
+  };
+  const items = await extractFormulas({
+    title: 'T',
+    abstract: 'A',
+    fulltext: 'F',
+    existingFormulas: [],
+    config: CFG,
+    fetchImpl: fakeFetch,
+  });
+  assert.strictEqual(items.length, 1);
+  assert.strictEqual(items[0].canonicalName, 'softmax');
+  assert.deepStrictEqual(sawBody.response_format, { type: 'json_object' }, '公式抽取必须走 JSON 模式');
+});
+
+test('extractFormulas：读 taskMaxInputChars.formulas 而非全局 maxInputChars', async () => {
+  const { extractFormulas } = require('../src/services/ai');
+  let userMsg = '';
+  const fakeFetch = async (_url, opt) => {
+    userMsg = JSON.parse(opt.body).messages[1].content;
+    return { ok: true, json: async () => ({ choices: [{ message: { content: '{"formulas":[]}' } }] }) };
+  };
+  const cfg = { ai: { ...CFG.ai, maxInputChars: 50, taskMaxInputChars: { formulas: 3000 } } };
+  await extractFormulas({ title: 'T', fulltext: 'y'.repeat(2000), config: cfg, fetchImpl: fakeFetch });
+  assert.ok(userMsg.length > 1500, '应使用任务级 3000 而非全局 50，实际 user 长度=' + userMsg.length);
+});
+
+test('callChat：chatParams.timeoutMs 覆盖 config.ai.timeoutMs（单次调用级超时）', async () => {
+  // fakeFetch 挂起直到 signal abort；chatParams.timeoutMs=50 应远早于 config 的 1000ms 触发
+  const fakeFetch = (_url, opts) =>
+    new Promise((_, reject) => {
+      opts.signal.addEventListener('abort', () => reject(new Error('aborted')));
+    });
+  const t0 = Date.now();
+  await assert.rejects(
+    callChat({
+      messages: [{ role: 'user', content: 'hi' }],
+      config: CFG, // timeoutMs: 1000
+      fetchImpl: fakeFetch,
+      jsonMode: false,
+      chatParams: { timeoutMs: 50, maxRetries: 0 },
+    }),
+    /aborted/,
+  );
+  assert.ok(Date.now() - t0 < 900, '应使用 chatParams.timeoutMs=50 而非 config 的 1000ms');
+});
+
+test('callChat：chatParams.maxRetries 覆盖默认 4 次重试', async () => {
+  let calls = 0;
+  const fakeFetch = async () => {
+    calls++;
+    throw new Error('network down');
+  };
+  await assert.rejects(
+    callChat({
+      messages: [{ role: 'user', content: 'hi' }],
+      config: CFG,
+      fetchImpl: fakeFetch,
+      jsonMode: false,
+      chatParams: { maxRetries: 0 },
+    }),
+    /network down/,
+  );
+  assert.strictEqual(calls, 1, 'maxRetries:0 应只尝试 1 次（默认会 5 次）');
+});
+
+test('generateConceptMap：自由输出（非 JSON 模式）+ 剥 ```html 围栏', async () => {
+  const { generateConceptMap } = require('../src/services/ai');
+  let sawBody;
+  const fakeFetch = async (_url, opt) => {
+    sawBody = JSON.parse(opt.body);
+    return {
+      ok: true,
+      json: async () => ({ choices: [{ message: { content: '```html\n<html><body>MAP</body></html>\n```' } }] }),
+    };
+  };
+  const html = await generateConceptMap({
+    concepts: [{ term: 'Attention', definition: 'd', category: 'model', paperIds: ['p1'] }],
+    config: CFG,
+    fetchImpl: fakeFetch,
+    prompt: '',
+  });
+  assert.strictEqual(html, '<html><body>MAP</body></html>');
+  assert.strictEqual(sawBody.response_format, undefined, '概念总览图是 HTML 产出，不能强制 json_object');
+  assert.ok(sawBody.messages[1].content.includes('Attention'), '概念清单应注入 user 消息');
+});
+
+test('generateConceptMap：prevHtml 注入（优化模式）', async () => {
+  const { generateConceptMap } = require('../src/services/ai');
+  let sawBody;
+  const fakeFetch = async (_url, opt) => {
+    sawBody = JSON.parse(opt.body);
+    return { ok: true, json: async () => ({ choices: [{ message: { content: '<html>v2</html>' } }] }) };
+  };
+  await generateConceptMap({
+    concepts: [{ term: 'X', paperIds: [] }],
+    config: CFG,
+    fetchImpl: fakeFetch,
+    prompt: '改成矩阵图',
+    prevHtml: '<html>v1</html>',
+  });
+  assert.ok(sawBody.messages[1].content.includes('<html>v1</html>'), 'prevHtml 应喂给模型做增量优化');
 });

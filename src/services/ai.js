@@ -45,11 +45,137 @@ const DEFAULT_TAGS_PROMPT = `你是一位 AI/ML 论文分类专家。阅读给�
 /** 向后兼容别名：旧代码引用 DEFAULT_PROMPT（现等价于总结提示词）。 */
 const DEFAULT_PROMPT = DEFAULT_SUMMARY_PROMPT;
 
-const CONCEPT_PROMPT = `你是一位 AI/ML 论文研究员。从给定论文中抽取**值得学习的关键概念**（术语、方法、核心指标）。
-- 输出严格 JSON 数组：{"concepts":[{"term":"...","definition":"1-2句精炼解释"}]}
-- term 用论文原文写法（中英文均可），definition 简明。
-- 只返回**尚未出现在「已有概念」列表中的新概念**，避免重复。
-- 数量 3-8 个，挑最有学习价值的。只输出 JSON。`;
+/** 默认概念抽取提示词（v3.10）：对齐公式提示词质量——加 category 分类、term 规范名对照表、
+ *  JSON schema 示例、筛选优先级、去重说明。可被 settings.conceptPrompt / config.conceptPrompt 覆盖（三级回退）。 */
+const DEFAULT_CONCEPT_PROMPT = `你是一位资深 AI/ML 论文研究员。从给定论文中抽取**值得学习的关键概念**（术语、方法、核心机制、重要指标）。
+
+## 输出格式（严格 JSON，不要任何额外文字）
+\`\`\`json
+{"concepts":[{"term":"Transformer","definition":"1-2 句精炼解释该概念是什么、解决什么问题","category":"architecture"}]}
+\`\`\`
+
+## 字段约束
+- **term**：概念的**规范学术名**（英文专有名词用首字母大写，如 Transformer、Attention、KL Divergence；通用方法用学界通用写法）。中文术语用学界通行译名（如"缩放点积注意力"）。同一概念在「已有概念」里出现过则**必须复用其原 term 写法**（不要大小写/单复数变体）。
+- **definition**：1-2 句中文精炼解释（≤80 字）。说清"是什么 + 解决什么问题/起什么作用"，不要复述 term。
+- **category**：从以下枚举中选**最贴切**的一个（小写英文）：
+  - \`architecture\`：模型架构/网络结构（Transformer、CNN、RNN、U-Net、Encoder-Decoder）
+  - \`attention\`：注意力机制（Self-Attention、Multi-Head Attention、Cross-Attention）
+  - \`loss\`：损失函数/目标函数（Cross-Entropy、KL Divergence、Contrastive Loss）
+  - \`optimization\`：优化算法/训练技巧（Adam、SGD、Learning Rate Decay）
+  - \`regularization\`：正则化/防过拟合（Dropout、Batch Normalization、Weight Decay）
+  - \`generative\`：生成模型（GAN、VAE、Diffusion、Autoregressive）
+  - \`representation\`：表示学习/嵌入（Embedding、Representation Learning、Contrastive Learning）
+  - \`training\`：训练策略/范式（Pre-training、Fine-tuning、Transfer Learning、RLHF）
+  - \`evaluation\`：评估指标/方法（BLEU、FID、Accuracy、Ablation Study）
+  - \`inference\`：推理/解码（Beam Search、Top-k Sampling、KV Cache）
+  - \`other\`：以上都不贴切（数据增强、采样策略、理论分析等）
+
+## 高频概念规范名对照表（命中学名时**必须用此写法**，保证跨论文可归并）
+Transformer、Attention、Self-Attention、Multi-Head Attention、Cross-Attention、
+CNN、RNN、LSTM、GRU、ResNet、U-Net、Encoder-Decoder、Autoencoder、
+KL Divergence、Cross-Entropy Loss、Contrastive Loss、MSE、CTC Loss、
+Adam、SGD、AdamW、Learning Rate Warmup、Dropout、Batch Normalization、Layer Normalization、Weight Decay、
+GAN、VAE、Diffusion Model、DDPM、Autoregressive Model、
+Embedding、Word2Vec、Contrastive Learning、Self-Supervised Learning、
+Pre-training、Fine-tuning、Transfer Learning、RLHF、LoRA、
+BLEU、FID、Perplexity、Ablation Study、
+Beam Search、Top-k Sampling、Temperature Sampling、KV Cache、
+Data Augmentation、Backpropagation、Gradient Clipping、Knowledge Distillation
+
+## 抽取优先级（数量 3-10 个，宁缺毋滥）
+1. 论文的**核心创新/主打方法**（必须抽）。
+2. 理解论文不可或缺的**关键基础概念**。
+3. 论文中反复出现的重要**技术组件/指标**。
+**不要抽**：过于常识的词（如"神经网络""训练"）、纯背景介绍性术语、与论文主题无关的工具名。
+
+## 去重
+只返回**尚未出现在「已有概念」列表中的新概念**（按规范名比对，大小写/单复数不敏感视为同一）。若全部已存在，返回 \`{"concepts":[]}\`。
+
+只输出 JSON。`;
+
+/** 向后兼容别名（旧名 CONCEPT_PROMPT = DEFAULT_CONCEPT_PROMPT，避免破坏现有 import）。 */
+const CONCEPT_PROMPT = DEFAULT_CONCEPT_PROMPT;
+
+/** 概念总览图生成提示词（v3.10）：把概念清单喂给模型，产出**单文件 HTML 全览图**。
+ *  融入 claude 原生可视化美学（暗色/玻璃拟态/微动画/鲜艳渐变/大胆字体），输出可在整页呈现的
+ *  交互式总览（韦恩图/架构图/矩阵图形态，可切换视图的交互按钮）。可被 settings.conceptMapPrompt 覆盖。 */
+const DEFAULT_CONCEPT_MAP_PROMPT = `你是一位顶尖的前端可视化设计师 + AI/ML 知识架构师。给定一份概念清单（含术语、解释、分类、出现论文），生成一个**单文件 HTML 概念总览图**，目的是帮助用户一眼厘清这些概念之间的整体脉络与分类结构。
+
+## 设计美学（claude 原生可视化风格，必须遵循）
+- **暗色主题**：深色背景（#0a0e1a / #0f172a 系），玻璃拟态卡片（backdrop-filter blur + 半透明边框）。
+- **鲜艳但有主次的配色**：主色用渐变（如 #6366f1→#8b5cf6→#ec4899 系 indigo/violet/pink），每个分类一个鲜明强调色；避免柔和/灰扑扑。用 CSS 变量管理。
+- **大胆字体**：标题用有表现力的展示字体（Google Fonts，如 Space Grotesk / Sora / Outfit / Manrope，别用 Arial/Inter/system）；正文清晰可读。
+- **氛围背景**：非纯色——叠 CSS 径向/线性渐变光晕、几何图案或网格纹理，营造深度。
+- **微动画**：页面加载用 staggered reveal（animation-delay 错峰进场）；hover 有缩放/发光/位移；视图切换有过渡。CSS-only 实现优先。
+
+## 交互（让界面"活"起来，不要静态）
+- 顶部一排**视图切换按钮**，至少提供 3 种视图，点击平滑切换：
+  1. **架构图/分组视图**：按 category 分组（注意力/损失/架构/优化...），每组一个玻璃卡片，组内概念以节点/标签排布，组间用连线或层级暗示关系。
+  2. **矩阵图/网格视图**：概念按 [分类 × 频次/出现论文数] 排成矩阵或 treemap，格子大小/颜色深浅反映重要性。
+  3. **关系/韦恩图视图**：用重叠区域或网络图展示分类间的交集（同一论文涉及多分类时）。
+- 每个概念可点击/hover 显示其 definition 与出现论文（用输入数据里的信息）。
+
+## 技术硬约束（必须严格遵守）
+- **单个 HTML 文件**，所有 CSS/JS 内联；外部资源仅限 cdnjs.cloudflare.com（Google Fonts 经 fonts.googleapis.com 也可）。
+- **禁止** localStorage / sessionStorage / cookie / 任何浏览器存储 API；状态用 JS 变量保存。
+- 必须能在浏览器直接打开运行（<!DOCTYPE html> 开头，无构建步骤、无占位符）。
+- 数据直接写死在 JS 变量里（从输入的概念清单映射）。
+
+## 输入
+会提供概念清单（JSON 数组，每项含 term/definition/category/paperIds 或论文标题）。
+
+## 输出
+**只输出完整的 HTML 文档**（从 <!DOCTYPE html> 到 </html>），不要 markdown 代码块围栏、不要任何解释文字。`;
+
+/** 默认公式抽取提示词（v3.9）：强制 JSON，抽「核心公式」并**归一化到一般形式**。
+ *  可被 settings.formulaPrompt / config.formulaPrompt 覆盖（三级回退，同 summaryPrompt 模式）。
+ *
+ *  设计要点：
+ *  - `canonicalName` 是跨论文合并的唯一 key（src/core/formulas mergeFormulas），所以内置一份
+ *    高频公式规范名对照表压住命名漂移——模型把 KL 散度一会儿叫 kl-divergence 一会儿叫
+ *    kullback-leibler-divergence 就会合并失败。
+ *  - `latex` 要求「领域通用符号」，论文的个性化记号进 rawLatex + symbolMap，
+ *    否则清单页展示的不是「一般形式」而是某一篇的私有写法。 */
+const DEFAULT_FORMULA_PROMPT = `你是一位 AI/ML 论文的数学审读者。从给定论文中抽取**核心公式**，并归一化到学界通用的一般形式。
+
+输出严格 JSON：
+{"formulas":[{
+  "canonicalName": "scaled-dot-product-attention",
+  "name": "缩放点积注意力",
+  "latex": "\\\\mathrm{Attention}(Q,K,V)=\\\\mathrm{softmax}\\\\left(\\\\frac{QK^\\\\top}{\\\\sqrt{d_k}}\\\\right)V",
+  "description": "解读：这个公式在做什么、为什么这样设计、关键项的作用（2-4 句中文）",
+  "category": "attention",
+  "variables": [{"symbol":"Q","meaning":"查询矩阵","role":"input"},
+                {"symbol":"d_k","meaning":"键向量维度","role":"param"}],
+  "plottable": false,
+  "plotHint": null,
+  "rawLatex": "论文原文里的写法（保留其个性化记号）",
+  "context": "式(1)，3.2 节",
+  "symbolMap": {"d_k": "d"}
+}]}
+
+要求：
+- 只抽 **3-8 个核心公式**：论文自己提出的方法、目标/损失函数、关键指标定义。
+  **不要**抽引用他人的背景公式、不要抽推导中间步骤、不要抽纯符号定义。
+- **latex 必须是归一化的一般形式**：用领域约定俗成的符号，不要照抄论文的个性化记号。
+  论文原写法放 rawLatex；论文符号与通用符号的差异放 symbolMap（{通用符号: 论文符号}）。
+- **canonicalName**：小写英文 + 连字符，优先用学界通用名。常见对照（务必沿用这些写法）：
+  scaled-dot-product-attention、multi-head-attention、softmax、sigmoid、layer-norm、batch-norm、
+  rms-norm、cross-entropy-loss、kl-divergence、js-divergence、elbo、reparameterization-trick、
+  mse-loss、contrastive-loss、info-nce、adam-update、sgd-momentum、cosine-lr-schedule、
+  policy-gradient、ppo-clip-objective、bellman-equation、td-error、gae、q-learning-update、
+  rope-positional-encoding、sinusoidal-positional-encoding、moe-gating、top-k-routing、
+  perplexity、bleu、rouge、f1-score、diffusion-forward-process、diffusion-reverse-process、
+  score-matching-objective、flash-attention-tiling、lora-decomposition。
+  不在表内的用同样的构词法命名（小写、连字符、领域通用叫法）。
+- **variables**：列出公式里出现的每个符号，role ∈ input（自变量/输入）| param（超参/维度/常量参数）|
+  output（输出量）| const（数学常量）。
+- **plottable**：仅当公式可化为单变量实函数 y=f(x) 并画出有意义的曲线时为 true；
+  此时 plotHint 给 {"variable":"x","range":[下限,上限],"params":{"其它符号":取值}}，否则 plotHint 为 null。
+- **latex 必须是 KaTeX 可渲染子集**：禁止 \\\\newcommand、自定义宏；多行只用 aligned/cases。
+- 已在「已有公式」列表中的，**不要重复造条目**——若本篇确实用到，仍要输出该条（canonicalName 保持一致），
+  只需填 rawLatex / context / symbolMap，其余字段可留空。
+- 只输出 JSON。`;
 
 /** 聊天系统提示词（角色=论文研究助手）。可被 settings.chatSystemPrompt / config.chatSystemPrompt 覆盖。 */
 const DEFAULT_CHAT_SYSTEM_PROMPT = `你是一位 AI/ML 论文研究助手。用户正在就一篇论文向你提问，论文的标题、摘要和全文已作为上下文提供。
@@ -184,14 +310,129 @@ function buildTagsMessages({ title, abstract, fulltext, maxInputChars = 24000, p
   ];
 }
 
+// ============================================================================
+// 输入预算：每任务独立上限（v3.9）
+// ============================================================================
+
+const DEFAULT_MAX_INPUT_CHARS = 24000;
+/** 默认最大输入 **tokens**（OpenAI 标准：上下文窗口以 token 计，非字符）。
+ *  32000 ≈ 旧 24000 字符的 token 等价（÷3.5），对 128K 上下文模型安全；1M 模型可填 1000000。 */
+const DEFAULT_MAX_INPUT_TOKENS = 32000;
+/** token→字符换算系数（中英混排安全估值：英文 ~4 chars/token、中文 ~1.5，取 3.5 偏保守，宁可少喂不超限）。 */
+const CHARS_PER_TOKEN = 3.5;
+/** 可独立配置输入上限的任务名。新增任务要同步 public/app.js 设置页的输入项。 */
+const INPUT_BUDGET_TASKS = ['summary', 'tags', 'notes', 'concepts', 'formulas', 'chat'];
+
+/** token 数 → 字符预算（向下取整；非正/NaN → 0 表示「无效，回退」）。
+ *  build*Messages 仍按字符 .slice，故 token 上限在此折算成字符预算。 */
+function tokensToCharBudget(tokens) {
+  const t = Number(tokens);
+  return Number.isFinite(t) && t > 0 ? Math.floor(t * CHARS_PER_TOKEN) : 0;
+}
+
+/** 取某任务的全文输入上限（**返回字符预算**，供 build*Messages 的 .slice 直接用）。
+ *  优先级（v3.11 起以 tokens 为准，旧 chars 字段作废弃别名向后兼容）：
+ *    ai.taskMaxInputTokens[task] > ai.maxInputTokens
+ *    > （旧）ai.taskMaxInputChars[task] > （旧）ai.maxInputChars
+ *    > DEFAULT_MAX_INPUT_TOKENS（折算成字符）
+ *  - tokens 字段命中 → tokensToCharBudget(tokens)（token×3.5）；
+ *  - 仅旧 chars 字段命中 → 原值直传（兼容存量 config.json / papers.json，按字符语义不变）；
+ *  - 都没设 → tokensToCharBudget(DEFAULT_MAX_INPUT_TOKENS)。
+ *  null / '' / 非正数 视为「跟随全局」（设置页清空即回落），故不能简单用 `?? `。
+ *  **单一入口**：ai.js 内所有 build*Messages 一律经它取值，勿再各自解构 config.ai.maxInputChars。
+ *  返回值名义仍是「字符预算」——历史调用方（含聊天 maxInputChars*0.6、pickMathDenseText cap）零改动。 */
+function resolveMaxInputChars(config, task) {
+  const ai = (config && config.ai) || {};
+  const perTok = ai.taskMaxInputTokens || {};
+  const perChar = ai.taskMaxInputChars || {};
+  // 1. 任务级 tokens
+  const taskTok = Number(perTok[task]);
+  if (Number.isFinite(taskTok) && taskTok > 0) return tokensToCharBudget(taskTok);
+  // 2. 全局 tokens
+  const globalTok = Number(ai.maxInputTokens);
+  if (Number.isFinite(globalTok) && globalTok > 0) return tokensToCharBudget(globalTok);
+  // 3. 任务级 chars（旧别名）
+  const taskChar = Number(perChar[task]);
+  if (Number.isFinite(taskChar) && taskChar > 0) return taskChar;
+  // 4. 全局 chars（旧别名）
+  const globalChar = Number(ai.maxInputChars);
+  if (Number.isFinite(globalChar) && globalChar > 0) return globalChar;
+  // 5. 内置默认（tokens 折算）
+  return tokensToCharBudget(DEFAULT_MAX_INPUT_TOKENS);
+}
+
+// 数学密度打分用的符号集：运算符 / 关系符 / 集合符 / 希腊字母 / pdfjs 抽取残留的私有字形。
+// 私有字形（U+0000-U+001F）是 pdfjs 抽 PDF 数学字体时的典型产物（如 ε → \u000f），
+// 它本身就是「这段有公式」的强信号，故计入密度。
+/* eslint-disable no-control-regex -- 私有字形（pdfjs 数学字体残留）正是「此处有公式」的强信号 */
+const MATH_CHARS_RE =
+  /[\u0000-\u0008\u000b\u000c\u000e-\u001f∑∏∫∮∇∂√∞≤≥≠≈≡∝∈∉⊂⊆∀∃⊕⊗×÷±∧∨¬→←↔⇒⇔∥⌊⌋⌈⌉αβγδεζηθικλμνξπρστυφχψωΓΔΘΛΞΠΣΦΨΩ]/g;
+/* eslint-enable no-control-regex */
+
+/** 段落数学密度：数学符号数 + 等号数，按长度归一（短段不因基数小而虚高，故加平滑项）。 */
+function mathDensity(s) {
+  const mathHits = (s.match(MATH_CHARS_RE) || []).length;
+  const eqHits = (s.match(/=/g) || []).length;
+  return (mathHits + eqHits) / (s.length + 200);
+}
+
+/**
+ * 全文预筛：公式散布全篇，直接 `slice(0, budget)` 会漏掉后半篇的公式。
+ * - 不超预算：**原样返回**（128k 上下文模型下多数论文走这条，零信息损失）。
+ * - 超预算：按空行切段，按数学密度降序选段直到填满预算，再**按原文顺序**拼回，段间插 `\n…\n`。
+ * - 全篇无数学符号（密度全 0）：退化为头部截断，不返回空。
+ */
+function pickMathDenseText(fulltext, budget) {
+  const text = String(fulltext || '');
+  if (!text) return '';
+  const cap = Number(budget) > 0 ? Number(budget) : DEFAULT_MAX_INPUT_CHARS;
+  if (text.length <= cap) return text;
+
+  const paras = text.split(/\n\s*\n/).map((p, i) => ({ i, p, d: mathDensity(p) }));
+  if (!paras.some((x) => x.d > 0)) return text.slice(0, cap);
+
+  const picked = [];
+  let used = 0;
+  for (const item of [...paras].sort((a, b) => b.d - a.d)) {
+    if (item.d <= 0) break;
+    const cost = item.p.length + 3; // 段间分隔符开销
+    if (used + cost > cap) continue; // 跳过放不下的，继续找更小的密集段
+    picked.push(item);
+    used += cost;
+  }
+  if (!picked.length) return text.slice(0, cap);
+  picked.sort((a, b) => a.i - b.i);
+  return picked
+    .map((x) => x.p)
+    .join('\n…\n')
+    .slice(0, cap);
+}
+
+/** 构造「增量抽取公式」的请求消息：把已有公式（规范名 + latex）喂给模型以避免重复造条目。 */
+function buildFormulaMessages({ title, abstract, fulltext, existingFormulas, maxInputChars, prompt }) {
+  const cap = Number(maxInputChars) > 0 ? Number(maxInputChars) : DEFAULT_MAX_INPUT_CHARS;
+  const head = (abstract || '').slice(0, 4000);
+  const body = pickMathDenseText(fulltext, cap);
+  const have =
+    (existingFormulas || [])
+      .slice(0, 200)
+      .map((f) => `- ${f.canonicalName}：$${f.latex || ''}$`)
+      .join('\n') || '（暂无）';
+  const user = `标题：${title || '（未知）'}\n摘要：${head}\n\n论文全文（节选）：\n${body}\n\n已有公式（沿用其 canonicalName，勿重复造条目）：\n${have}\n\n请抽取本篇的核心公式，按指定 JSON 输出。`;
+  return [
+    { role: 'system', content: prompt && prompt.trim() ? prompt : DEFAULT_FORMULA_PROMPT },
+    { role: 'user', content: user },
+  ];
+}
+
 /** 构造「增量抽取概念」的请求消息：把已有 term 喂给模型以避免重复 */
-function buildConceptMessages({ title, abstract, fulltext, existingTerms, maxInputChars = 24000 }) {
+function buildConceptMessages({ title, abstract, fulltext, existingTerms, maxInputChars = 24000, prompt }) {
   const head = (abstract || '').slice(0, 4000);
   const body = (fulltext || '').slice(0, maxInputChars);
   const have = (existingTerms || []).slice(0, 500).join('、') || '（暂无）';
   const user = `标题：${title || '（未知）'}\n摘要：${head}\n\n论文全文（节选）：\n${body}\n\n已有概念（避免重复）：${have}\n\n请抽取**新的**关键概念，按指定 JSON 输出。`;
   return [
-    { role: 'system', content: CONCEPT_PROMPT },
+    { role: 'system', content: prompt && String(prompt).trim() ? String(prompt).trim() : DEFAULT_CONCEPT_PROMPT },
     { role: 'user', content: user },
   ];
 }
@@ -244,6 +485,29 @@ function parseConceptResult(text) {
   return [];
 }
 
+/** 公式抽取输出解析：与 parseConceptResult 同款「先裸数组、再包裹对象」双路容错。
+ *  裸数组优先是因为 parseAiJson 只认 `{…}`，会把 `[{…}]` 里的内层对象误抓出来。 */
+function parseFormulaResult(text) {
+  if (!text) return [];
+  let s = String(text).trim();
+  const fence = s.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fence) s = fence[1].trim();
+  const aFirst = s.indexOf('[');
+  const aLast = s.lastIndexOf(']');
+  if (aFirst !== -1 && aLast !== -1 && aLast > aFirst) {
+    try {
+      const arr = JSON.parse(s.slice(aFirst, aLast + 1));
+      if (Array.isArray(arr)) return arr;
+    } catch {}
+  }
+  const obj = parseAiJson(s);
+  if (obj) {
+    if (Array.isArray(obj)) return obj;
+    if (Array.isArray(obj.formulas)) return obj.formulas;
+  }
+  return [];
+}
+
 /** 解析 extractTagsTopics 的输出，保证结构稳定：{ tags:[], topics:[], metadata|null }。
  *  解析失败时返回空结构（不抛），由 scanner 判定是否写入。 */
 function parseTagsResult(text) {
@@ -289,10 +553,21 @@ function applySettingsOverride(config, settings) {
   //     extraModels（Phase 2 模型切换器静态候选列表）特殊：数组类型，!== undefined 即覆盖。---
   const aiOverride = s.ai || {};
   const baseAi = config && config.ai ? { ...config.ai } : {};
-  for (const k of ['baseURL', 'apiKey', 'model', 'maxInputChars', 'timeoutMs']) {
+  for (const k of ['baseURL', 'apiKey', 'model', 'maxInputChars', 'maxInputTokens', 'timeoutMs']) {
     if (aiOverride[k] !== undefined && aiOverride[k] !== '') baseAi[k] = aiOverride[k];
   }
   if (Array.isArray(aiOverride.extraModels)) baseAi.extraModels = aiOverride.extraModels.slice();
+  // taskMaxInputChars（旧别名）/ taskMaxInputTokens（v3.11 主字段）：每任务输入预算，**深合并**，同 discover.weights。
+  // 值语义由 resolveMaxInputChars 定义（null/''/非正数 = 跟随全局），故原样写入不过滤——
+  // 设置页清空某任务时正是靠写 null 回落全局。
+  if (aiOverride.taskMaxInputChars !== undefined) {
+    const baseT = config && config.ai && config.ai.taskMaxInputChars ? config.ai.taskMaxInputChars : {};
+    baseAi.taskMaxInputChars = { ...baseT, ...(aiOverride.taskMaxInputChars || {}) };
+  }
+  if (aiOverride.taskMaxInputTokens !== undefined) {
+    const baseT = config && config.ai && config.ai.taskMaxInputTokens ? config.ai.taskMaxInputTokens : {};
+    baseAi.taskMaxInputTokens = { ...baseT, ...(aiOverride.taskMaxInputTokens || {}) };
+  }
   eff.ai = baseAi;
 
   // --- 以下新增段统一规则：!== undefined 即覆盖（正确处理布尔 false / 数值 0）。
@@ -339,6 +614,16 @@ function applySettingsOverride(config, settings) {
   if (trOverride.targetLang !== undefined) baseTr.targetLang = trOverride.targetLang;
   eff.translate = baseTr;
 
+  // formulas 段（公式抽取引擎：engine=ai|mineru，mineruUrl，namingPrompt（MinerU 命名提示词））
+  const fOverride = s.formulas || {};
+  const baseF = config && config.formulas ? { ...config.formulas } : {};
+  if (fOverride.engine !== undefined) baseF.engine = fOverride.engine;
+  if (fOverride.mineruUrl !== undefined && fOverride.mineruUrl !== '') baseF.mineruUrl = fOverride.mineruUrl;
+  // namingPrompt 空串=回退默认（与 mineruUrl/apiKey 一致），!== '' 才覆盖
+  if (fOverride.namingPrompt !== undefined && fOverride.namingPrompt !== '')
+    baseF.namingPrompt = fOverride.namingPrompt;
+  eff.formulas = baseF;
+
   return eff;
 }
 
@@ -351,22 +636,25 @@ function applySettingsOverride(config, settings) {
  *  - jsonMode=true（默认）：强制 response_format: json_object，用于结构化抽取。
  *  - jsonMode=false：不设 response_format，允许模型自由输出 Markdown / 纯文本（用于总结）。
  *  - chatParams.model：可选，覆盖 config.ai.model（前端模型切换器用，须经白名单校验）。
+ *  - chatParams.timeoutMs：可选，单次调用超时覆盖（如概念总览图等大产出生成远超默认 120s）。
+ *  - chatParams.maxRetries：可选，重试次数覆盖（长耗时调用应调小，避免超时后反复重试白白耗时）。
  *  - messages[i].content 支持数组（OpenAI 多模态：[{type:'text',text},{type:'image_url',image_url:{url}}]），
  *    原样透传给上游，用于视觉问答。 */
 async function callChat({ messages, config, fetchImpl = fetch, jsonMode = true, chatParams }) {
   const { baseURL, apiKey, model, timeoutMs = 120000 } = config.ai;
   const url = `${String(baseURL).replace(/\/$/, '')}/chat/completions`;
   const cp = chatParams || {};
+  const effTimeoutMs = cp.timeoutMs != null ? cp.timeoutMs : timeoutMs;
   const reqBody = { model: cp.model || model, messages, temperature: cp.temperature != null ? cp.temperature : 0.3 };
   if (cp.topP != null) reqBody.top_p = cp.topP;
   if (cp.maxTokens != null) reqBody.max_tokens = cp.maxTokens;
   if (cp.thinking != null) reqBody.thinking = cp.thinking; // GLM 对象格式 {type:"enabled"|"disabled"}，由 router 解析
   if (jsonMode) reqBody.response_format = { type: 'json_object' };
-  const maxRetries = 4;
+  const maxRetries = cp.maxRetries != null ? cp.maxRetries : 4;
   let lastErr;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     const signal =
-      typeof AbortSignal !== 'undefined' && AbortSignal.timeout ? AbortSignal.timeout(timeoutMs) : undefined;
+      typeof AbortSignal !== 'undefined' && AbortSignal.timeout ? AbortSignal.timeout(effTimeoutMs) : undefined;
     let res;
     try {
       res = await fetchImpl(url, {
@@ -409,6 +697,7 @@ async function callChatStream({ messages, config, fetchImpl = fetch, jsonMode = 
   const { baseURL, apiKey, model, timeoutMs = 120000 } = config.ai;
   const url = `${String(baseURL).replace(/\/$/, '')}/chat/completions`;
   const cp = chatParams || {};
+  const effTimeoutMs = cp.timeoutMs != null ? cp.timeoutMs : timeoutMs;
   const reqBody = {
     model: cp.model || model,
     messages,
@@ -419,11 +708,11 @@ async function callChatStream({ messages, config, fetchImpl = fetch, jsonMode = 
   if (cp.maxTokens != null) reqBody.max_tokens = cp.maxTokens;
   if (cp.thinking != null) reqBody.thinking = cp.thinking; // GLM 对象格式 {type:"enabled"|"disabled"}，由 router 解析
   if (jsonMode) reqBody.response_format = { type: 'json_object' };
-  const maxRetries = 4;
+  const maxRetries = cp.maxRetries != null ? cp.maxRetries : 4;
   let lastErr;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     const signal =
-      typeof AbortSignal !== 'undefined' && AbortSignal.timeout ? AbortSignal.timeout(timeoutMs) : undefined;
+      typeof AbortSignal !== 'undefined' && AbortSignal.timeout ? AbortSignal.timeout(effTimeoutMs) : undefined;
     let res;
     try {
       res = await fetchImpl(url, {
@@ -539,7 +828,7 @@ function parseSseBody(text, onToken) {
 /** 生成总结：自由 Markdown 调用（jsonMode:false）。
  *  返回模型原文字符串（未解析 JSON）。调用方用 buildSummaryMarkdown 归一化后存储。 */
 async function summarize({ title, abstract, fulltext, config, fetchImpl = fetch, prompt }) {
-  const { maxInputChars = 24000 } = config.ai;
+  const maxInputChars = resolveMaxInputChars(config, 'summary');
   const messages = buildSummaryMessages({ title, abstract, fulltext, maxInputChars, prompt });
   const text = await callChat({ messages, config, fetchImpl, jsonMode: false });
   return text;
@@ -559,7 +848,7 @@ function buildNotesMessages({ title, abstract, fulltext, maxInputChars = 24000, 
 /** 生成笔记骨架：自由 Markdown 调用（jsonMode:false），返回六段式 Markdown 原文。
  *  调用方用 splitMarkdownToCards 拆成骨架卡。 */
 async function generateNotes({ title, abstract, fulltext, config, fetchImpl = fetch, prompt }) {
-  const { maxInputChars = 24000 } = config.ai;
+  const maxInputChars = resolveMaxInputChars(config, 'notes');
   const messages = buildNotesMessages({ title, abstract, fulltext, maxInputChars, prompt });
   const text = await callChat({ messages, config, fetchImpl, jsonMode: false });
   return text;
@@ -568,18 +857,86 @@ async function generateNotes({ title, abstract, fulltext, config, fetchImpl = fe
 /** 抽取标签/主题（+ metadata 兜底）：强制 JSON 调用。
  *  返回归一化后的 { tags:[], topics:[], metadata|null }，解析失败返回空结构（不抛）。 */
 async function extractTagsTopics({ title, abstract, fulltext, config, fetchImpl = fetch, prompt }) {
-  const { maxInputChars = 24000 } = config.ai;
+  const maxInputChars = resolveMaxInputChars(config, 'tags');
   const messages = buildTagsMessages({ title, abstract, fulltext, maxInputChars, prompt });
   const text = await callChat({ messages, config, fetchImpl, jsonMode: true });
   return parseTagsResult(text);
 }
 
 /** 仅抽取概念（用于「对选中论文重新抽取并追加」） */
-async function extractConcepts({ title, abstract, fulltext, existingTerms, config, fetchImpl = fetch }) {
-  const { maxInputChars = 24000 } = config.ai;
-  const messages = buildConceptMessages({ title, abstract, fulltext, existingTerms, maxInputChars });
+async function extractConcepts({ title, abstract, fulltext, existingTerms, config, fetchImpl = fetch, prompt }) {
+  const maxInputChars = resolveMaxInputChars(config, 'concepts');
+  const messages = buildConceptMessages({ title, abstract, fulltext, existingTerms, maxInputChars, prompt });
   const text = await callChat({ messages, config, fetchImpl });
   return parseConceptResult(text);
+}
+
+/** 概念总览图生成（v3.10）：把概念清单喂给模型，产出单文件 HTML 全览图。
+ *  - concepts：store.concepts（含 term/definition/category/paperIds）。
+ *  - prompt：默认内置 DEFAULT_CONCEPT_MAP_PROMPT，可被 settings 覆盖。
+ *  - prevHtml：优化已有制品时传入原 HTML，让模型在其基础上按新 prompt 调整（而非从零重做）。
+ *  返回 HTML 字符串（已剥 ```html 围栏）。jsonMode:false（HTML 非 JSON）。 */
+async function generateConceptMap({ concepts, config, fetchImpl = fetch, prompt, prevHtml }) {
+  const sys = prompt && String(prompt).trim() ? String(prompt).trim() : DEFAULT_CONCEPT_MAP_PROMPT;
+  // 精简概念清单喂给模型（term/definition/category + 出现论文数；过多时截断防超长）
+  const items = (Array.isArray(concepts) ? concepts : [])
+    .map((c) => ({
+      term: c.term || '',
+      definition: (c.definition || '').slice(0, 120),
+      category: c.category || 'other',
+      paperCount: Array.isArray(c.paperIds) ? c.paperIds.length : 0,
+    }))
+    .slice(0, 400);
+  const user =
+    '概念清单（JSON）：\n' +
+    JSON.stringify(items, null, 2) +
+    (prevHtml
+      ? '\n\n这是之前生成的总览图 HTML，请在它基础上按我的新要求调整（保留好的部分，改进不足）：\n```html\n' +
+        String(prevHtml).slice(0, 60000) +
+        '\n```'
+      : '') +
+    '\n\n请生成单文件 HTML 概念总览图，直接输出 HTML 文档。';
+  const text = await callChat({
+    messages: [
+      { role: 'system', content: sys },
+      { role: 'user', content: user },
+    ],
+    config,
+    fetchImpl,
+    jsonMode: false,
+    // 单文件 HTML 大产出生成耗时常远超默认 timeoutMs（120s）——超时 abort 会走重试链白耗 10 分钟仍 502，
+    // 制品永远落不了库。给足 10 分钟预算（与前端 abort 一致），且只重试 1 次（超时重试无意义）。
+    chatParams: { timeoutMs: 600000, maxRetries: 1 },
+  });
+  // 剥 ```html / ``` 围栏（模型偶发包裹）
+  let html = String(text || '').trim();
+  const fence = html.match(/^```(?:html)?\s*([\s\S]*?)```\s*$/i);
+  if (fence) html = fence[1].trim();
+  return html;
+}
+
+/** 抽取核心公式（v3.9）：强制 JSON 调用。返回原始 item 数组（未归一化）——
+ *  归一化与跨论文合并由 src/core/formulas 的 mergeFormulas 负责，本层只管拿数据。
+ *  输入预算走任务级 `formulas`（默认远大于总结，因为公式散布全篇）。 */
+async function extractFormulas({ title, abstract, fulltext, existingFormulas, config, fetchImpl = fetch, prompt }) {
+  const maxInputChars = resolveMaxInputChars(config, 'formulas');
+  const messages = buildFormulaMessages({ title, abstract, fulltext, existingFormulas, maxInputChars, prompt });
+  const text = await callChat({ messages, config, fetchImpl, jsonMode: true });
+  return parseFormulaResult(text);
+}
+
+/** 公式抽取引擎 dispatcher（v3.9）：按 config.formulas.engine 路由到 AI 或 MinerU。
+ *  - engine='mineru'：调 MinerU 解析 PDF 产高保真 LaTeX，再喂 AI 批量命名（MinerU 不给 canonicalName）。
+ *  - 其余（默认 'ai'）：走原 extractFormulas（喂全文给 LLM）。
+ *  scanner 两处公式调用统一走此 dispatcher，无需感知引擎。MinerU 失败抛错（不偷偷回退 AI）。
+ *  lazy require mineru 避免循环依赖（mineru.js 反向 require 本模块的 callChat）。 */
+async function extractFormulasViaEngine(opts) {
+  const engine = opts && opts.config && opts.config.formulas && opts.config.formulas.engine;
+  if (engine === 'mineru') {
+    const { extractFormulas: mineruExtract } = require('./mineru');
+    return mineruExtract(opts);
+  }
+  return extractFormulas(opts);
 }
 
 /** 论文聊天：注入论文上下文 + 历史 + 本轮问题，返回 AI 回复（自由 Markdown）。
@@ -599,7 +956,7 @@ async function chatPaper({
   extraPapers,
   images,
 }) {
-  const { maxInputChars = 24000 } = config.ai;
+  const maxInputChars = resolveMaxInputChars(config, 'chat');
   const messages = buildChatMessages({
     title,
     abstract,
@@ -628,10 +985,24 @@ async function chatPaper({
   return reply;
 }
 
+/** 从上游模型对象抽取上下文窗口（token 数）。
+ *  OpenAI 原生 /v1/models **不返回**此字段（只 {id,object,created,owned_by}）；
+ *  OpenRouter / newapi 等兼容网关扩展返回，字段名不一，按常见写法兜底：
+ *    context_length（OpenRouter/one-api）> contextLength（驼峰）> max_input_tokens > top_provider.context_length。
+ *  无任一字段 → null（前端不显示，回落手动配置）。 */
+function extractContextLength(m) {
+  if (!m || typeof m !== 'object') return null;
+  const v =
+    m.context_length ?? m.contextLength ?? m.max_input_tokens ?? (m.top_provider && m.top_provider.context_length);
+  const n = Number(v);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
 /** 列出可用模型（Phase 2 模型切换器用）。
  *  - 优先调上游 OpenAI 兼容 /v1/models（带 apiKey）；失败/未配置回退 config.ai.model 单条 + extraModels。
  *  - 永不抛错：上游不可达时返回静态候选，保证前端模型切换器总能渲染。
- *  - 返回 { models: [{id, owned_by?}], default, current, source: 'upstream'|'config' }。 */
+ *  - 返回 { models: [{id, owned_by?, contextLength?}], default, current, source: 'upstream'|'config' }。
+ *    contextLength（token 数，可空）来自网关扩展字段，前端模型切换器展示「模型 · 1M」用。 */
 async function listModels({ config, fetchImpl = fetch, timeoutMs = 8000 }) {
   const model = config && config.ai && config.ai.model;
   const baseURL = config && config.ai && config.ai.baseURL;
@@ -641,7 +1012,7 @@ async function listModels({ config, fetchImpl = fetch, timeoutMs = 8000 }) {
     models: [model]
       .filter(Boolean)
       .concat(extra)
-      .map((id) => ({ id })),
+      .map((id) => ({ id, contextLength: null })),
     default: model,
     current: model,
     source: 'config',
@@ -656,10 +1027,16 @@ async function listModels({ config, fetchImpl = fetch, timeoutMs = 8000 }) {
     if (!res.ok) return fallback;
     const data = await res.json();
     const list = Array.isArray(data && data.data)
-      ? data.data.map((m) => ({ id: m.id, owned_by: m.owned_by })).filter((m) => m && m.id)
+      ? data.data
+          .map((m) => ({ id: m.id, owned_by: m.owned_by, contextLength: extractContextLength(m) }))
+          .filter((m) => m && m.id)
       : Array.isArray(data && data.models)
         ? data.models
-            .map((m) => (typeof m === 'string' ? { id: m } : { id: m.id, owned_by: m.owned_by }))
+            .map((m) =>
+              typeof m === 'string'
+                ? { id: m, contextLength: null }
+                : { id: m.id, owned_by: m.owned_by, contextLength: extractContextLength(m) },
+            )
             .filter((m) => m && m.id)
         : [];
     if (!list.length) return fallback;
@@ -667,7 +1044,7 @@ async function listModels({ config, fetchImpl = fetch, timeoutMs = 8000 }) {
     const seen = new Set(list.map((m) => m.id));
     for (const id of extra)
       if (id && !seen.has(id)) {
-        list.push({ id });
+        list.push({ id, contextLength: null });
         seen.add(id);
       }
     return { models: list, default: model, current: model, source: 'upstream' };
@@ -681,10 +1058,21 @@ module.exports = {
   DEFAULT_PROMPT, // 别名（向后兼容）
   DEFAULT_SUMMARY_PROMPT,
   DEFAULT_TAGS_PROMPT,
+  DEFAULT_CONCEPT_PROMPT,
   CONCEPT_PROMPT,
+  DEFAULT_CONCEPT_MAP_PROMPT,
   DEFAULT_CHAT_SYSTEM_PROMPT,
   TRANSLATE_SYSTEM_PROMPT,
   DEFAULT_NOTES_PROMPT,
+  DEFAULT_FORMULA_PROMPT,
+  // 输入预算
+  DEFAULT_MAX_INPUT_CHARS,
+  DEFAULT_MAX_INPUT_TOKENS,
+  CHARS_PER_TOKEN,
+  tokensToCharBudget,
+  INPUT_BUDGET_TASKS,
+  resolveMaxInputChars,
+  pickMathDenseText,
   // 消息构造
   buildMessages, // 别名（向后兼容）= buildSummaryMessages
   buildSummaryMessages,
@@ -692,9 +1080,11 @@ module.exports = {
   buildConceptMessages,
   buildChatMessages,
   buildNotesMessages,
+  buildFormulaMessages,
   // 解析
   parseAiJson,
   parseConceptResult,
+  parseFormulaResult,
   parseTagsResult,
   // 归一化
   buildSummaryMarkdown,
@@ -705,6 +1095,9 @@ module.exports = {
   generateNotes,
   extractTagsTopics,
   extractConcepts,
+  generateConceptMap,
+  extractFormulas,
+  extractFormulasViaEngine,
   chatPaper,
   callChat,
   callChatStream,

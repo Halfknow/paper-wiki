@@ -4,6 +4,7 @@
 const path = require('path');
 const fs = require('fs');
 const { mergeTags, mergeTopics, mergeConcepts } = require('../src/core/store');
+const { mergeFormulas } = require('../src/core/formulas');
 const { createMultiSpaceScanner } = require('../src/services/scanner');
 const { createSpaceManager } = require('../src/services/spaces');
 const { createDb, createRepository } = require('../src/db');
@@ -35,6 +36,7 @@ const { cleanFilenameToTitle, createRateLimiter, log } = require('../src/core/ut
     mergeTags,
     mergeTopics,
     mergeConcepts,
+    mergeFormulas,
   };
   const scanner = createMultiSpaceScanner({ manager, deps });
 

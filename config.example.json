@@ -7,7 +7,7 @@
     "baseURL": "http://your-newapi-gateway/v1",
     "apiKey": "sk-xxx",
     "model": "deepseek-chat",
-    "maxInputChars": 24000,
+    "maxInputTokens": 32000,
     "timeoutMs": 120000,
     "extraModels": ["gpt-4o", "glm-4.5v", "claude-sonnet-4"]
   },
@@ -26,5 +26,6 @@
   },
   "summaryPrompt": "",
   "tagsPrompt": "",
-  "translate": { "engine": "google", "targetLang": "zh-CN" }
+  "translate": { "engine": "google", "targetLang": "zh-CN" },
+  "formulas": { "engine": "ai", "mineruUrl": "", "namingPrompt": "" }
 }

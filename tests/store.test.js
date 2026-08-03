@@ -165,6 +165,26 @@ test('conceptIdFor 对同一归一化 term 返回稳定 id', () => {
   assert.ok(conceptIdFor('foo').startsWith('c_'));
 });
 
+// 概念 id 已落库（PG concepts.id），hash 算法一旦变动全库概念即失联。
+// v3.9 把内联 hash 抽成 stableShortHash 供公式复用，这里钉住已知映射防回归。
+test('conceptIdFor 输出逐字节不可变（防 stableShortHash 重构回归）', () => {
+  assert.strictEqual(conceptIdFor('RLHF'), 'c_02335k');
+  assert.strictEqual(conceptIdFor('attention'), 'c_5uqeoy');
+  assert.strictEqual(conceptIdFor('MoE'), 'c_002bk3');
+  assert.strictEqual(conceptIdFor('in-context learning'), 'c_ifasix');
+  assert.strictEqual(conceptIdFor('Transformer'), 'c_x2ha07');
+  assert.strictEqual(conceptIdFor('混合专家'), 'c_e7zzck');
+  assert.strictEqual(conceptIdFor(''), 'c_000000');
+});
+
+test('stableShortHash 与 formulaIdFor 共用同一算法但命名空间隔离', () => {
+  const { stableShortHash } = require('../src/core/store');
+  const { formulaIdFor } = require('../src/core/formulas');
+  assert.strictEqual('c_' + stableShortHash('rlhf'), conceptIdFor('RLHF'));
+  assert.strictEqual('fm_' + stableShortHash('rlhf'), formulaIdFor('RLHF'));
+  assert.notStrictEqual(conceptIdFor('RLHF'), formulaIdFor('RLHF'));
+});
+
 test('mergeConcepts 首次写入新增，重复 term 仅追加 paperId', () => {
   const store = { version: 2, concepts: [], papers: { p1: { id: 'p1', title: 'A' } } };
   const new1 = mergeConcepts(store, [{ term: 'RLHF', definition: '人类反馈强化学习' }], 'p1');

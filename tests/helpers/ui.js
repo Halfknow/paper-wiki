@@ -128,12 +128,26 @@ async function bootUi({ listItems, details, routes, chatReply } = {}) {
   Object.defineProperty(globalThis, 'navigator', { value: w.navigator, configurable: true });
   globalThis.localStorage = w.localStorage;
   globalThis.getComputedStyle = w.getComputedStyle.bind(w);
+  // CSS.escape：浏览器原生有，jsdom 不挂到 globalThis（app.js gotoPaper 用它转义选择器）
+  globalThis.CSS =
+    w.CSS && typeof w.CSS.escape === 'function'
+      ? w.CSS
+      : { escape: (s) => String(s).replace(/[^\w-]/g, (c) => '\\' + c) };
   globalThis.EventSource = backend.FakeEventSource;
   w.EventSource = backend.FakeEventSource;
   globalThis.fetch = backend.fetch;
   w.fetch = backend.fetch;
   globalThis.requestAnimationFrame = (fn) => setTimeout(fn, 0);
   globalThis.confirm = w.confirm = () => true;
+  // PWDialog 桩：app 已改用自定义弹窗（public/dialog.js，jsdom 剥离 <script> 后不会加载）。
+  // 调用时动态委托到 globalThis.confirm/prompt——测试可像以往一样替换这两个全局来控制弹窗结果
+  // （如 search-ui.test.js 里 globalThis.prompt = () => '注意力论文'）。
+  const dlgStub = {
+    confirm: (msg, opts) => Promise.resolve((globalThis.confirm || (() => true))(msg, opts)),
+    prompt: (msg, opts) => Promise.resolve(typeof globalThis.prompt === 'function' ? globalThis.prompt(msg, opts && opts.value) : null),
+    alert: () => Promise.resolve(true),
+  };
+  globalThis.PWDialog = w.PWDialog = dlgStub;
   Object.defineProperty(w.navigator, 'clipboard', {
     value: { writeText: async (t) => { backend.clipWrites.push(t); } },
     configurable: true,

@@ -37,22 +37,25 @@
       </span>
     </div>
     <div class="filter-strip" aria-label="筛选条件">
-      <select id="filter-status" title="状态筛选">
-        <option value="">全部状态</option>
-        <option value="ready">已就绪</option>
-        <option value="unread">未读</option>
-        <option value="reading">在读</option>
-        <option value="done">已读</option>
-        <option value="error">出错</option>
-        <option value="pending">处理中</option>
-      </select>
+      <div class="filter-status-wrap" id="filter-status-wrap">
+        <button class="filter-trigger" id="filter-status-trigger" title="状态筛选" type="button"><span class="ft-label" id="ft-status-label">全部状态</span><span class="ft-chev" aria-hidden="true"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></span></button>
+        <div class="filter-status-menu" id="filter-status-menu" hidden>
+          <button class="fsm-item" type="button" data-value="" data-field="">全部状态</button>
+          <button class="fsm-item" type="button" data-value="ready" data-field="status">已就绪</button>
+          <button class="fsm-item" type="button" data-value="unread" data-field="readStatus">未读</button>
+          <button class="fsm-item" type="button" data-value="reading" data-field="readStatus">在读</button>
+          <button class="fsm-item" type="button" data-value="done" data-field="readStatus">已读</button>
+          <button class="fsm-item" type="button" data-value="error" data-field="status">出错</button>
+          <button class="fsm-item" type="button" data-value="pending" data-field="status">处理中</button>
+        </div>
+      </div>
       <button class="filter-trigger" id="filter-topic-trigger" title="主题筛选（可多选）" type="button"><span class="ft-label">主题</span><span class="ft-count"></span><span class="ft-chev" aria-hidden="true"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></span></button>
       <button class="filter-trigger" id="filter-tag-trigger" title="标签筛选（可多选）" type="button"><span class="ft-label">标签</span><span class="ft-count"></span><span class="ft-chev" aria-hidden="true"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></span></button>
       <label class="star-filter"><input id="filter-starred" type="checkbox" /> 仅星标</label>
     </div>
     <div class="top-actions">
       <button id="btn-concepts" class="btn ghost" title="查看 AI 维护的概念清单">概念</button>
-      <button id="btn-prompt" class="btn ghost" title="编辑总结提示词（设置中心）">提示词</button>
+      <button id="btn-formulas" class="btn ghost" title="查看跨论文归一化的公式清单">公式</button>
       <button id="btn-import" class="btn ghost" title="从 arXiv 网址(abs/pdf/html)或 ID 导入">导入</button>
       <button id="btn-discover" class="btn ghost" title="按主题发现 arXiv 论文（claude 生成检索式 + 引用量排序）">发现</button>
       <button id="btn-scan" class="btn" title="扫描 papers/ 目录">扫描</button>
@@ -139,16 +142,28 @@
       <div class="bulk-bar" id="bulk-bar">
         <span class="sel-count" id="sel-count">已选 0 篇</span>
         <button class="btn ghost sm" id="btn-pick-all" title="全选当前列表的论文">全选</button>
+        <button class="btn ghost sm" id="btn-pick-cancel">取消</button>
         <span class="spacer" style="flex:1"></span>
         <span class="bulk-progress" id="bulk-progress" hidden>
           <span class="bp-text" id="bp-text"></span>
+          <span class="bp-pct" id="bp-pct"></span>
           <span class="bp-bar"><i id="bp-fill"></i></span>
         </span>
-        <button class="btn ghost sm" id="btn-pick-cancel">取消</button>
+        <!-- 批量操作下拉：底部栏，菜单上弹（bottom:100%）。删除是危险操作，保留外露不进菜单 -->
+        <div class="bulk-actions" id="bulk-actions">
+          <button class="filter-trigger bulk-trigger" id="bulk-trigger" title="批量操作" type="button">
+            <span class="ft-label">批量操作</span>
+            <span class="ft-chev" aria-hidden="true"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></span>
+          </button>
+          <div class="bulk-menu" id="bulk-menu" hidden>
+            <button class="bulk-menu-item" id="btn-pick-resume" type="button" title="重新总结（含主题/标签/概念）"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg><span>重新总结</span></button>
+            <button class="bulk-menu-item" id="btn-pick-retag" type="button" title="用当前标签提示词重新打标（标签库联动增删）"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg><span>重新打标</span></button>
+            <div class="bulk-menu-divider"></div>
+            <button class="bulk-menu-item" id="btn-pick-concepts" type="button"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18h6"/><path d="M10 21h4"/><path d="M12 3a6 6 0 0 0-4 10.5c.6.6 1 1.4 1 2.5h6c0-1.1.4-1.9 1-2.5A6 6 0 0 0 12 3z"/></svg><span>抽取并追加概念</span></button>
+            <button class="bulk-menu-item" id="btn-pick-formulas" type="button" title="抽取核心公式并归并入公式清单"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 4h9"/><path d="M13 4L8 20"/><path d="M4 12h8"/><path d="M15.5 10.5l5 7"/><path d="M20.5 10.5l-5 7"/></svg><span>抽取并追加公式</span></button>
+          </div>
+        </div>
         <button class="btn ghost sm danger" id="btn-pick-delete" title="删除已选论文（连同本地 PDF 与全文，不可恢复）"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg> 删除</button>
-        <button class="btn ghost sm" id="btn-pick-resume" title="重新总结（含主题/标签/概念）"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg> 重新总结</button>
-        <button class="btn ghost sm" id="btn-pick-retag" title="用当前标签提示词重新打标（标签库联动增删）"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg> 重新打标</button>
-        <button class="btn sm" id="btn-pick-concepts"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18h6"/><path d="M10 21h4"/><path d="M12 3a6 6 0 0 0-4 10.5c.6.6 1 1.4 1 2.5h6c0-1.1.4-1.9 1-2.5A6 6 0 0 0 12 3z"/></svg> 抽取并追加概念</button>
       </div>
     </section>
 
@@ -165,21 +180,76 @@
   <main class="pane page-view" id="concepts-view" style="display:none;">
     <div class="concepts-head">
       <div class="concepts-head-title">
-        <h2>概念清单<span class="count-badge" id="concepts-count">0</span></h2>
-        <p>跨论文归并的术语与解释，用来做二次检索和复盘。</p>
+        <button class="concepts-back" id="btn-concepts-close" type="button" title="返回论文库" aria-label="返回论文库">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 18 9 12 15 6"/></svg>
+        </button>
+        <div class="concepts-head-text">
+          <h2>概念清单<span class="count-badge" id="concepts-count">0</span></h2>
+          <p>跨论文归并的术语与解释，点击论文胶囊可跳转对应论文。</p>
+        </div>
       </div>
       <div class="concepts-toolbar">
         <input id="concept-q" type="search" placeholder="搜索术语或解释…" />
+        <div class="seg" id="concept-view" role="group" aria-label="视图切换">
+          <button type="button" data-view="list" class="active" title="概念清单（瀑布/紧凑）">清单</button>
+          <button type="button" data-view="maps" title="概念总览图制品">总览图</button>
+        </div>
+        <div class="seg" id="concept-layout" role="group" aria-label="显示方式">
+          <button type="button" data-layout="masonry" class="active" title="瀑布流卡片">瀑布</button>
+          <button type="button" data-layout="list" title="紧凑清单">清单</button>
+        </div>
         <div class="seg" id="concept-sort" role="group" aria-label="排序方式">
           <button type="button" data-sort="freq" class="active">按频次</button>
           <button type="button" data-sort="alpha">按字母</button>
         </div>
         <a class="btn ghost sm" href="/api/concepts.md" target="_blank">下载 Markdown</a>
-        <button class="btn ghost sm" id="btn-concepts-close">← 返回</button>
       </div>
     </div>
-    <div class="concepts-alpha-bar" id="concepts-alpha-bar" hidden></div>
-    <div id="concepts-grid" class="concepts-grid"></div>
+    <!-- 清单视图：概念卡片 -->
+    <div id="concept-list-pane" class="concept-list-pane">
+      <div class="concepts-alpha-bar" id="concepts-alpha-bar" hidden></div>
+      <div id="concepts-grid" class="concepts-grid"></div>
+    </div>
+    <!-- 总览图视图：制品列表 + 生成按钮（v3.10） -->
+    <div id="concept-maps-pane" class="concept-maps-pane" hidden>
+      <div class="concept-maps-section">
+        <div class="cms-head">
+          <h3>总览图制品</h3>
+          <span class="cms-hint">基于概念清单生成的可视化全览图，点击查看/优化/删除</span>
+          <button class="btn sm" id="btn-concept-map" type="button" title="基于当前概念清单生成可视化总览图（架构图/矩阵图/韦恩图）">生成总览图</button>
+        </div>
+        <div id="concept-maps-list" class="concept-maps-list"></div>
+      </div>
+    </div>
+  </main>
+
+  <!-- 公式清单视图（v3.9 归一化公式 + KaTeX 渲染 + 符号表 + 论文跳转） -->
+  <main class="pane page-view" id="formulas-view" style="display:none;">
+    <div class="concepts-head">
+      <div class="concepts-head-title">
+        <button class="concepts-back" id="btn-formulas-close" type="button" title="返回论文库" aria-label="返回论文库">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 18 9 12 15 6"/></svg>
+        </button>
+        <div class="concepts-head-text">
+          <h2>公式清单<span class="count-badge" id="formulas-count">0</span></h2>
+          <p>跨论文归一化到一般形式的核心公式，点击论文胶囊可跳转对应论文。</p>
+        </div>
+      </div>
+      <div class="concepts-toolbar">
+        <input id="formula-q" type="search" placeholder="搜索公式名、LaTeX 或解读…" />
+        <div class="seg" id="formula-layout" role="group" aria-label="显示方式">
+          <button type="button" data-layout="masonry" class="active" title="瀑布流卡片">瀑布</button>
+          <button type="button" data-layout="list" title="紧凑清单">清单</button>
+        </div>
+        <div class="seg" id="formula-sort" role="group" aria-label="排序方式">
+          <button type="button" data-sort="freq" class="active">按频次</button>
+          <button type="button" data-sort="alpha">按名称</button>
+          <button type="button" data-sort="category">按分类</button>
+        </div>
+        <a class="btn ghost sm" href="/api/formulas.md" target="_blank">下载 Markdown</a>
+      </div>
+    </div>
+    <div id="formulas-grid" class="formulas-grid"></div>
   </main>
 
   <!-- 设置中心视图（左下角入口；迁移并扩展原 prompt-view） -->
@@ -195,6 +265,9 @@
         <div class="settings-nav-item" data-tab="ai" data-kw="ai 接口 api key 模型 model 网关"><span class="sni"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3v5"/><path d="M15 3v5"/><path d="M6 8h12v3a6 6 0 0 1-12 0V8z"/><path d="M12 17v4"/></svg></span><span>AI 接口</span></div>
         <div class="settings-nav-item" data-tab="summary" data-kw="总结 提示词 prompt summary"><span class="sni"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="3" width="14" height="18" rx="2"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="9" y1="12" x2="15" y2="12"/><line x1="9" y1="16" x2="13" y2="16"/></svg></span><span>总结提示词</span></div>
         <div class="settings-nav-item" data-tab="tags" data-kw="标签 主题 tags topics 提示词"><span class="sni"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M20.6 13.4l-7.2 7.2a2 2 0 0 1-2.8 0L2 12V2h10l8.6 8.6a2 2 0 0 1 0 2.8z"/><circle cx="7.5" cy="7.5" r="1.3"/></svg></span><span>标签 / 主题提示词</span></div>
+        <div class="settings-nav-item" data-tab="formula" data-kw="公式 formula latex 抽取 提示词"><span class="sni"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4h9"/><path d="M13 4L8 20"/><path d="M4 12h8"/><path d="M15.5 10.5l5 7"/><path d="M20.5 10.5l-5 7"/></svg></span><span>公式提示词</span></div>
+        <div class="settings-nav-item" data-tab="concept" data-kw="概念 concept 抽取 提示词 分类"><span class="sni"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6"/><path d="M10 21h4"/><path d="M12 3a6 6 0 0 0-4 10.5c.6.6 1 1.4 1 2.5h6c0-1.1.4-1.9 1-2.5A6 6 0 0 0 12 3z"/></svg></span><span>概念提示词</span></div>
+        <div class="settings-nav-item" data-tab="formula-engine" data-kw="公式 引擎 mineru 抽取 backend"><span class="sni"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 9h6v6H9z"/></svg></span><span>公式抽取引擎</span></div>
         <div class="settings-nav-group">采集</div>
         <div class="settings-nav-item" data-tab="scan" data-kw="扫描 间隔 定时 scan"><span class="sni"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><polyline points="21 3 21 8 16 8"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/><polyline points="3 21 3 16 8 16"/></svg></span><span>文件扫描</span></div>
         <div class="settings-nav-item" data-tab="arxiv" data-kw="arxiv 元数据 补全 阈值"><span class="sni"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span><span>arXiv 元数据</span></div>
@@ -252,9 +325,9 @@
             </div>
             <div class="field-row">
               <div class="field">
-                <label>最大输入字符</label>
-                <input type="number" id="ai-maxinput" min="1000" step="1000" />
-                <span class="hint">超长论文按此截断喂给模型。</span>
+                <label>最大输入（tokens）</label>
+                <input type="number" id="ai-maxinput" min="1000" step="1000" placeholder="如 1000000 = 1M 上下文" />
+                <span class="hint">按 token 计（OpenAI 标准）。超长论文按 tokens×~3.5 字符截断喂给模型；1M 上下文模型填 1000000 即喂全文。</span>
               </div>
               <div class="field">
                 <label>请求超时（秒）</label>
@@ -262,6 +335,18 @@
                 <span class="hint">单次调用超时，超时后指数退避重试。</span>
               </div>
             </div>
+            <details class="task-budget" id="task-budget">
+              <summary>各任务输入上限（留空 = 跟随全局）</summary>
+              <p class="hint">不同任务需要的上下文长度差别很大：公式散布全篇，需要远大于总结的窗口；聊天要给多轮历史留位置。单位 tokens，留空则用上面的「最大输入（tokens）」。</p>
+              <div class="task-budget-grid">
+                <label>总结<input type="number" id="tb-summary" min="0" step="1000" placeholder="跟随全局" /></label>
+                <label>标签 / 主题<input type="number" id="tb-tags" min="0" step="1000" placeholder="跟随全局" /></label>
+                <label>笔记骨架<input type="number" id="tb-notes" min="0" step="1000" placeholder="跟随全局" /></label>
+                <label>概念抽取<input type="number" id="tb-concepts" min="0" step="1000" placeholder="跟随全局" /></label>
+                <label>公式抽取<input type="number" id="tb-formulas" min="0" step="1000" placeholder="跟随全局" /></label>
+                <label>论文聊天<input type="number" id="tb-chat" min="0" step="1000" placeholder="跟随全局" /></label>
+              </div>
+            </details>
           </div>
           <div class="editor-actions">
             <button class="btn ghost sm" id="btn-ai-test">测试连接</button>
@@ -312,6 +397,85 @@
               <summary class="save-hint">查看内置默认标签/主题提示词（参考）</summary>
               <pre id="tags-prompt-default-pre" class="md"></pre>
             </details>
+          </div>
+        </div>
+
+        <!-- 公式抽取提示词 -->
+        <div class="settings-panel" data-panel="formula" hidden>
+          <div class="settings-head">
+            <div><h2>公式抽取提示词 <span class="ovr-badge" id="ovr-formula" hidden>自定义</span></h2><p>用于抽取核心公式并归一化到一般形式（强制 JSON 输出）。</p></div>
+          </div>
+          <div class="prompt-panel">
+            <p class="save-hint"><code>canonicalName</code> 是跨论文合并的唯一 key——两篇论文给出同一个规范名才会合并成一条。改提示词时请保留其中的规范名对照表，否则命名漂移会导致合不上。</p>
+            <textarea id="formula-prompt-edit" placeholder="正在加载…"></textarea>
+            <div class="editor-actions">
+              <button class="btn ghost sm" id="btn-formula-prompt-default">恢复默认</button>
+              <button class="btn" id="btn-formula-prompt-save">保存</button>
+              <span class="save-hint" id="formula-prompt-hint"></span>
+            </div>
+            <details>
+              <summary class="save-hint">查看内置默认公式提示词（参考）</summary>
+              <pre id="formula-prompt-default-pre" class="md"></pre>
+            </details>
+          </div>
+        </div>
+
+        <!-- 概念抽取提示词（v3.10） -->
+        <div class="settings-panel" data-panel="concept" hidden>
+          <div class="settings-head">
+            <div><h2>概念抽取提示词 <span class="ovr-badge" id="ovr-concept" hidden>自定义</span></h2><p>用于抽取关键概念并分类（强制 JSON 输出，含 category 字段，驱动概念总览图分组）。</p></div>
+          </div>
+          <div class="prompt-panel">
+            <p class="save-hint">提示词里的 <code>category</code> 枚举决定概念总览图的分组维度；<code>term 规范名对照表</code>决定跨论文能否归并（同一概念不同写法会成重复条目）。</p>
+            <textarea id="concept-prompt-edit" placeholder="正在加载…"></textarea>
+            <div class="editor-actions">
+              <button class="btn ghost sm" id="btn-concept-prompt-default">恢复默认</button>
+              <button class="btn" id="btn-concept-prompt-save">保存</button>
+              <span class="save-hint" id="concept-prompt-hint"></span>
+            </div>
+            <details>
+              <summary class="save-hint">查看内置默认概念提示词（参考）</summary>
+              <pre id="concept-prompt-default-pre" class="md"></pre>
+            </details>
+          </div>
+        </div>
+
+        <!-- 公式抽取引擎（v3.9：AI | MinerU 切换） -->
+        <div class="settings-panel" data-panel="formula-engine" hidden>
+          <div class="settings-head">
+            <div><h2>公式抽取引擎 <span class="ovr-badge" id="ovr-formulas" hidden>已覆盖 config</span></h2><p>选择「抽取并追加公式」的后端。「AI」走已配置的 AI 模型（从全文识别公式并归一化，强跨论文合并）；「MinerU」走自建 MinerU 服务解析 PDF 产出高保真 LaTeX（pdfjs 抽行间公式结构会塌掉，MinerU 补这 20%），再喂 AI 做命名/解读。MinerU 失败不自动回退 AI（便于排查配置）。</p></div>
+          </div>
+          <div class="settings-form">
+            <div class="field-row">
+              <div class="field">
+                <label>抽取引擎 <span class="ovr-badge" id="ovr-formulas-engine" hidden>已覆盖</span></label>
+                <div class="sd-wrap" id="sd-formula-engine-wrap" data-sd-select="formula-engine"></div>
+                <span class="hint" id="formula-engine-hint">MinerU 仍需 AI 接口做公式命名/解读（canonicalName 合并 key）；AI 不可用时降级为 LaTeX 哈希键（能入库但不跨论文合并）。</span>
+              </div>
+              <div class="field">
+                <label>MinerU 服务地址 <span class="ovr-badge" id="ovr-formulas-mineruUrl" hidden>已覆盖</span></label>
+                <input type="text" id="formula-mineru-url" placeholder="http://127.0.0.1:8000/file_parse" autocomplete="off" />
+                <span class="hint">引擎选 MinerU 时必填。官方 MinerU 3.x 用 <code>/file_parse</code> 端点（multipart <code>files</code> 字段）。留空保存=不改。</span>
+              </div>
+            </div>
+          </div>
+          <div class="prompt-panel">
+            <p class="save-hint"><strong>MinerU 命名提示词</strong>：MinerU 只产出 LaTeX，规范名（canonicalName，跨论文合并 key）/名称/解读由 AI 按此提示词批量生成。空=用内置默认。</p>
+            <textarea id="mineru-naming-prompt-edit" placeholder="正在加载…"></textarea>
+            <div class="editor-actions">
+              <button class="btn ghost sm" id="btn-mineru-naming-default">恢复默认</button>
+              <button class="btn" id="btn-mineru-naming-save">保存</button>
+              <span class="save-hint" id="mineru-naming-hint"></span>
+            </div>
+            <details>
+              <summary class="save-hint">查看内置默认命名提示词（参考）</summary>
+              <pre id="mineru-naming-default-pre" class="md"></pre>
+            </details>
+          </div>
+          <div class="editor-actions">
+            <button class="btn ghost sm danger" id="btn-formula-engine-reset">恢复默认</button>
+            <button class="btn" id="btn-formula-engine-save">保存</button>
+            <span class="save-hint" id="formula-engine-hint-save"></span>
           </div>
         </div>
 
@@ -452,25 +616,12 @@
             <div class="field-row">
               <div class="field">
                 <label>翻译引擎 <span class="ovr-badge" id="ovr-translate-engine" hidden>已覆盖</span></label>
-                <select id="translate-engine">
-                  <option value="google">Google 翻译（免费端点，秒回，推荐）</option>
-                  <option value="ai">AI 翻译（流式，保留术语/公式）</option>
-                  <option value="bing">必应 Bing 翻译（外链）</option>
-                  <option value="none">关闭（不显示翻译按钮）</option>
-                </select>
+                <div class="sd-wrap" id="sd-translate-engine-wrap" data-sd-select="translate-engine"></div>
                 <span class="hint" id="translate-engine-hint">AI 用设置中的 AI 接口流式翻译；Google 调免费端点秒回；Bing 暂走外链。</span>
               </div>
               <div class="field">
                 <label>目标语言 <span class="ovr-badge" id="ovr-translate-lang" hidden>已覆盖</span></label>
-                <select id="translate-lang">
-                  <option value="zh-CN">简体中文 zh-CN</option>
-                  <option value="zh-TW">繁体中文 zh-TW</option>
-                  <option value="en">英文 en</option>
-                  <option value="ja">日文 ja</option>
-                  <option value="ko">韩文 ko</option>
-                  <option value="fr">法文 fr</option>
-                  <option value="de">德文 de</option>
-                </select>
+                <div class="sd-wrap" id="sd-translate-lang-wrap" data-sd-select="translate-lang"></div>
                 <span class="hint" id="translate-lang-hint">翻译的目标语言代码。</span>
               </div>
             </div>
@@ -602,8 +753,18 @@
         </span>
       </div>
 
-      <!-- 右：状态 -->
+      <!-- 右：整篇公式/概念抽取（下拉菜单：查看本篇 / 追加抽取 / 重新抽取）+ 状态 -->
       <div class="rb-group rb-right">
+        <div class="rb-extract-wrap" id="rb-extract-formulas-wrap">
+          <button class="rb-icon" id="reader-extract-formulas" type="button" title="公式：查看本篇 / 抽取（追加）/ 重新抽取" aria-haspopup="true" aria-expanded="false">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 4h9"/><path d="M13 4L8 20"/><path d="M4 12h8"/><path d="M15.5 10.5l5 7"/><path d="M20.5 10.5l-5 7"/></svg>
+          </button>
+        </div>
+        <div class="rb-extract-wrap" id="rb-extract-concepts-wrap">
+          <button class="rb-icon" id="reader-extract-concepts" type="button" title="概念：查看本篇 / 抽取（追加）/ 重新抽取" aria-haspopup="true" aria-expanded="false">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18h6"/><path d="M10 21h4"/><path d="M12 3a6 6 0 0 0-4 10.5c.6.6 1 1.4 1 2.5h6c0-1.1.4-1.9 1-2.5A6 6 0 0 0 12 3z"/></svg>
+          </button>
+        </div>
         <span class="rb-status" id="reader-saved"></span>
       </div>
     </div>
@@ -634,6 +795,9 @@
       <!-- 引用 badge 区：划线 + Ctrl+L 添加的选中文本以卡片形式展示（非纯文本塞进 textarea） -->
       <div class="rcd-quotes" id="reader-chat-quotes" hidden></div>
       <div class="rcd-input-row">
+        <!-- 滚动到底部 FAB：作为 .rcd-input-row 子元素，position:absolute top:-22px 锚定输入行顶部边缘，
+             居中浮起半身 → 视觉上「浮在聊天框正上方一点点」（详见 styles.css 注释） -->
+        <button class="scroll-bottom-btn" id="reader-chat-scroll-bottom" title="滚动到底部" aria-label="滚动到底部"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M19 12l-7 7-7-7"/></svg></button>
         <div class="chat-composer" id="reader-chat-composer">
           <div class="chat-composer-context" id="rcd-mentions-row"></div>
           <textarea id="reader-chat-input" rows="1" placeholder="边读边问…  @ 引用其它论文"></textarea>
@@ -643,25 +807,22 @@
                 <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L3 14h9l-1 8 10-12h-9z"/></svg>
                 <span>快捷</span>
               </button>
-              <button class="chat-tool-btn" id="rcd-attach-btn" type="button" title="框选图表提问（视觉）">
+              <button class="chat-tool-btn" id="rcd-attach-btn" type="button" title="上传图片提问（也可在输入框 Ctrl+V 粘贴）">
                 <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
-                <span>图表</span>
+                <span>图片</span>
               </button>
             </div>
             <div class="chat-composer-right">
+              <button class="chat-model-btn" id="rcd-model-btn" type="button" title="切换模型" aria-expanded="false">
+                <span class="cm-name">默认模型</span>
+                <svg class="cm-chev" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+              </button>
               <button class="chat-send-btn" id="reader-chat-send" type="button" title="发送（Enter）" aria-label="发送">
                 <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg>
               </button>
             </div>
           </div>
         </div>
-      </div>
-      <!-- 底部栏：模型切换（从 composer 右侧下移，减少输入区拥挤；popover 仍锚定按钮上弹） -->
-      <div class="rcd-bottom-bar">
-        <button class="chat-model-btn" id="rcd-model-btn" type="button" title="切换模型" aria-expanded="false">
-          <span class="cm-name">默认模型</span>
-          <svg class="cm-chev" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-        </button>
       </div>
     </aside>
   </div>
@@ -806,6 +967,7 @@
   <script src="/vendor/dompurify.js"></script>
   <script src="/vendor/katex.js"></script>
   <script src="/search-dsl.js"></script>
+  <script src="/dialog.js"></script>
   <script type="module" src="/reader.js"></script>
   <script type="module" src="/app.js"></script>
 </body>

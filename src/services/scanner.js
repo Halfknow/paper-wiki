@@ -309,6 +309,7 @@ function createScanner({ store, papersDir, textStore, deps, scanIntervalMs, onEn
           fulltext: text,
           existingTerms,
           config: effConfig,
+          prompt: conceptPromptOf(store),
         });
         const newIds = deps.mergeConcepts(store, items || [], id);
         if (newIds.length) {
@@ -317,6 +318,30 @@ function createScanner({ store, papersDir, textStore, deps, scanIntervalMs, onEn
         }
       } catch (e) {
         log('concepts extract failed', id, e.message);
+      }
+
+      // 6) 自动抽取核心公式（v3.9）：与概念同构——复用全文，归一化后并入空间级公式清单。
+      //    容错：独立 try/catch，失败不影响入库（公式是附加价值，不阻塞 ready）。
+      if (deps.ai.extractFormulas && deps.mergeFormulas) {
+        try {
+          // 引擎 dispatcher：effConfig.formulas.engine='mineru' 走 MinerU（需 filepath），否则走 AI（用 fulltext）
+          const extractFn = deps.ai.extractFormulasViaEngine || deps.ai.extractFormulas;
+          const items = await extractFn({
+            title: store.papers[id].title,
+            abstract: store.papers[id].abstract,
+            fulltext: text,
+            filepath: store.papers[id].filepath,
+            existingFormulas: store.formulas || [],
+            config: effConfig,
+            prompt: formulaPromptOf(store),
+          });
+          const touched = deps.mergeFormulas(store, items || [], id);
+          // 本篇「贡献」的公式 = 本次涉及的全部条目（含并入已有条目的），故按 occurrence 反查
+          store.papers[id].formulaIds = formulaIdsOfPaper(store, id);
+          if (touched.length) log('formulas extracted', id, '+', touched.length, 'new');
+        } catch (e) {
+          log('formulas extract failed', id, e.message);
+        }
       }
 
       store.papers[id].status = 'ready';
@@ -455,6 +480,67 @@ function createScanner({ store, papersDir, textStore, deps, scanIntervalMs, onEn
     ]);
   }
 
+  /** 公式提示词三级回退：store.settings.formulaPrompt > config.formulaPrompt > ai 层内置默认。 */
+  function formulaPromptOf(s) {
+    return (s && s.settings && s.settings.formulaPrompt) || deps.config.formulaPrompt || undefined;
+  }
+  /** 概念提示词三级回退：settings.conceptPrompt > config.conceptPrompt > undefined（用内置默认）。 */
+  function conceptPromptOf(s) {
+    return (s && s.settings && s.settings.conceptPrompt) || deps.config.conceptPrompt || undefined;
+  }
+
+  /** 某篇论文「贡献」的公式 id 列表 = 公式清单里 occurrence 命中该 paperId 的条目。
+   *  以 occurrences 为准而非累加，保证重抽/删除后自动收敛（不会残留幽灵 id）。 */
+  function formulaIdsOfPaper(s, paperId) {
+    return (s.formulas || []).filter((f) => (f.occurrences || []).some((o) => o.paperId === paperId)).map((f) => f.id);
+  }
+
+  /**
+   * 对一批论文「重新抽取公式」并归并入空间级公式清单。
+   * 与 extractConcepts 同模式：复用已提取的全文，串行调 AI，最后一次性 save。
+   * 返回 { processed, added }（added = 新建条目数，不含并入已有条目的 occurrence）。
+   */
+  async function extractFormulas(ids) {
+    let added = 0;
+    let processed = 0;
+    for (const id of ids || []) {
+      const p = store.papers[id];
+      if (!p) continue;
+      const text = (await textStore.load(id).catch(() => null)) || '';
+      if (!text) {
+        log('formula extract: no text', id);
+        continue;
+      }
+      try {
+        const effConfig = deps.ai.applySettingsOverride
+          ? deps.ai.applySettingsOverride(deps.config, store.settings)
+          : deps.config;
+        // 引擎 dispatcher：effConfig.formulas.engine='mineru' 走 MinerU（需 filepath），否则走 AI
+        const extractFn = deps.ai.extractFormulasViaEngine || deps.ai.extractFormulas;
+        const items = await extractFn({
+          title: p.title,
+          abstract: p.abstract,
+          fulltext: text,
+          filepath: p.filepath,
+          existingFormulas: store.formulas || [],
+          config: effConfig,
+          prompt: formulaPromptOf(store),
+        });
+        if (items && items.length && deps.mergeFormulas) {
+          const newIds = deps.mergeFormulas(store, items, id);
+          p.formulaIds = formulaIdsOfPaper(store, id);
+          p.updatedAt = Date.now();
+          added += newIds.length;
+        }
+        processed++;
+      } catch (e) {
+        log('formula extract error', id, e.message);
+      }
+    }
+    await deps.saveStore(store);
+    return { processed, added };
+  }
+
   /**
    * 对一批论文「重新抽取概念」并追加到全局概念清单。
    * 复用已提取的全文（data/text/<id>.txt），按归一化 term 增量去重。
@@ -482,6 +568,7 @@ function createScanner({ store, papersDir, textStore, deps, scanIntervalMs, onEn
           fulltext: text,
           existingTerms,
           config: effConfig,
+          prompt: conceptPromptOf(store),
         });
         if (items && items.length && deps.mergeConcepts) {
           const newIds = deps.mergeConcepts(store, items, id);
@@ -673,6 +760,7 @@ function createScanner({ store, papersDir, textStore, deps, scanIntervalMs, onEn
     drain,
     processOne,
     extractConcepts,
+    extractFormulas,
     retagPapers,
     chatPaper,
     generateNoteCards,
@@ -845,6 +933,11 @@ function createMultiSpaceScanner({ manager, deps }) {
     if (!sub) return { processed: 0, added: 0 };
     return sub.scanner.extractConcepts(ids);
   }
+  async function extractFormulas(spaceId, ids) {
+    const sub = await subFor(spaceId);
+    if (!sub) return { processed: 0, added: 0 };
+    return sub.scanner.extractFormulas(ids);
+  }
   async function retagPapers(spaceId, ids) {
     const sub = await subFor(spaceId);
     if (!sub) return { processed: 0 };
@@ -881,6 +974,7 @@ function createMultiSpaceScanner({ manager, deps }) {
     rescheduleTimer,
     drain,
     extractConcepts,
+    extractFormulas,
     retagPapers,
     chatPaper,
     generateNoteCards,

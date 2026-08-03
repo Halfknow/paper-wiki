@@ -4,6 +4,143 @@
 
 ## [Unpublished]
 
+### Fixed — 概念总览图生成后无制品（v3.12）
+
+**根因**：`callChat` 全局限时 `config.ai.timeoutMs`（默认 120s）对「生成单文件 HTML」这种大产出远远不够——GLM 生成总览图常需 2-5 分钟。超时 abort 被当作网络错误进 4 次指数退避重试（每次再超时 120s），白耗约 10 分钟后 502；前端 5 分钟 abort 兜底先到，用户看到「生成超时」，制品永远落不了库。
+
+- **`callChat`/`callChatStream` 支持单次调用级覆盖**：`chatParams.timeoutMs`（超时）与 `chatParams.maxRetries`（重试次数），不传时行为与之前完全一致。
+- **`generateConceptMap` 用长超时**：`chatParams: { timeoutMs: 600000, maxRetries: 1 }`（10 分钟预算；超时长调用重试无意义，只补 1 次网络层失败）。
+- **前端同步**：`generateConceptMap` 的 abort 兜底 5→10 分钟（与后端一致），按钮/超时文案更新；「优化中」toast 不再承诺「30-90 秒」。
+- **测试**：+8 例——timeoutMs/maxRetries 覆盖、generateConceptMap 非 JSON 模式 + 剥围栏 + prevHtml 注入、POST 生成入库 + settings 回显（不吐 html）/ 空清单 400 / AI 失败 502 不落半成品、PUT 优化不新增制品、DELETE 删除（tests/ai.test.js + 新增 tests/api-conceptmap.test.js）。
+
+### Changed — AI 输入上限改 tokens（OpenAI 标准，v3.11）
+
+模型上下文窗口业界以 **token** 计（gpt-4o 128K、gpt-4.1/glm-4.6 1M），原 `maxInputChars`（字符数，默认 24000 ≈ 6-8K tokens）远未用满大窗口模型。现统一改 tokens，旧字段作废弃别名保留（存量 config.json/papers.json 不破坏）。
+
+- **单一入口 `resolveMaxInputChars(config, task)`**：返回**字符预算**（供 build*Messages 的 `.slice(0, N)` 直接用，签名/返回值不变 → 6 个 build 函数零改动）。优先级：`taskMaxInputTokens[task]` > `maxInputTokens` > （旧）`taskMaxInputChars[task]` > （旧）`maxInputChars` > `DEFAULT_MAX_INPUT_TOKENS`(32000)。tokens 命中经 `tokensToCharBudget(t) = t × 3.5`（中英混排安全估值，偏保守）折算成字符；旧 chars 命中原值直传不折算。
+- **`listModels` 自动检测上下文窗口**：从上游 `/v1/models` 抓 `context_length`（OpenRouter/newapi 网关扩展字段；OpenAI 原生不返回，`extractContextLength` 兜底 `context_length`/`contextLength`/`max_input_tokens`/`top_provider.context_length` 四种写法）。前端模型切换器每项显示「模型 · 1M」徽标（`formatTokens`：128000→128K、1000000→1M）；网关不返回时回落手动填。
+- **设置页**：「最大输入字符」→「最大输入（tokens）」，placeholder「如 1000000 = 1M 上下文」；各任务上限单位改 tokens。`PUT /api/settings/ai` 前端只发 `maxInputTokens`/`taskMaxInputTokens`；`aiSettingsView` 同时回显新旧两套字段（兼容）。
+- **`config.example.json`**：`maxInputChars:24000` → `maxInputTokens:32000`。
+- **测试**：新增 tokens 路径用例（优先级、`tokensToCharBudget` 边界、`listModels` context_length 多字段名兜底）。
+
+### Changed — 公式清单改真正瀑布流（v3.11）
+
+公式卡片从 CSS grid（行优先但同行卡片高度不齐留空隙）改为 **JS 绝对定位 masonry**（Pinterest 式）：顶行从左到右是排序 1..N、下行紧贴上方**无竖向空隙**。
+
+- **`_layoutFormulaMasonry`**：保留扁平有序 DOM（排序即 document order，测试不破），逐卡测高后放进「最短列」设 `top/left/width` → 顶行严格 1..N（所有列初始高 0 取首个最短列即 round-robin），下行无空隙（每列独立堆叠，只留 12px gap）。兜底：jsdom/容器不可见/宽度测不到时跳过定位、移除 `.js-masonry`，回退 CSS grid（有空隙但可读）。
+- **响应式 + 懒加载 + 符号表展开重排**：`resize` 防抖重排（1206px→3 列，726px→2 列）；每批渲染后双 rAF 跑定位；`<details>` 符号表 toggle 监听重排（**注意 toggle 事件不冒泡，必须直挂在每个 `<details>` 上**，不能靠 grid 级事件委托）。
+- **移除顶栏「提示词」按钮**：统一从左下角「设置」→ 总结/标签/公式/概念提示词进入（删 `#btn-prompt` + onclick + active 态切换 + 死 CSS `#prompt-view`）。
+
+### Fixed — 滚动到底部按钮定位 + 外部聊天缺按钮（v3.11）
+
+- **PDF 阅读器抽屉 FAB** 原压进聊天框内（`top:-22px` 34px 按钮重叠 12px）→ 改 `bottom:100%; margin-bottom:6px` 整颗浮在输入框上方留 6px 缝。两处聊天（详情 tab + 抽屉）合并为同一套 `.scroll-bottom-btn` 基类样式。
+- **外部（详情 tab）AI 聊天补上 FAB**：原按钮塞在不滚动的 `.chat-list` 里 + scroll 监听绑错容器 → 永不显示。移到 `.chat-input-shell`（position:sticky 含定位上下文），scroll 监听改绑真正的滚动容器 `.detail-pane`（`#detail` 持久元素，`dataset.chatScrollWired` 守卫一次性绑定，handler 内 `getElementById` 实时重查避免闭包 stale）。顺手修了**原本就坏的自动滚到底**（流式/进 tab/追加消息时滚 `.detail-pane` 而非不滚动的 `#chat-list`）。
+
+### Added — 概念总览图制品（v3.10）
+
+基于当前空间的概念清单，AI 生成**单文件 HTML 可视化全览图**（架构图/矩阵图/韦恩图形态，含视图切换按钮），每次生成保留为「制品」，可基于自定义提示词二次优化。
+
+- **生成**：概念页「生成总览图」按钮 → 可选自定义要求 → `POST /api/concepts/map` → 后端调 `generateConceptMap`（`callChat jsonMode:false` 返回 HTML 字符串）→ 存 `settings.conceptMaps` 数组（限 50，新的在前）→ 自动 iframe 打开。
+- **内置提示词 `DEFAULT_CONCEPT_MAP_PROMPT`**：融入 claude 原生可视化美学（暗色/玻璃拟态/微动画/鲜艳渐变/大胆字体/单文件/视图切换），可在设置页维护。优化已有制品时传 `prevHtml` 让 AI 在原基础上改。
+- **制品 CRUD**：`GET /api/concepts/map/:id`（取完整 html）、`PUT /api/concepts/map {id, prompt}`（优化）、`DELETE /api/concepts/map/:id`。`GET /api/settings` 只回显元信息（不含 html 避免变重重）。无需 migration（settings 是 jsonb 兜底）。
+- **前端**：概念页底部制品列表（名称/时间/查看/优化/新标签页/删除）。查看用 iframe `srcdoc` 全屏覆盖层；新标签页用 blob URL。
+
+### Added — MinerU 公式抽取引擎（v3.10）
+
+公式抽取引擎可在 **AI** 与 **MinerU** 间切换。MinerU 走自建 Docker 服务（官方 `mineru:3.4.0`，`/file_parse` 端点）解析 PDF 产出高保真 LaTeX（pdfjs 抽行间公式结构会塌掉，MinerU 补这 20%），再喂 AI 批量命名/解读。
+
+- **混合策略**：MinerU 只给 LaTeX，不给 `canonicalName`（跨论文合并 key），故 MinerU 出 LaTeX 后再调 AI 一次批量命名（`nameFormulasViaAi`，提示词三级回退）；AI 不可用时降级为 LaTeX 哈希作 canonicalName（能入库但不跨论文合并）。
+- **设置**：`settings.formulas.{engine, mineruUrl, namingPrompt}`（`applySettingsOverride` 新增 formulas 段合并）；设置页「公式抽取引擎」面板（引擎 select + MinerU 服务地址 + MinerU 命名提示词）。
+- **客户端 `src/services/mineru.js`**：POST `/file_parse`（multipart `files` 字段，实测 MinerU 3.4.0 约定）→ 解析 `results.<name>.md_content` → 提取 `$$…$$`/`$…$` LaTeX → AI 命名 → 返回 items（`source:'mineru'`）。失败即失败、不偷偷回退 AI（行为可预期）。
+- **dispatcher**：`extractFormulasViaEngine`（ai.js）按 `config.formulas.engine` 路由；scanner 两处公式调用（processOne + 批量）统一走它，传 `filepath`（MinerU 需要）。
+- **容器访问宿主机 MinerU**：mineruUrl 必须填 `http://host.docker.internal:8000/file_parse`（`127.0.0.1` 在容器内指向容器自身）。
+- **source 字段**：`SOURCES` 加 `'mineru'`（normalizeFormula 校验，否则被强制改成 ai）。
+
+### Changed — 公式/概念抽取交互重构（v3.10）
+
+阅读器右上角的公式/概念抽取改为**下拉菜单 + 阅读器内浮层**，支持二次打开/追加抽取/重新抽取替换。
+
+- **rb-right 两个下拉按钮**：公式 Σ + 概念 💡，每个点击弹下拉菜单（仿空间切换器设计语言）：①查看本篇（显示已抽取数量）；②追加抽取（默认）；③重新抽取（替换本篇，仅已抽取过才显示）。
+- **统一浮层 `showExtractCandidates(kind, items, opts)`**：公式行（KaTeX 渲染 + 名称/canonicalName 可编辑）、概念行（术语 + 解释 + 分类）。三模式：view（只读 + 快捷抽取按钮）、append（勾选入库）、replace（先清本篇再入库）。
+- **merge `mode` 参数**：`POST /api/papers/:id/{formulas,concepts}/merge { items, mode? }`，`mode='replace'` 先 `removePaperFromFormulas`/`removePaperFromConcepts` 清本篇再 merge；默认追加。
+- **概念端点补齐**：新增 `POST /api/papers/:id/concepts/candidates`（extractConcepts 返回候选不入库）+ `concepts/merge`。新增 `removePaperFromConcepts`（store.js，多论文共享的只删 paperId，仅剩本篇的整条删）。
+
+### Changed — 概念抽取提示词升级 + category 字段（v3.10）
+
+概念提示词从 5 行升级到对齐公式提示词质量，并新增 category 分类字段（驱动总览图分组）。
+
+- **`DEFAULT_CONCEPT_PROMPT` 重写**：加完整 JSON schema（term/definition/category）、category 枚举（architecture/attention/loss/optimization/... 11 类）、高频概念规范名对照表（Transformer、Attention、KL Divergence 等 40+）、筛选优先级、去重说明。三级回退（settings > config > default），保留旧名 `CONCEPT_PROMPT` 别名。
+- **category 字段**：`mergeConcepts` 写入（命中只补空）；migration `005-concept-category.sql`（`ALTER TABLE concepts ADD category`）；db SELECT/INSERT/映射加 category；PATCH 支持；概念卡片显示分类徽章。**修复 category 引入的 hash-diff 抖动**（`conceptToHashRow` 稳定哈希——内存对象无 category 键 vs 读回 category:'' 产生相同 hash）。
+- **概念提示词设置页**：仿公式提示词全链路——设置页「概念提示词」面板 + `PUT /api/settings/concept-prompt` + reset known。
+
+### Changed — 阅读器聊天：粘贴图片 + 模型按钮回迁（v3.10）
+
+- **去掉框选截图**，改「粘贴图片 + 文件选择」：删 `startVisionSelect`/`cropRegionToImage`/`extractFormulaFromCrop`/`showFormulaPreview` + 后端 `POST /formulas/vision` + `ai.extractFormulaFromImage`。输入框监听 `paste` 读 clipboard 图片（系统截图后 Ctrl+V）+ 「图片」按钮弹文件选择器，都 push 进 `_chatImages`（复用 chip/视觉问答链路）。长边 1568px 压缩防 papers.json 膨胀。**保留** `/chat/vision` 图片提问通道。
+- **模型按钮回迁**：从抽屉底部 `.rcd-bottom-bar` 移回 composer-right 发送按钮左侧（回滚 v3.8.1 的下移）。**模型参数按钮**也移到 composer-right（模型按钮左侧），参数浮层改底部上弹。
+- **滚动到底部 FAB 修复**：按钮 DOM 移进 `.rcd-input-row`（position:relative）作为子元素，`top:-22px` 正确锚定输入框顶部（原为 drawer 直接子元素，top:-22px 锚到抽屉最顶错位）。
+
+### Changed — 多选工具栏 + 全部状态下拉重构（v3.10）
+
+- **多选动作收进上弹下拉菜单**：5 个动作（重新总结/重新打标/抽取概念/抽取公式）收进「批量操作」下拉（底部栏菜单上弹 `bottom:100%`），删除按钮外露。**真实百分比进度**：改为逐篇循环（concepts/formulas 传单 id 给批量端点，retag/summarize 走单篇端点），每完成 1 篇更新 `done/total`。统一 busy 门 `setBulkBusy`（CSS `.bulk-busy` 类）取代每动作 5 处手动 disabled。**网络中断兜底**：全部 5 个批量动作加 try/finally，连接断时弹「抽取中断」并自动重置 UI（修 dev server 重启导致进度条永久卡住的 bug）。
+- **「全部状态」原生 select → 自定义下拉**：原生 `<select>`（选项面板系统渲染、无法定制）改为与主题/标签按钮同款 `.filter-trigger` 按钮 + `.filter-status-menu` 菜单（indigo 选中态、✓ 标记）。正确区分 `status`（ready/error/pending）与 `readStatus`（unread/reading/done）字段。
+
+### Changed — 公式清单懒加载 + 行优先布局（v3.10）
+
+公式清单卡顿（全量渲染 + 每张卡同步 KaTeX）+ 排序与位置脱节（CSS columns 列优先）。
+
+- **懒加载**：`renderFormulas` 改分批渲染（首批 60，IntersectionObserver 触底追加每批 40），sentinel 显示「已加载 N/M」。grid 级事件委托（`dataset.wired` 守卫），删除/编辑改局部更新（免 `showFormulas` 重拉）。
+- **行优先布局**：`.formulas-grid.masonry-view` 从 CSS `columns`（列优先，排序靠前的落左列）→ CSS `grid`（`grid-template-columns: repeat(auto-fill, minmax(340px,1fr))`，行优先，排序第 1→2→3 从左到右铺第一行）。
+
+### Added — 公式抽取与归一化清单（v3.9）
+
+每篇论文抽取核心公式 → 归一化到「一般形式」→ 跨论文按规范名合并 → 形成空间级公式清单，可从清单跳回论文。设计文档见 [`docs/superpowers/specs/2026-08-03-formula-extraction-design.md`](docs/superpowers/specs/2026-08-03-formula-extraction-design.md)。
+
+**为什么需要「归一化」这一层**：同一个公式在不同论文里符号写法各异（`d_k` vs `d`、`ε` vs `e`），按 LaTeX 文本去重几乎合不上。故让模型额外输出一个 **`canonicalName`**（小写英文连字符，如 `scaled-dot-product-attention`）作为唯一合并 key——与概念清单的 `normalizeTerm` 完全同构（陷阱 4 语义）。论文各自的写法进 `occurrences[].rawLatex` + `symbolMap`，清单页展示一般形式、展开某篇能看到「这篇里 `d_k` 写作 `d`」。
+
+- **数据模型**：store 顶层加 `formulas[]`（per-space），论文加 `formulaIds[]`。条目含 `canonicalName / name / latex / description / category / variables[] / plottable / plotHint / occurrences[] / paperIds / source`。`paperIds` 是 `occurrences` 的投影，不变式由 `mergeFormulas` 单点维护。
+- **纯逻辑层 `src/core/formulas.js`**：`normalizeCanonicalName` / `normalizeLatex`（剥 `$$`、`\[...\]`、`\begin{equation}`、代码围栏，逐层剥；`aligned/cases` 保留）/ `formulaIdFor` / `normalizeFormula(s)` / `mergeFormulas` / `deleteFormula` / `removePaperFromFormulas` / `formulasToMarkdown`。`src/core/store.js` 的 `conceptIdFor` 内联 hash 抽出为共享 `stableShortHash`（**输出逐字节不变**，已加回归测试钉住已知映射——概念 id 已落库）。
+- **合并三规则**：① 命中已有条目**只补空字段**，不覆盖已有 latex/description/variables（否则后来论文的粗糙解读会冲掉先前的好解读）；② 同 paperId 的 occurrence **覆盖而非追加**（重抽幂等）；③ 收尾重建 `paperIds` 并按 canonicalName 排序。
+- **持久化**：migration `004-formulas.sql`（新表 `formulas` + `papers.formula_ids`）；`PAPER_COLS` 加 `formulaIds`（陷阱 22，否则掉进 extra 兜底列）；repo 的 load/hash-diff/upsert/delete 四处镜像 concepts 分支；删空间六表级联。读取边界过 `normalizeFormulas` 自愈。
+- **AI 层**：`DEFAULT_FORMULA_PROMPT`（三级回退 `settings.formulaPrompt > config.formulaPrompt > 内置`，设置页可编辑）内置 **40 条高频公式规范名对照表**压住命名漂移；`extractFormulas` 走 jsonMode；`parseFormulaResult` 双路容错。
+- **数学密度预筛 `pickMathDenseText`**：公式散布全篇，直接 `slice(0, budget)` 会漏掉后半篇。全文不超预算时**原样返回**；超了才按段落数学符号密度（`∑∏∫∇` + 希腊字母 + pdfjs 私有字形）择优、**保序**拼接。
+- **抽取时机**：`processOne` 步骤 6（概念之后，独立 try/catch 不阻塞 ready）+ `scanner.extractFormulas(ids)` 批量重抽（串行，单参 `saveStore`）。
+- **框选补录（视觉通道）**：pdfjs 抽出的**行间公式结构会塌掉**——实测 `Sharp Minima Can Generalize For Deep Nets` 的分式被拼成一行（`( L(θ′) − L(θ) ) 1 + L(θ)`）、`ε` 退化为私有字形 `\u000f`。故在阅读器 composer 加「公式」按钮：框选公式区域 → 复用已有 `cropRegionToImage` + 多模态通道 → `POST /api/papers/:id/formulas/vision` 出高保真 LaTeX → 右下角预览浮层（KaTeX 渲染 + 新建/合并提示 + 撤销）。
+- **API**：`GET /api/formulas`（`?q=` / `?paper=`）、`GET /api/formulas.md`、`PATCH|DELETE /api/formulas/:id`（canonicalName 不可改：它是合并 key 且派生 id）、`POST /api/papers/formulas`、`POST /api/papers/:id/formulas/vision`。`/api/stats` 加 `formulas` 计数，列表/详情视图加 `formulaCount`/`formulaIds`。
+- **前端**：新增顶栏「公式」入口 + `formulas-view`（结构镜像概念清单）。卡片 = KaTeX display 公式 + 中文名 + 规范名 + 频次徽章 + 来源标记 + 解读（走 `renderMd` 单一入口，吃陷阱 33 的 `fixCjkStrong`）+ 可折叠符号表 + 论文胶囊（tooltip 带章节与符号对照，点击跳转）。工具栏：搜索 / 排序（频次·名称·分类）/ 布局（瀑布·清单）/ 下载 Markdown，选择 `localStorage` 持久化。多选工具栏与详情信息 tab 各加抽取入口。编辑删除走 `PWDialog`。
+- **测试**：`tests/formulas.test.js`（20）、`tests/scanner-formulas.test.js`（8）、`tests/api-formulas.test.js`（15）、`tests/formulas-ui.test.js`（14，jsdom 驱动真实 app.js）+ ai/db/store 补测；`tests/helpers/ui.js` 补 `CSS.escape` 全局（jsdom 不挂 globalThis，`gotoPaper` 需要）。总计 449 → 547 例。
+
+### Added — 每任务独立输入预算（v3.9）
+
+原先全项目共用一个 `ai.maxInputChars`（默认 24000），总结/标签/笔记/概念/聊天互相拖累——公式抽取需要的窗口比总结大一个量级。
+
+- 新增 `settings.ai.taskMaxInputChars`（`{summary, tags, notes, concepts, formulas, chat}`，`null` = 跟随全局），`formulas` 默认 **120000**（128k 上下文模型下约 30k token，多数论文可整篇进入）。
+- 新增 `resolveMaxInputChars(config, task)` 作为**单一入口**，ai.js 各 `build*Messages` 一律经它取值，不再各自解构 `config.ai.maxInputChars`。
+- `applySettingsOverride` 对 `taskMaxInputChars` **深合并**（同 `discover.weights`）；`PUT /api/settings/ai` 按白名单校验（非白名单任务键忽略，`0`/空视为跟随全局）。
+- 设置页 AI 段加「各任务输入上限」折叠区（6 个数字输入，placeholder 显示全局值，有覆盖时自动展开）。
+
+### Changed — 概念清单：瀑布流 + 清单视图 + 返回按钮（v3.9.1）
+
+- **瀑布流排版**：卡片容器从 CSS grid（横向等高对齐，长术语卡撑高同行留白）改为 **CSS multi-column 瀑布流**（`column-width:300px` + `break-inside:avoid`），卡片按内容自然不等高排布，类似小红书——消除同行上下留白；hover 时操作按钮浮于卡片右上角（绝对定位），不再撑宽标题行。窄屏自动降为单列。
+- **清单视图（新增）**：工具栏新增「瀑布 / 清单」切换段（`localStorage` 持久化）。清单视图为单行紧凑布局——`频次徽章 | 术语 | 解释摘要（省略）| 论文数 | 操作`，适合快速浏览大量概念；hover 显示编辑/删除。
+- **返回按钮**：从工具栏末尾的「← 返回」文字按钮改为标题左侧的圆形图标按钮（`‹` chevron），与标题垂直顶对齐、视觉更克制，工具栏也腾出空间。
+
+### Fixed — 概念清单视图系统性修复（v3.9）
+
+用户报告概念清单页面 UI 异常（字母索引条占满半屏高度）。实地浏览器排查（headless Edge 多宽度审计）定位到三处叠加问题：
+
+- **字母索引条撑到 380px 高（根因）**：索引条里「无概念字母」的置灰类叫 `.empty`，与详情空态的全局规则 `.empty { margin-top:38vh }`（陷阱 928）撞类——`38vh`（≈342px@900 高视口）把 `.empty` 字母砸到行底，flex 行被撑到 364px、整条索引到 382px。改名为 `.off`（仅 `.concepts-alpha-bar a.off` 命中），并给 `.concepts-alpha-sep` 固定高度 + `align-self:center` 防 flex stretch 兜底。修复后索引条回到 40px 单行。
+- **工具栏「← 返回」掉到第二行**：`.concepts-toolbar` 用 `margin-left:auto` 右对齐时，flex-basis 受 search 输入项 flex-basis 干扰被压缩，导致「下载 Markdown」/「返回」在 1440 宽也换行。改 `flex:1 1 auto; justify-content:flex-end; min-width:0`——工具栏占满剩余宽度、子元素右对齐，三个控件稳定同行；窄屏整体落到下一行（而非内部断开）。同时把「← 返回」移到标题左侧（独立按钮，与工具栏解耦）。
+- **卡片标题行长术语挤压**：长英文术语（如「retrieval-augmented generation with dense passage retrieval and iterative refinement」）把频次徽章/操作按钮挤到换行错位。`.ct` 改 `align-items:flex-start`，`h3` 加 `overflow-wrap:anywhere; line-height:1.4`，徽章/操作行 `flex:0 0 auto` 不再被压缩。
+
+### Added — 概念 → 论文反向导航（v3.9）
+
+- **论文胶囊**：每张概念卡的「出现于」由纯文本（title tooltip）升级为可点击胶囊（`.paper-chip`）。最多平铺 3 个，其余折叠为「+N 篇」（点击就地展开，hover title 仍列全部）。胶囊点击 → 回论文库视图 + 选中该论文（`select`）+ 列表项 `scrollIntoView` 定位 + 1.2s 呼吸高亮（`.paper-item.flash`）。
+- **列表项加 `data-id`**：`.paper-item`（含 ft-item）新增 `data-id`，跳转用 `CSS.escape(id)` 精确定位，与筛选/排序顺序解耦；论文被当前筛选排除时仅打开详情、不报错。
+
+### Changed — 浏览器原生弹窗替换为自定义弹窗（v3.9）
+
+- 新增 `public/dialog.js`（`window.PWDialog`：`confirm / prompt / alert`，Promise 化，与 Indigo 主题模态同一视觉语言，居中卡片 + 半透明遮罩 + 进出场动画，Esc/Enter 键盘分层不干扰阅读器）。替换 app.js 14 处 + reader.js 2 处 `confirm()/prompt()` 调用，配套语义化标题与危险样式（红色标题 + 红色主按钮）。新增 `tests/dialog-ui.test.js` 6 例（真实 DOM 交互）；`tests/helpers/ui.js`、`tests/chat-ui.test.js` 加桩保持向后兼容（`.eslintrc.json` 声明 `PWDialog` 全局）。
+
 ### Changed — 阅读器小交互（v3.8.1）
 
 - **模型切换按钮下移**：PDF 聊天抽屉的模型按钮从 composer 右侧移到抽屉底部独立栏（`.rcd-bottom-bar` 全宽行），输入区不再拥挤；模型 popover 仍锚定按钮上弹。
