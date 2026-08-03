@@ -4,6 +4,11 @@
 
 ## [Unpublished]
 
+### Changed — 阅读器小交互（v3.8.1）
+
+- **模型切换按钮下移**：PDF 聊天抽屉的模型按钮从 composer 右侧移到抽屉底部独立栏（`.rcd-bottom-bar` 全宽行），输入区不再拥挤；模型 popover 仍锚定按钮上弹。
+- **取消 PDF 加载动画**：移除 `#reader-loading` spinner 遮罩，页面直接渐进渲染（元素与 `.done` 就绪信号保留，e2e 无回归）。
+
 ### Fixed — 批注（便签/手写）保存丢失全链路修复（v3.8）
 
 用户报告「除了高亮，便签和手写在 PDF 退出后不会保存」。e2e 逐层埋点（pdf.js UIManager / PaperReader 原型 / PATCH 抓包）挖出三个叠加根因：

@@ -649,16 +649,19 @@
               </button>
             </div>
             <div class="chat-composer-right">
-              <button class="chat-model-btn" id="rcd-model-btn" type="button" title="切换模型" aria-expanded="false">
-                <span class="cm-name">默认模型</span>
-                <svg class="cm-chev" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-              </button>
               <button class="chat-send-btn" id="reader-chat-send" type="button" title="发送（Enter）" aria-label="发送">
                 <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg>
               </button>
             </div>
           </div>
         </div>
+      </div>
+      <!-- 底部栏：模型切换（从 composer 右侧下移，减少输入区拥挤；popover 仍锚定按钮上弹） -->
+      <div class="rcd-bottom-bar">
+        <button class="chat-model-btn" id="rcd-model-btn" type="button" title="切换模型" aria-expanded="false">
+          <span class="cm-name">默认模型</span>
+          <svg class="cm-chev" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
       </div>
     </aside>
   </div>
