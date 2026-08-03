@@ -41,6 +41,21 @@ const VENDOR_MAP = {
   '/vendor/pdfjs-viewer.css': ['pdfjs-dist', 'web/pdf_viewer.css'],
 };
 
+// 前端改用 History API 干净 URL（/paper/:id、/settings/ai）后，直接刷新或分享深链会打到服务端，
+// 而磁盘上并不存在这些路径的文件。SPA fallback：这类路径一律回 index.html，交前端路由器解析。
+/** 保留前缀——这些一律不接管：API、PDF 原文（带 Range）、node_modules 映射。 */
+const RESERVED_PREFIXES = ['/api/', '/papers/', '/vendor/'];
+
+/** 该 pathname 是否属于前端路由（应回 index.html）。判定顺序即优先级，见 tests/spa-fallback.test.js。 */
+function isAppRoute(pathname) {
+  if (typeof pathname !== 'string' || !pathname.startsWith('/')) return false;
+  if (RESERVED_PREFIXES.some((p) => pathname.startsWith(p))) return false;
+  // 末段带扩展名 = 真实静态文件（/app.js、/js/core/router.js、/favicon.ico）
+  const last = pathname.slice(pathname.lastIndexOf('/') + 1);
+  if (last.includes('.')) return false;
+  return true;
+}
+
 function loadConfig() {
   const p = path.join(__dirname, '..', 'config.json'); // config.json 在项目根（compose 挂载点）
   if (!fs.existsSync(p)) {
@@ -183,7 +198,11 @@ async function main() {
       }
 
       // 静态前端：前端源码（html/js/css）禁缓存，避免浏览器用旧 JS 导致改动不生效（本地开发工具，资源极小）
-      const fp = pathname === '/' ? path.join(PUBLIC_DIR, 'index.html') : path.join(PUBLIC_DIR, pathname);
+      // SPA fallback：/library、/paper/:id、/settings/ai 等前端路由在磁盘上没有对应文件，
+      // 回 index.html 让前端路由器接管（否则刷新/分享深链会 404）。
+      const fp = isAppRoute(pathname)
+        ? path.join(PUBLIC_DIR, 'index.html')
+        : path.join(PUBLIC_DIR, pathname);
       if (!fp.startsWith(PUBLIC_DIR)) {
         res.writeHead(400);
         return res.end('Bad path');
@@ -239,4 +258,4 @@ if (require.main === module)
     process.exit(1);
   });
 
-module.exports = { loadConfig, serveStatic, MIME };
+module.exports = { loadConfig, serveStatic, MIME, isAppRoute };
