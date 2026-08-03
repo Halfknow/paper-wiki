@@ -17,6 +17,14 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 let bootSeq = 0; // 见 bootUi 里的 ESM 缓存穿透
 
+// 注册 resolve 钩子，让 `?boot=N` 沿 app.js 的依赖图传播到 public/ 下所有子模块，
+// 否则同一进程里的第二次 bootUi 会复用第一次的模块实例（模块级 state 串味）。
+try {
+  require('node:module').register(pathToFileURL(path.join(__dirname, 'boot-loader.mjs')).href);
+} catch {
+  /* Node < 20.6 无 module.register：单 boot 的测试文件仍能正常工作 */
+}
+
 function jsonRes(data, ok = true) {
   return { ok: true, status: 200, headers: { get: () => 'application/json' }, json: async () => ({ ok, data }) };
 }
