@@ -45,18 +45,23 @@ const DEFAULT_TAGS_PROMPT = `你是一位 AI/ML 论文分类专家。阅读给�
 /** 向后兼容别名：旧代码引用 DEFAULT_PROMPT（现等价于总结提示词）。 */
 const DEFAULT_PROMPT = DEFAULT_SUMMARY_PROMPT;
 
-/** 默认概念抽取提示词（v3.10）：对齐公式提示词质量——加 category 分类、term 规范名对照表、
- *  JSON schema 示例、筛选优先级、去重说明。可被 settings.conceptPrompt / config.conceptPrompt 覆盖（三级回退）。 */
-const DEFAULT_CONCEPT_PROMPT = `你是一位资深 AI/ML 论文研究员。从给定论文中抽取**值得学习的关键概念**（术语、方法、核心机制、重要指标）。
+/** 默认概念抽取提示词（v3.16 优化）：对齐公式提示词质量 + 融合 ConExion/ATE 研究要点——
+ *  强制抽取式（禁止编造文档外术语）、noun phrase 约束、明确排除规则、term 作为跨论文合并 key、
+ *  definition 对齐公式的 description 精细度（是什么+为什么+作用，不复述 term）。
+ *  可被 settings.conceptPrompt / config.conceptPrompt 覆盖（三级回退）。 */
+const DEFAULT_CONCEPT_PROMPT = `你是一位 AI/ML 本体工程专家（ontology expert）。从给定论文中抽取**论文实际提出的、或为理解论文不可或缺的关键概念**（学界命名的术语 / 方法 / 核心机制 / 重要指标）。
 
-## 输出格式（严格 JSON，不要任何额外文字）
-\`\`\`json
-{"concepts":[{"term":"Transformer","definition":"1-2 句精炼解释该概念是什么、解决什么问题","category":"architecture"}]}
-\`\`\`
+## 输出格式（严格 JSON，不要 markdown 围栏，不要任何解释文字）
+{"concepts":[{"term":"Scaled Dot-Product Attention","definition":"通过查询与键的点积衡量相关度、softmax 归一化后对值加权求和的注意力计算；用缩放因子 1/√d_k 抵消点积随维度增大导致的梯度消失。","category":"attention","context":"3.2.1 节，式(1)"}]}
+
+## 核心原则（必须严格遵守）
+- **抽取式，禁止幻觉**：只抽取**论文中真实出现**的概念。绝不能基于你的知识"补充"论文未提及的术语，即便是相关领域常识。每个 term 必须能在论文全文里找到出处。
+- **term 必须是名词短语（noun phrase）**：是学界命名的实体——方法名 / 机制名 / 架构组件 / 损失函数 / 评估指标 / 训练范式。**禁止**动词短语（如"训练模型"）、整句、形容词、泛指词。
+- **term 是跨论文合并的唯一 key**：命名必须**归一化到学界通用写法**。同一概念在不同论文里应输出相同的 term，否则无法归并。优先用对照表里的写法（见下）。
 
 ## 字段约束
-- **term**：概念的**规范学术名**（英文专有名词用首字母大写，如 Transformer、Attention、KL Divergence；通用方法用学界通用写法）。中文术语用学界通行译名（如"缩放点积注意力"）。同一概念在「已有概念」里出现过则**必须复用其原 term 写法**（不要大小写/单复数变体）。
-- **definition**：1-2 句中文精炼解释（≤80 字）。说清"是什么 + 解决什么问题/起什么作用"，不要复述 term。
+- **term**：概念的**规范学术名**——英文专有名词用首字母大写（Title Case，每个实词首字母大写，如 Transformer、Scaled Dot-Product Attention、KL Divergence）；中文术语用学界通行译名（如"缩放点积注意力"）。同一概念在「已有概念」里出现过则**必须复用其原 term 写法**（不要大小写/单复数变体）。**禁止**把缩写和全称拆成两条；优先用学界最通用的形式（如用 GAN 而非 Generative Adversarial Network，除非论文通篇用全称）。
+- **definition**：1-3 句中文精炼解释（建议 30-80 字）。必须包含三要素：**①是什么（机制/定义）②解决什么问题 / 为什么需要它 ③在本论文中起什么作用**。不要复述 term 字面、不要泛泛而谈（错误示例："是一种重要的注意力机制"；正确示例见上方 Scaled Dot-Product Attention）。
 - **category**：从以下枚举中选**最贴切**的一个（小写英文）：
   - \`architecture\`：模型架构/网络结构（Transformer、CNN、RNN、U-Net、Encoder-Decoder）
   - \`attention\`：注意力机制（Self-Attention、Multi-Head Attention、Cross-Attention）
@@ -69,27 +74,34 @@ const DEFAULT_CONCEPT_PROMPT = `你是一位资深 AI/ML 论文研究员。从�
   - \`evaluation\`：评估指标/方法（BLEU、FID、Accuracy、Ablation Study）
   - \`inference\`：推理/解码（Beam Search、Top-k Sampling、KV Cache）
   - \`other\`：以上都不贴切（数据增强、采样策略、理论分析等）
+- **context**：概念在论文中的出处（章节号 / 式号 / 图号，如 "3.2 节"、"式(1)"、"图 3"），便于回溯。论文未明确给章节时填首次出现处的大致位置。
 
 ## 高频概念规范名对照表（命中学名时**必须用此写法**，保证跨论文可归并）
-Transformer、Attention、Self-Attention、Multi-Head Attention、Cross-Attention、
-CNN、RNN、LSTM、GRU、ResNet、U-Net、Encoder-Decoder、Autoencoder、
-KL Divergence、Cross-Entropy Loss、Contrastive Loss、MSE、CTC Loss、
-Adam、SGD、AdamW、Learning Rate Warmup、Dropout、Batch Normalization、Layer Normalization、Weight Decay、
-GAN、VAE、Diffusion Model、DDPM、Autoregressive Model、
-Embedding、Word2Vec、Contrastive Learning、Self-Supervised Learning、
-Pre-training、Fine-tuning、Transfer Learning、RLHF、LoRA、
-BLEU、FID、Perplexity、Ablation Study、
-Beam Search、Top-k Sampling、Temperature Sampling、KV Cache、
-Data Augmentation、Backpropagation、Gradient Clipping、Knowledge Distillation
+Transformer、Attention、Self-Attention、Multi-Head Attention、Cross-Attention、Scaled Dot-Product Attention、
+CNN、RNN、LSTM、GRU、ResNet、U-Net、Encoder-Decoder、Autoencoder、Mixture of Experts、
+KL Divergence、Cross-Entropy Loss、Contrastive Loss、Triplet Loss、MSE、CTC Loss、InfoNCE、
+Adam、SGD、AdamW、Learning Rate Warmup、Cosine Learning Rate Schedule、Dropout、Batch Normalization、Layer Normalization、RMSNorm、Weight Decay、Gradient Clipping、
+GAN、VAE、Diffusion Model、DDPM、Score-Based Model、Autoregressive Model、Flow Matching、Rectified Flow、
+Embedding、Word2Vec、Contrastive Learning、Self-Supervised Learning、Metric Learning、
+Pre-training、Fine-tuning、Transfer Learning、RLHF、DPO、LoRA、QLoRA、Chain-of-Thought、Instruction Tuning、
+BLEU、ROUGE、FID、IS、Perplexity、Ablation Study、Human Evaluation、
+Beam Search、Top-k Sampling、Top-p Sampling、Temperature Sampling、KV Cache、Grouped Query Attention、
+Data Augmentation、Backpropagation、Knowledge Distillation、Quantization、Pruning、Mixture of Experts Routing
+不在表内的用同样的构词法命名（Title Case、学界通用叫法、避免论文私有记号）。
 
-## 抽取优先级（数量 3-10 个，宁缺毋滥）
-1. 论文的**核心创新/主打方法**（必须抽）。
-2. 理解论文不可或缺的**关键基础概念**。
-3. 论文中反复出现的重要**技术组件/指标**。
-**不要抽**：过于常识的词（如"神经网络""训练"）、纯背景介绍性术语、与论文主题无关的工具名。
+## 抽取优先级（数量 3-12 个，宁缺毋滥）
+1. **论文的核心创新/主打方法**（必须抽，这是本篇论文存在的理由）。
+2. **论文反复使用的、理解论文不可或缺的关键技术组件/机制**。
+3. **论文定义/提出的损失函数、评估指标、训练目标**。
+4. 论文标题/摘要里点名的核心术语。
+**坚决不要抽**：
+- 过于常识的通用词（"神经网络""训练""数据""模型""结果"）。
+- 纯背景介绍性、仅在 related work 里一笔带过的他人方法（除非论文核心就是改进它）。
+- 论文未实际使用的工具名/库/数据集名（如"PyTorch""ImageNet"，除非是研究对象）。
+- 动词短语、形容词、整句描述。
 
 ## 去重
-只返回**尚未出现在「已有概念」列表中的新概念**（按规范名比对，大小写/单复数不敏感视为同一）。若全部已存在，返回 \`{"concepts":[]}\`。
+只返回**尚未出现在「已有概念」列表中的新概念**（按规范名比对，大小写/单复数/连字符不敏感视为同一）。若本篇概念全部已存在，返回 \`{"concepts":[]}\`。
 
 只输出 JSON。`;
 
@@ -97,23 +109,21 @@ Data Augmentation、Backpropagation、Gradient Clipping、Knowledge Distillation
 const CONCEPT_PROMPT = DEFAULT_CONCEPT_PROMPT;
 
 /** 概念地图生成提示词（v3.10）：把概念清单喂给模型，产出**单文件 HTML 全览图**。
- *  v3.15 起改**浅色高级风**（用户偏好），并借鉴 Claude 制品提示词的 read_me 模块思想：
- *  提示词内置一份权威「设计令牌」规范（:root CSS 变量统一定义配色/间距/字体/圆角，全部样式
- *  只引用变量）——这是 Claude 原生制品观感精致的关键；另加 never-expose-machinery（只输出
- *  HTML 不叙述）。可被 settings.conceptMapPrompt 覆盖。 */
-const DEFAULT_CONCEPT_MAP_PROMPT = `你是一位顶尖的前端可视化设计师 + AI/ML 知识架构师。给定一份概念清单（含术语、解释、分类、出现论文），生成一个**单文件 HTML 概念地图**，目的是帮助用户一眼厘清这些概念之间的整体脉络与分类结构。
+ *  v3.16 在 v3.10 暗色版（用户反馈效果最好）的美学骨架上做**浅色化**——保留鲜艳渐变主色、
+ *  玻璃拟态卡片质感、氛围光晕背景、大胆展示字体、3 视图交互与微动画，仅把深底翻成浅底。
+ *  可被 settings.conceptMapPrompt 覆盖。 */
+const DEFAULT_CONCEPT_MAP_PROMPT = `你是一位顶尖的前端可视化设计师 + AI/ML 知识架构师。给定一份概念清单（含术语、解释、分类、出现论文），生成一个**单文件 HTML 概念总览图**，目的是帮助用户一眼厘清这些概念之间的整体脉络与分类结构。
 
-## 设计美学（浅色高级风，必须遵循）
-- **浅色主题**：明亮背景（#fafaf9 / #f8fafc / #ffffff 系的暖白或冷白）；卡片用纯白 + 细边框（1px 极浅灰）+ 柔和投影（低透明度、大模糊半径，如 0 1px 2px rgb(15 23 42/.04), 0 8px 24px rgb(15 23 42/.06)）。**禁止深色/暗色背景，禁止玻璃拟态**。
-- **设计令牌先行（最重要）**：在 :root 用 CSS 变量统一定义整套设计令牌——主色 1 个（如 indigo #4f46e5）、每个分类 1 个强调色（低饱和但可辨识：sky / emerald / amber / rose / violet / teal…）、中性色 4 级（文字主/次/弱 + 边框）、间距刻度（4/8/12/16/24/32）、圆角（8/12/16）、字号层级。后续所有样式**只引用变量**，不散落硬编码色值。
-- **配色克制**：大面积留白，中性色为主；强调色只用于标题、分类徽标、连线、关键数据。**不用大面积渐变糊屏，不用高饱和撞色**。
-- **字体**：标题用有表现力的展示字体（Google Fonts，如 Sora / Space Grotesk / Outfit / Manrope，别用 Arial/Inter/system）；正文 15-16px、行高 1.6-1.7 清晰可读；字号层级分明（页标题 ≥30px / 节标题 / 卡片标题 / 正文 / 辅助小字）。
-- **氛围背景**：非纯白死底——可用极浅的网格点阵、淡色径向光晕或几何纹理（透明度 ≤0.05），subtle 不抢内容。
-- **微动画**：加载 staggered reveal（animation-delay 错峰进场）；hover 轻微上浮 + 阴影加深；视图切换平滑过渡。CSS-only 优先，时长 150-300ms，禁止花哨弹跳。
+## 设计美学（浅色 + 玻璃拟态高级风，必须遵循）
+- **浅色主题**：明亮背景（#f8fafc / #f1f5f9 / #eef2ff 系冷白/淡蓝灰），但**不是纯白死底**——叠多层 CSS 径向/线性渐变光晕（如 indigo/violet/sky 的极淡色斑，透明度 0.08-0.15）营造层次与深度。
+- **玻璃拟态卡片**：卡片用半透明白底（rgba(255,255,255,.65~.8)）+ backdrop-filter: blur(12-18px) saturate(1.4) + 1px 半透明边框（rgba(255,255,255,.6)）+ 柔和投影（0 8px 32px rgba(79,70,229,.12)）。卡片浮在光晕背景上，有通透质感。
+- **鲜艳渐变主色**：主色用渐变（#6366f1 indigo → #8b5cf6 violet → #ec4899 pink 系），渐变用于主标题文字（background-clip:text）、主按钮、强调连线、分类徽标。每个分类一个鲜明强调色（sky/emerald/amber/rose/violet/teal 系），分类色用于该组卡片的边框/徽标/节点。
+- **大胆字体**：标题用有表现力的展示字体（Google Fonts，如 Space Grotesk / Sora / Outfit / Manrope，别用 Arial/Inter/system）；主标题用渐变文字 + 大字号（≥36px、font-weight 800）；正文清晰可读（15-16px、行高 1.6）。
+- **微动画**：页面加载用 staggered reveal（animation-delay 错峰进场）；hover 有缩放(1.02-1.04)/上浮/发光/边框高亮；视图切换有过渡。CSS-only 实现优先，时长 200-400ms。
 
 ## 交互（让界面"活"起来，不要静态）
 - 顶部一排**视图切换按钮**，至少提供 3 种视图，点击平滑切换：
-  1. **架构图/分组视图**：按 category 分组（注意力/损失/架构/优化...），每组一个卡片，组内概念以节点/标签排布，组间用连线或层级暗示关系。
+  1. **架构图/分组视图**：按 category 分组（注意力/损失/架构/优化...），每组一个玻璃卡片，组内概念以节点/标签排布，组间用连线或层级暗示关系。
   2. **矩阵图/网格视图**：概念按 [分类 × 频次/出现论文数] 排成矩阵或 treemap，格子大小/颜色深浅反映重要性。
   3. **关系/韦恩图视图**：用重叠区域或网络图展示分类间的交集（同一论文涉及多分类时）。
 - 每个概念可点击/hover 显示其 definition 与出现论文（用输入数据里的信息）。
@@ -129,7 +139,7 @@ const DEFAULT_CONCEPT_MAP_PROMPT = `你是一位顶尖的前端可视化设计�
 会提供概念清单（JSON 数组，每项含 term/definition/category/paperIds 或论文标题）。
 
 ## 输出
-**只输出完整的 HTML 文档**（从 <!DOCTYPE html> 到 </html>）：不要 markdown 代码块围栏、不要任何解释/叙述文字（不要写"我将要…""这个页面包含…"）。`;
+**只输出完整的 HTML 文档**（从 <!DOCTYPE html> 到 </html>），不要 markdown 代码块围栏、不要任何解释文字。`;
 
 /** 默认公式抽取提示词（v3.9）：强制 JSON，抽「核心公式」并**归一化到一般形式**。
  *  可被 settings.formulaPrompt / config.formulaPrompt 覆盖（三级回退，同 summaryPrompt 模式）。
@@ -543,6 +553,17 @@ function buildSummaryMarkdown(md) {
 // ============================================================================
 // 配置覆盖：store.settings.ai 运行时覆盖 config.ai
 // ============================================================================
+
+/** 渠道全局化（v3.19）：把全局渠道（app_state['globalAi']，经 manager.getGlobalAi() 拿到）
+ *  合并进 per-space settings 的 ai 段，供 applySettingsOverride 消费。
+ *  全局渠道存在 → 权威替换 settings.ai.channels/activeChannelId；不存在 → 原样返回
+ *  （回落 per-space channels → 旧版顶层三元组 → config 的优先级阶梯）。
+ *  纯函数：返回浅拷贝，不改入参。 */
+function withGlobalAi(settings, gai) {
+  const s = settings || {};
+  if (!gai || !Array.isArray(gai.channels) || !gai.channels.length) return s;
+  return { ...s, ai: { ...(s.ai || {}), channels: gai.channels, activeChannelId: gai.activeChannelId } };
+}
 
 /** 把 store.settings.ai（用户在设置面板改的）合并到 config.ai 之上，返回**新的**
  *  effectiveConfig，不修改原 config（保持 config 只读语义，避免污染内存映像）。
@@ -1169,6 +1190,7 @@ module.exports = {
   buildSummaryMarkdown,
   // 配置覆盖
   applySettingsOverride,
+  withGlobalAi,
   // AI 调用
   summarize,
   generateNotes,

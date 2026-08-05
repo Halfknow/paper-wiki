@@ -8,6 +8,12 @@
   <link rel="stylesheet" href="/vendor/katex.css" />
   <link rel="stylesheet" href="/vendor/pdfjs-viewer.css" />
   <link rel="stylesheet" href="/styles.css" />
+  <!-- 首帧视图选择（v3.17）：app.js 是 type=module（defer），且启动要先 await loadSpaces()，
+       深链 /concepts 刷新时会先画出论文页再跳走。这里在解析阶段就把路径写给 CSS
+       （styles.css 的 [data-boot-path^="/concepts"] 一族规则），首帧即选中正确视图。
+       故意不含任何映射逻辑——映射全在 CSS 里，避免与 showView() 两处实现漂移；
+       脚本万一失败也只是退化成「先显示论文页」，即当前行为。 -->
+  <script>document.documentElement.dataset.bootPath = location.pathname;</script>
 </head>
 <body>
   <!-- 顶栏 -->
@@ -27,6 +33,26 @@
         <button class="space-menu-item" id="space-manage" type="button">⚙ 管理空间</button>
       </div>
     </div>
+    <!-- 一级导航（v3.17）：论文 / 概念 / 公式 是同一空间的三种切面，故紧贴空间切换器右侧，
+         读作「在 X 空间里看 Y」。用 <a href> 而非 <button>——core/router.js 已拦截站内链接，
+         这样中键可开新标签页、右键可复制链接、hover 有真实 URL 预览。?space= 由 keepParams 自动携带。 -->
+    <nav class="view-nav" id="view-nav" aria-label="主导航">
+      <a class="vn-item" href="/library" data-view="library" title="论文库">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5a1 1 0 0 1 1-1h9l6 6v9a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1z"/><path d="M14 4v6h6"/></svg>
+        <span>论文</span><span class="vn-count" id="vn-count-papers"></span>
+      </a>
+      <a class="vn-item" href="/concepts" data-view="concepts" title="AI 维护的跨论文概念清单">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18h6"/><path d="M10 21h4"/><path d="M12 3a6 6 0 0 0-4 10.5c.6.6 1 1.4 1 2.5h6c0-1.1.4-1.9 1-2.5A6 6 0 0 0 12 3z"/></svg>
+        <span>概念</span><span class="vn-count" id="vn-count-concepts"></span>
+      </a>
+      <a class="vn-item" href="/formulas" data-view="formulas" title="跨论文归一化的公式清单">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 4h9"/><path d="M13 4L8 20"/><path d="M4 12h8"/><path d="M15.5 10.5l5 7"/><path d="M20.5 10.5l-5 7"/></svg>
+        <span>公式</span><span class="vn-count" id="vn-count-formulas"></span>
+      </a>
+    </nav>
+    <span class="topbar-spacer"></span>
+    <!-- 唯一搜索框（v3.17 上下文化）：placeholder 与检索目标随当前视图切换，
+         页内 #concept-q / #formula-q 已退役。附属控件（语法帮助/高级搜索）仅论文页可用。 -->
     <div class="search-wrap">
       <svg class="search-ico" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
       <input id="search" type="search" placeholder="搜索论文…" autocomplete="off" />
@@ -36,30 +62,41 @@
         <span class="search-kbd">Ctrl K</span>
       </span>
     </div>
-    <div class="filter-strip" aria-label="筛选条件">
-      <div class="filter-status-wrap" id="filter-status-wrap">
-        <button class="filter-trigger" id="filter-status-trigger" title="状态筛选" type="button"><span class="ft-label" id="ft-status-label">全部状态</span><span class="ft-chev" aria-hidden="true"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></span></button>
-        <div class="filter-status-menu" id="filter-status-menu" hidden>
-          <button class="fsm-item" type="button" data-value="" data-field="">全部状态</button>
-          <button class="fsm-item" type="button" data-value="ready" data-field="status">已就绪</button>
-          <button class="fsm-item" type="button" data-value="unread" data-field="readStatus">未读</button>
-          <button class="fsm-item" type="button" data-value="reading" data-field="readStatus">在读</button>
-          <button class="fsm-item" type="button" data-value="done" data-field="readStatus">已读</button>
-          <button class="fsm-item" type="button" data-value="error" data-field="status">出错</button>
-          <button class="fsm-item" type="button" data-value="pending" data-field="status">处理中</button>
+    <div class="top-actions">
+      <!-- 状态胶囊（v3.17，取代原先五个 stat-pill）：正常时只剩一枚 activity 图标（v3.18 由色点
+           改矢量——色点语义太弱），处理中 / 出错时**自己把文案顶出来**——后台任务失败却完全静默
+           是可用性红线，不允许把异常全藏进 hover。明细与「立即扫描」收进 popover。 -->
+      <div class="status-chip-wrap" id="status-chip-wrap">
+        <button class="status-chip" id="status-chip" type="button" data-level="idle" aria-expanded="false" aria-haspopup="true" title="索引状态">
+          <svg class="sc-ico" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+          <span class="sc-text" id="sc-text"></span>
+        </button>
+        <div class="status-pop" id="status-pop" hidden>
+          <div class="sp-rows" id="sp-rows"></div>
+          <div class="sp-foot">
+            <button class="btn ghost sm" id="btn-scan" type="button" title="立即扫描 papers 目录并处理新论文">立即扫描</button>
+          </div>
         </div>
       </div>
-      <button class="filter-trigger" id="filter-topic-trigger" title="主题筛选（可多选）" type="button"><span class="ft-label">主题</span><span class="ft-count"></span><span class="ft-chev" aria-hidden="true"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></span></button>
-      <button class="filter-trigger" id="filter-tag-trigger" title="标签筛选（可多选）" type="button"><span class="ft-label">标签</span><span class="ft-count"></span><span class="ft-chev" aria-hidden="true"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></span></button>
-      <label class="star-filter"><input id="filter-starred" type="checkbox" /> 仅星标</label>
-    </div>
-    <div class="top-actions">
-      <button id="btn-concepts" class="btn ghost" title="查看 AI 维护的概念清单">概念</button>
-      <button id="btn-formulas" class="btn ghost" title="查看跨论文归一化的公式清单">公式</button>
-      <button id="btn-import" class="btn ghost" title="从 arXiv 网址(abs/pdf/html)或 ID 导入">导入</button>
-      <button id="btn-discover" class="btn ghost" title="按主题发现 arXiv 论文（claude 生成检索式 + 引用量排序）">发现</button>
-      <button id="btn-scan" class="btn" title="扫描 papers/ 目录">扫描</button>
-      <span id="stats" class="stats"></span>
+      <!-- 「+ 添加」：导入与发现是同一个意图（往空间里加论文）的两条路径，合并成一个主按钮。
+           扫描不在这里——它是重建索引的维护动作，归到状态 popover。 -->
+      <div class="add-menu" id="add-menu">
+        <button class="btn add-trigger" id="btn-add" type="button" aria-haspopup="true" aria-expanded="false">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+          <span>添加</span>
+          <svg class="ft-chev" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+        <div class="add-menu-list" id="add-menu-list" hidden>
+          <button id="btn-import" type="button" title="从 arXiv 网址(abs/pdf/html)或 ID 导入">
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            <span>从 arXiv 导入</span>
+          </button>
+          <button id="btn-discover" type="button" title="按主题发现 arXiv 论文（LLM 生成检索式 + 复合排序）">
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><polygon points="16 8 13.5 13.5 8 16 10.5 10.5 16 8"/></svg>
+            <span>按主题发现</span>
+          </button>
+        </div>
+      </div>
     </div>
   </header>
   <!-- 高级搜索面板（v3.2）：fixed 浮层，脱离 topbar grid 流；与搜索框 DSL 双向同步 -->
@@ -68,42 +105,111 @@
   <div class="saved-searches" id="saved-searches" hidden></div>
   <div id="toast-root" class="toast-root" aria-live="polite" aria-atomic="true"></div>
 
-  <!-- 主布局：侧栏 + 列表 + 详情 -->
-  <main class="layout" id="library-view">
+  <!-- 应用骨架（v3.17 第二步）：侧栏 / rail 提到三个内容视图之外，成为常驻 app shell。
+       此前 .layout 连同侧栏整块属于 #library-view，切到概念/公式页整块 display:none，
+       布局大幅塌陷，三个「平级页面」看起来不像一家人。现在切页只换 .app-content 里的内容
+       与侧栏的上下文区块（.side-ctx），骨架恒定。 -->
+  <div class="app-shell" id="app-shell">
     <aside class="pane sidebar" id="sidebar">
-      <div class="side-section">
-        <div class="side-title">
-          <span>视图</span>
-          <span class="side-actions">
-            <button class="side-icon-btn" id="btn-new-folder" title="新建收藏夹" aria-label="新建收藏夹"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button>
-            <button class="side-icon-btn" id="btn-collapse" title="收起侧栏" aria-label="收起侧栏"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 18 9 12 15 6"/></svg></button>
-          </span>
+      <!-- 论文页侧栏：视图 + 收藏夹 -->
+      <div class="side-ctx" data-ctx="library">
+        <div class="side-section">
+          <div class="side-title">
+            <span>视图</span>
+            <span class="side-actions">
+              <button class="side-icon-btn" id="btn-new-folder" title="新建收藏夹" aria-label="新建收藏夹"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button>
+              <button class="side-icon-btn" id="btn-collapse" title="收起侧栏" aria-label="收起侧栏"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 18 9 12 15 6"/></svg></button>
+            </span>
+          </div>
+          <div class="side-item active" data-folder="" data-mode="all"><span class="ico"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></span><span>全部论文</span><span class="count" id="cnt-all"></span></div>
+          <div class="side-item" data-folder="" data-mode="starred"><span class="ico"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2.6l2.9 6.05 6.6.78-4.9 4.5 1.32 6.52L12 17.9l-5.92 3.07 1.32-6.52-4.9-4.5 6.6-.78z"/></svg></span><span>星标</span><span class="count" id="cnt-star"></span></div>
+          <div class="side-item" data-folder="" data-mode="unread"><span class="ico"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5a1 1 0 0 1 1-1h9l6 6v9a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1z"/><path d="M14 4v6h6"/></svg></span><span>未读</span><span class="count" id="cnt-unread"></span></div>
         </div>
-        <div class="side-item active" data-folder="" data-mode="all"><span class="ico"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></span><span>全部论文</span><span class="count" id="cnt-all"></span></div>
-        <div class="side-item" data-folder="" data-mode="starred"><span class="ico"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2.6l2.9 6.05 6.6.78-4.9 4.5 1.32 6.52L12 17.9l-5.92 3.07 1.32-6.52-4.9-4.5 6.6-.78z"/></svg></span><span>星标</span><span class="count" id="cnt-star"></span></div>
-        <div class="side-item" data-folder="" data-mode="unread"><span class="ico"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5a1 1 0 0 1 1-1h9l6 6v9a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1z"/><path d="M14 4v6h6"/></svg></span><span>未读</span><span class="count" id="cnt-unread"></span></div>
+        <div class="side-section">
+          <div class="side-title">收藏夹</div>
+          <div id="folder-list"></div>
+          <div id="folder-empty" class="side-item" hidden style="color:var(--muted2);cursor:default;">（无收藏夹）</div>
+        </div>
       </div>
-      <div class="side-section">
-        <div class="side-title">收藏夹</div>
-        <div id="folder-list"></div>
-        <div id="folder-empty" class="side-item" hidden style="color:var(--muted2);cursor:default;">（无收藏夹）</div>
-      </div>
+      <!-- 概念页侧栏：视图（清单/地图）+ 分类分面。整块由 concepts.js renderConceptSidebar 渲染
+           （分类计数要等数据到位），故 HTML 里只留容器。 -->
+      <div class="side-ctx view-hidden" data-ctx="concepts" id="side-concepts"></div>
+      <!-- 公式页侧栏：分类分面。由 formulas.js renderFormulaSidebar 渲染。 -->
+      <div class="side-ctx view-hidden" data-ctx="formulas" id="side-formulas"></div>
+      <!-- 左下角设置入口（v3.18 自顶栏移回）：侧栏 v3.17 起跨视图常驻，footer 不再随切页消失，
+           当年「藏在库视图里切页即失踪」的问题已随骨架统一消解。 -->
       <div class="side-footer">
-        <button class="side-settings" id="btn-settings" title="设置（AI 接口 / 提示词 / 采集 / 主题标签 / 系统）">
-          <span class="ico"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></span><span>设置</span>
+        <button class="side-settings" id="btn-settings" type="button" title="设置（AI 接口 / 提示词 / 采集 / 主题标签 / 系统）">
+          <span class="ico"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></span><span>设置</span>
         </button>
       </div>
     </aside>
-    <!-- 侧栏收起后展开用的细条 -->
-    <button class="sidebar-rail" id="btn-expand" title="展开侧栏" aria-label="展开侧栏">
-      <span class="rail-icon" aria-hidden="true">
-        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="9" y1="4" x2="9" y2="20"/></svg>
-      </span>
-      <span class="rail-text">展开视图</span>
-    </button>
+    <!-- 侧栏收起后的图标栏（56px）：展开按钮 + 各视图的 rail 上下文（.rail-ctx，与侧栏 .side-ctx
+         同步切换）+ 设置。各按钮点击直接生效（不展开侧栏）；只有顶部展开按钮会恢复完整侧栏。
+         v3.19 前 rail 是论文页固定内容——概念/公式页收起侧栏后仍挂着「星标/未读/收藏夹」，
+         点了改的是看不见的论文筛选。 -->
+    <div class="sidebar-rail" id="sidebar-rail" aria-label="侧栏（已收起）">
+      <button class="rail-expand" id="btn-expand" title="展开侧栏" aria-label="展开侧栏">
+        <span class="rail-expand-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="9" y1="4" x2="9" y2="20"/></svg>
+        </span>
+      </button>
+      <div class="rail-ctx" data-ctx="library">
+        <button class="rail-btn" data-mode="all" title="全部论文" aria-label="全部论文">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+        </button>
+        <button class="rail-btn" data-mode="starred" title="星标" aria-label="星标">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.6l2.9 6.05 6.6.78-4.9 4.5 1.32 6.52L12 17.9l-5.92 3.07 1.32-6.52-4.9-4.5 6.6-.78z"/></svg>
+        </button>
+        <button class="rail-btn" data-mode="unread" title="未读" aria-label="未读">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5a1 1 0 0 1 1-1h9l6 6v9a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1z"/><path d="M14 4v6h6"/></svg>
+        </button>
+        <span class="rail-sep" aria-hidden="true"></span>
+        <div class="rail-folder-list" id="rail-folder-list" title="收藏夹"></div>
+      </div>
+      <div class="rail-ctx view-hidden" data-ctx="concepts">
+        <button class="rail-btn" data-cview="list" title="概念清单" aria-label="概念清单">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+        </button>
+        <button class="rail-btn" data-cview="maps" title="概念地图" aria-label="概念地图">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4.5a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0z"/><path d="M18 19.5a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0z"/><path d="M9 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0z"/><path d="M21 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0z"/><path d="M9 12h6"/><path d="M7.5 6.5L9 12"/><path d="M16.5 17.5L15 12"/></svg>
+        </button>
+      </div>
+      <div class="rail-ctx view-hidden" data-ctx="formulas">
+        <button class="rail-btn" id="rail-formula-all" title="全部公式（清除分类筛选）" aria-label="全部公式">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4h9"/><path d="M13 4L8 20"/><path d="M4 12h8"/><path d="M15.5 10.5l5 7"/><path d="M20.5 10.5l-5 7"/></svg>
+        </button>
+      </div>
+      <span class="rail-spacer" aria-hidden="true"></span>
+      <button class="rail-btn" id="btn-settings-rail" title="设置（AI 接口 / 提示词 / 采集 / 主题标签 / 系统）" aria-label="设置">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      </button>
+    </div>
 
+    <!-- 内容区：三个平级视图在这里换，侧栏与 rail 不动 -->
+    <div class="app-content" id="app-content">
+    <main class="layout" id="library-view">
     <section class="list-pane">
       <div class="list-toolbar">
+        <!-- 论文页筛选（v3.18 自顶栏下沉）：状态/主题/标签触发器 + 排序 + 密度 + 多选同处一条。
+             仅星标 checkbox 退役——星标入口已有三处：侧栏「星标」视图、DSL star:1、高级搜索面板。
+             触发器默认文案从「全部状态」收成「状态」——列表列最窄 320px，每个字符都是预算。 -->
+        <div class="filter-strip" aria-label="筛选条件">
+          <div class="filter-status-wrap" id="filter-status-wrap">
+            <button class="filter-trigger" id="filter-status-trigger" title="状态筛选" type="button"><span class="ft-label" id="ft-status-label">状态</span><span class="ft-chev" aria-hidden="true"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></span></button>
+            <div class="filter-status-menu" id="filter-status-menu" hidden>
+              <button class="fsm-item" type="button" data-value="" data-field="">全部状态</button>
+              <button class="fsm-item" type="button" data-value="ready" data-field="status">已就绪</button>
+              <button class="fsm-item" type="button" data-value="unread" data-field="readStatus">未读</button>
+              <button class="fsm-item" type="button" data-value="reading" data-field="readStatus">在读</button>
+              <button class="fsm-item" type="button" data-value="done" data-field="readStatus">已读</button>
+              <button class="fsm-item" type="button" data-value="error" data-field="status">出错</button>
+              <button class="fsm-item" type="button" data-value="pending" data-field="status">处理中</button>
+            </div>
+          </div>
+          <button class="filter-trigger" id="filter-topic-trigger" title="主题筛选（可多选）" type="button"><span class="ft-label">主题</span><span class="ft-count"></span><span class="ft-chev" aria-hidden="true"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></span></button>
+          <button class="filter-trigger" id="filter-tag-trigger" title="标签筛选（可多选）" type="button"><span class="ft-label">标签</span><span class="ft-count"></span><span class="ft-chev" aria-hidden="true"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></span></button>
+        </div>
         <label class="sort-field" title="排序方式">
           <svg class="sort-ico" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="4" y1="6" x2="14" y2="6"/><line x1="4" y1="12" x2="11" y2="12"/><line x1="4" y1="18" x2="8" y2="18"/><polyline points="16 8 19 5 22 8"/><line x1="19" y1="5" x2="19" y2="19"/></svg>
           <select id="sort" aria-label="排序方式">
@@ -127,16 +233,17 @@
             </optgroup>
           </select>
         </label>
-        <span class="toolbar-spacer"></span>
-        <div class="seg-group" role="group" aria-label="视图密度">
-          <button class="seg-btn" id="view-compact" title="紧凑视图（一行一篇，仅 3 标签）" aria-pressed="false">
-            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="6" width="18" height="12" rx="2"/><line x1="3" y1="12" x2="21" y2="12"/></svg><span>紧凑</span>
-          </button>
-          <button class="seg-btn" id="view-comfort" title="舒适视图（含摘要、进度、完整标签）" aria-pressed="false">
-            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="3.5" rx="1"/><rect x="3" y="11" width="18" height="3.5" rx="1"/><rect x="3" y="17" width="18" height="2.5" rx="1"/></svg><span>舒适</span>
-          </button>
+        <div class="toolbar-actions">
+          <div class="seg-group" role="group" aria-label="视图密度">
+            <button class="seg-btn" id="view-compact" title="紧凑视图（一行一篇，仅 3 标签）" aria-label="紧凑视图" aria-pressed="false">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="6" width="18" height="12" rx="2"/><line x1="3" y1="12" x2="21" y2="12"/></svg>
+            </button>
+            <button class="seg-btn" id="view-comfort" title="舒适视图（含摘要、进度、完整标签）" aria-label="舒适视图" aria-pressed="false">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="3.5" rx="1"/><rect x="3" y="11" width="18" height="3.5" rx="1"/><rect x="3" y="17" width="18" height="2.5" rx="1"/></svg>
+            </button>
+          </div>
+          <button class="btn ghost sm" id="btn-pick" title="多选论文以追加概念" aria-label="多选"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg></button>
         </div>
-        <button class="btn ghost sm" id="btn-pick" title="多选论文以追加概念"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg> <span class="btn-text">多选</span></button>
       </div>
       <ul id="paper-list" class="paper-list"></ul>
       <div class="bulk-bar" id="bulk-bar">
@@ -177,32 +284,40 @@
   </main>
 
   <!-- 概念清单视图（v3.4 全宽 + 多列 + 排序/字母索引） -->
-  <main class="pane page-view" id="concepts-view" style="display:none;">
+  <main class="pane page-view view-hidden" id="concepts-view">
     <div class="concepts-head">
       <div class="concepts-head-title">
-        <button class="concepts-back" id="btn-concepts-close" type="button" title="返回论文库" aria-label="返回论文库">
-          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 18 9 12 15 6"/></svg>
-        </button>
         <div class="concepts-head-text">
           <h2>概念清单<span class="count-badge" id="concepts-count">0</span></h2>
           <p>跨论文归并的术语与解释，点击论文胶囊可跳转对应论文。</p>
         </div>
       </div>
+      <!-- 一级视图切换（清单/地图）与分类分面已移入侧栏（v3.17 第二步）——它们是「决定看什么」
+           的分面导航，属于侧栏；工具条只留「怎么显示」（排版/排序/下载）。 -->
       <div class="concepts-toolbar">
-        <input id="concept-q" type="search" placeholder="搜索术语或解释…" />
-        <div class="seg" id="concept-view" role="group" aria-label="视图切换">
-          <button type="button" data-view="list" class="active" title="概念清单（瀑布/紧凑）">清单</button>
-          <button type="button" data-view="maps" title="概念地图制品">地图</button>
+        <!-- 页内搜索框已退役（v3.17）：统一走顶栏那个上下文搜索框，避免同屏两个搜索入口。 -->
+        <!-- 筛选漏斗只剩「共享频次 / 章节出处」——分类分面已归侧栏，避免同一状态两处入口。 -->
+        <button class="btn ghost sm icon-btn concept-filter-btn" id="concept-filter-btn" type="button" title="筛选概念（共享频次 / 章节出处）" aria-label="筛选概念" aria-haspopup="true" aria-expanded="false">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
+          <span class="cf-badge" id="concept-filter-badge" hidden></span>
+        </button>
+        <!-- 二级控件（仅清单视图有意义）：排版（图标）+ 排序（文字）。
+             地图视图下 switchConceptView 隐藏它们。 -->
+        <div class="seg icon-seg" id="concept-layout" role="group" aria-label="显示方式">
+          <button type="button" data-layout="masonry" class="active" title="瀑布流卡片" aria-label="卡片视图">
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+          </button>
+          <button type="button" data-layout="list" title="紧凑单行" aria-label="紧凑视图">
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><circle cx="3.5" cy="6" r="1"/><circle cx="3.5" cy="12" r="1"/><circle cx="3.5" cy="18" r="1"/></svg>
+          </button>
         </div>
-        <div class="seg" id="concept-layout" role="group" aria-label="显示方式">
-          <button type="button" data-layout="masonry" class="active" title="瀑布流卡片">瀑布</button>
-          <button type="button" data-layout="list" title="紧凑清单">清单</button>
-        </div>
-        <div class="seg" id="concept-sort" role="group" aria-label="排序方式">
+        <div class="seg text-seg" id="concept-sort" role="group" aria-label="排序方式">
           <button type="button" data-sort="freq" class="active">按频次</button>
           <button type="button" data-sort="alpha">按字母</button>
         </div>
-        <a class="btn ghost sm" href="/api/concepts.md" target="_blank">下载 Markdown</a>
+        <a class="btn ghost sm icon-btn" id="btn-concepts-md" href="/api/concepts.md" target="_blank" title="下载 Markdown" aria-label="下载 Markdown">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        </a>
       </div>
     </div>
     <!-- 清单视图：概念卡片 -->
@@ -224,36 +339,43 @@
   </main>
 
   <!-- 公式清单视图（v3.9 归一化公式 + KaTeX 渲染 + 符号表 + 论文跳转） -->
-  <main class="pane page-view" id="formulas-view" style="display:none;">
+  <main class="pane page-view view-hidden" id="formulas-view">
     <div class="concepts-head">
       <div class="concepts-head-title">
-        <button class="concepts-back" id="btn-formulas-close" type="button" title="返回论文库" aria-label="返回论文库">
-          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 18 9 12 15 6"/></svg>
-        </button>
         <div class="concepts-head-text">
           <h2>公式清单<span class="count-badge" id="formulas-count">0</span></h2>
           <p>跨论文归一化到一般形式的核心公式，点击论文胶囊可跳转对应论文。</p>
         </div>
       </div>
       <div class="concepts-toolbar">
-        <input id="formula-q" type="search" placeholder="搜索公式名、LaTeX 或解读…" />
-        <div class="seg" id="formula-layout" role="group" aria-label="显示方式">
-          <button type="button" data-layout="masonry" class="active" title="瀑布流卡片">瀑布</button>
-          <button type="button" data-layout="list" title="紧凑清单">清单</button>
+        <!-- 页内搜索框已退役（v3.17）：统一走顶栏那个上下文搜索框。 -->
+        <div class="seg icon-seg" id="formula-layout" role="group" aria-label="显示方式">
+          <button type="button" data-layout="masonry" class="active" title="瀑布流卡片" aria-label="卡片视图">
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+          </button>
+          <button type="button" data-layout="list" title="紧凑单行" aria-label="紧凑视图">
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><circle cx="3.5" cy="6" r="1"/><circle cx="3.5" cy="12" r="1"/><circle cx="3.5" cy="18" r="1"/></svg>
+          </button>
         </div>
-        <div class="seg" id="formula-sort" role="group" aria-label="排序方式">
+        <div class="seg text-seg" id="formula-sort" role="group" aria-label="排序方式">
           <button type="button" data-sort="freq" class="active">按频次</button>
           <button type="button" data-sort="alpha">按名称</button>
           <button type="button" data-sort="category">按分类</button>
         </div>
-        <a class="btn ghost sm" href="/api/formulas.md" target="_blank">下载 Markdown</a>
+        <a class="btn ghost sm icon-btn" href="/api/formulas.md" target="_blank" title="下载 Markdown" aria-label="下载 Markdown">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        </a>
       </div>
     </div>
     <div id="formulas-grid" class="formulas-grid"></div>
   </main>
+    </div><!-- /.app-content -->
+  </div><!-- /.app-shell -->
 
-  <!-- 设置中心视图（左下角入口；迁移并扩展原 prompt-view） -->
-  <main class="pane page-view" id="settings-view" style="display:none;">
+  <!-- 设置中心（v3.17 第二步改覆盖层）：仍是 /settings/:tab 路由（深链有价值），
+       但呈现为遮罩 + 居中面板 —— 它不是第四个平级页面，是盖在当前页面之上的配置界面。
+       点遮罩或 Esc 关闭，回到打开它之前的那个页面。 -->
+  <div class="settings-overlay view-hidden" id="settings-view" role="dialog" aria-modal="true" aria-label="设置">
     <div class="settings-shell">
       <aside class="settings-nav" id="settings-nav">
         <div class="settings-search">
@@ -278,7 +400,7 @@
         <div class="settings-nav-item" data-tab="taxonomy" data-kw="主题 标签 管理 合并 重命名"><span class="sni"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg></span><span>主题与标签</span></div>
         <div class="settings-nav-item" data-tab="system" data-kw="系统 信息 端口 目录 版本 健康 config"><span class="sni"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="3" width="19" height="7" rx="2"/><rect x="2.5" y="14" width="19" height="7" rx="2"/><line x1="6" y1="6.5" x2="6.01" y2="6.5"/><line x1="6" y1="17.5" x2="6.01" y2="17.5"/></svg></span><span>系统信息</span></div>
         <div class="settings-nav-foot">
-          <button class="btn ghost sm" id="btn-settings-close">← 返回</button>
+          <button class="btn ghost sm" id="btn-settings-close" title="关闭设置（Esc）">关闭</button>
         </div>
       </aside>
 
@@ -695,7 +817,7 @@
         </div>
       </section>
     </div>
-  </main>
+  </div>
 
   <!-- PDF 阅读器（全屏，默认隐藏） -->
   <div id="reader-view">
@@ -764,20 +886,25 @@
           <span class="reader-color" data-color="#fecdd3" style="--c:#fecdd3"></span>
           <span class="reader-color" data-color="#a5f3fc" style="--c:#a5f3fc"></span>
         </span>
+        <span class="rb-sep" aria-hidden="true"></span>
+        <!-- 整篇公式/概念抽取（下拉菜单：查看本篇 / 追加抽取 / 重新抽取）。
+             包在 .rb-tools 药丸容器内，与批注工具组观感完全对齐。 -->
+        <div class="rb-tools" role="group" aria-label="整篇抽取">
+          <div class="rb-extract-wrap" id="rb-extract-formulas-wrap">
+            <button class="rb-tool" id="reader-extract-formulas" type="button" title="公式：查看本篇 / 抽取（追加）/ 重新抽取" aria-haspopup="true" aria-expanded="false">
+              <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 4h9"/><path d="M13 4L8 20"/><path d="M4 12h8"/><path d="M15.5 10.5l5 7"/><path d="M20.5 10.5l-5 7"/></svg>
+            </button>
+          </div>
+          <div class="rb-extract-wrap" id="rb-extract-concepts-wrap">
+            <button class="rb-tool" id="reader-extract-concepts" type="button" title="概念：查看本篇 / 抽取（追加）/ 重新抽取" aria-haspopup="true" aria-expanded="false">
+              <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18h6"/><path d="M10 21h4"/><path d="M12 3a6 6 0 0 0-4 10.5c.6.6 1 1.4 1 2.5h6c0-1.1.4-1.9 1-2.5A6 6 0 0 0 12 3z"/></svg>
+            </button>
+          </div>
+        </div>
       </div>
 
-      <!-- 右：整篇公式/概念抽取（下拉菜单：查看本篇 / 追加抽取 / 重新抽取）+ 状态 -->
+      <!-- 右：状态（保存/复制等即时反馈） -->
       <div class="rb-group rb-right">
-        <div class="rb-extract-wrap" id="rb-extract-formulas-wrap">
-          <button class="rb-icon" id="reader-extract-formulas" type="button" title="公式：查看本篇 / 抽取（追加）/ 重新抽取" aria-haspopup="true" aria-expanded="false">
-            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 4h9"/><path d="M13 4L8 20"/><path d="M4 12h8"/><path d="M15.5 10.5l5 7"/><path d="M20.5 10.5l-5 7"/></svg>
-          </button>
-        </div>
-        <div class="rb-extract-wrap" id="rb-extract-concepts-wrap">
-          <button class="rb-icon" id="reader-extract-concepts" type="button" title="概念：查看本篇 / 抽取（追加）/ 重新抽取" aria-haspopup="true" aria-expanded="false">
-            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18h6"/><path d="M10 21h4"/><path d="M12 3a6 6 0 0 0-4 10.5c.6.6 1 1.4 1 2.5h6c0-1.1.4-1.9 1-2.5A6 6 0 0 0 12 3z"/></svg>
-          </button>
-        </div>
         <span class="rb-status" id="reader-saved"></span>
       </div>
     </div>

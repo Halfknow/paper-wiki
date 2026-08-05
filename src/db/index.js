@@ -228,6 +228,23 @@ function createRepository(db) {
     );
   }
 
+  // ---- 通用 KV（v3.19：全局 AI 渠道 globalAi 等跨空间设置落这里） ----
+
+  /** 读 app_state；无此 key 返回 null。value 是 jsonb，node-pg 直接返 JS 值。 */
+  async function getAppState(key) {
+    const r = await db.query('SELECT value FROM app_state WHERE key=$1', [key]);
+    return r.rows.length ? r.rows[0].value : null;
+  }
+
+  /** 写 app_state（value 经 jstr 序列化——jsonb 列直传 JS 数组会被 node-pg 写成 PG 数组字面量，见陷阱 24）。 */
+  async function setAppState(key, value) {
+    await db.query(
+      `INSERT INTO app_state (key, value) VALUES ($1, $2)
+       ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value`,
+      [key, jstr(value)],
+    );
+  }
+
   /** 删空间：六表级联（spaces/papers/paper_texts/concepts/formulas/folders）+ 清快照 */
   async function deleteSpaceRow(id) {
     const run = writeChain.then(async () => {
@@ -579,6 +596,8 @@ function createRepository(db) {
     loadRegistry,
     upsertSpaceMeta,
     setActiveSpaceId,
+    getAppState,
+    setAppState,
     deleteSpaceRow,
     loadSpaceStore,
     saveSpaceStore,

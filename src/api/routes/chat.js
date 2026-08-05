@@ -3,12 +3,12 @@
 // chat 路由。由 createApiRouter 在启动时调用 register(t, ctx) 注册到路由表。
 // handler 体自 src/api/router.js 的 if 链原样迁移（v3.15 路由化重构），行为逐字不变。
 
-const { applySettingsOverride } = require('../../services/ai');
+const { applySettingsOverride, withGlobalAi } = require('../../services/ai');
 
 function register(t, ctx) {
   const { ok, fail, config, scanner, isProd } = ctx;
 
-  const h_api_papers_id_chat = async ({ req, res, body, q, method, params, spaceId, store }) => {
+  const h_api_papers_id_chat = async ({ req, res, body, q, method, params, spaceId, store, gai }) => {
     const id = params.id;
     if (!store.papers[id]) return fail(res, 404, 'Not found');
     if (!scanner.chatPaper) return fail(res, 501, 'scanner.chatPaper unavailable');
@@ -79,7 +79,7 @@ function register(t, ctx) {
       // Phase 2 模型切换：?model=xxx 透传。白名单校验——必须属于可用模型集合（config.ai.model +
       // config.ai.extraModels + 上游 /v1/models），防注入。校验失败静默回退默认模型。
       if (typeof q.model === 'string' && q.model.trim()) {
-        const effConfig = applySettingsOverride(config, store.settings);
+        const effConfig = applySettingsOverride(config, withGlobalAi(store.settings, gai));
         const allowed = new Set([effConfig.ai && effConfig.ai.model].filter(Boolean));
         const extra = effConfig.ai && Array.isArray(effConfig.ai.extraModels) ? effConfig.ai.extraModels : [];
         for (const m of extra) if (m) allowed.add(m);
@@ -118,7 +118,7 @@ function register(t, ctx) {
     if (cpSrc.maxTokens != null && Number.isFinite(parseInt(cpSrc.maxTokens, 10)))
       chatParams.maxTokens = parseInt(cpSrc.maxTokens, 10);
     if (typeof cpSrc.model === 'string' && cpSrc.model.trim()) {
-      const effConfig = applySettingsOverride(config, store.settings);
+      const effConfig = applySettingsOverride(config, withGlobalAi(store.settings, gai));
       const allowed = new Set([effConfig.ai && effConfig.ai.model].filter(Boolean));
       const extra = effConfig.ai && Array.isArray(effConfig.ai.extraModels) ? effConfig.ai.extraModels : [];
       for (const m of extra) if (m) allowed.add(m);
@@ -134,7 +134,7 @@ function register(t, ctx) {
   t.get('/api/papers/:id/chat', h_api_papers_id_chat);
   t.post('/api/papers/:id/chat', h_api_papers_id_chat);
 
-  t.post('/api/papers/:id/chat/vision', async ({ req, res, body, params, spaceId, store }) => {
+  t.post('/api/papers/:id/chat/vision', async ({ req, res, body, params, spaceId, store, gai }) => {
     const id = params.id;
     if (!store.papers[id]) return fail(res, 404, 'Not found');
     if (!scanner.chatPaper) return fail(res, 501, 'scanner.chatPaper unavailable');
@@ -167,7 +167,7 @@ function register(t, ctx) {
     if (cpSrc.maxTokens != null && Number.isFinite(parseInt(cpSrc.maxTokens, 10)))
       chatParams.maxTokens = parseInt(cpSrc.maxTokens, 10);
     if (typeof cpSrc.model === 'string' && cpSrc.model.trim()) {
-      const effConfig = applySettingsOverride(config, store.settings);
+      const effConfig = applySettingsOverride(config, withGlobalAi(store.settings, gai));
       const allowed = new Set([effConfig.ai && effConfig.ai.model].filter(Boolean));
       const extra = effConfig.ai && Array.isArray(effConfig.ai.extraModels) ? effConfig.ai.extraModels : [];
       for (const m of extra) if (m) allowed.add(m);

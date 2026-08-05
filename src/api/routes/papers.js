@@ -5,7 +5,7 @@
 
 const fs = require('fs');
 const { mergeTopics, mergeConcepts, removePaperFromConcepts } = require('../../core/store');
-const { applySettingsOverride, extractFormulasViaEngine, extractConcepts } = require('../../services/ai');
+const { applySettingsOverride, withGlobalAi, extractFormulasViaEngine, extractConcepts } = require('../../services/ai');
 const { removePaperFromFormulas, mergeFormulas } = require('../../core/formulas');
 const { normalizeAnnotations } = require('../../core/annotations');
 const { normalizeNoteCards } = require('../../core/notes');
@@ -207,11 +207,11 @@ function register(t, ctx) {
     return ok(res, r);
   });
 
-  t.post('/api/papers/:id/formulas/candidates', async ({ res, params, spaceId, store }) => {
+  t.post('/api/papers/:id/formulas/candidates', async ({ res, params, spaceId, store, gai }) => {
     const id = params.id;
     const p = store.papers[id];
     if (!p) return fail(res, 404, 'Not found');
-    const effConfig = applySettingsOverride(config, store.settings || {});
+    const effConfig = applySettingsOverride(config, withGlobalAi(store.settings || {}, gai));
     const engine = (effConfig.formulas && effConfig.formulas.engine) || 'ai';
     // MinerU 引擎需要 PDF 文件路径；AI 引擎需要全文。dispatcher 按 engine 自取所需字段
     const ts = manager.textStoreBinder ? manager.textStoreBinder(spaceId) : null;
@@ -256,11 +256,11 @@ function register(t, ctx) {
     return ok(res, { added: newIds.length });
   });
 
-  t.post('/api/papers/:id/concepts/candidates', async ({ res, params, spaceId, store }) => {
+  t.post('/api/papers/:id/concepts/candidates', async ({ res, params, spaceId, store, gai }) => {
     const id = params.id;
     const p = store.papers[id];
     if (!p) return fail(res, 404, 'Not found');
-    const effConfig = applySettingsOverride(config, store.settings || {});
+    const effConfig = applySettingsOverride(config, withGlobalAi(store.settings || {}, gai));
     const ts = manager.textStoreBinder ? manager.textStoreBinder(spaceId) : null;
     const text = ts ? (await ts.load(id).catch(() => null)) || '' : '';
     const existingTerms = (store.concepts || []).map((c) => c.term);

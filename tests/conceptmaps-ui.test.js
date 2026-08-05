@@ -73,16 +73,19 @@ function makeRoutes() {
 before(async () => {
   resetSettings();
   ui = await bootUi({ listItems: LIST, details: {}, routes: makeRoutes() });
-  // 进入概念页 → 切到「地图」tab
-  $('btn-concepts').click();
-  for (let i = 0; i < 50 && $('concepts-view').style.display === 'none'; i++) await sleep(20);
-  ui.document.querySelector('#concept-view button[data-view="maps"]').click();
-  await sleep(30);
+  // 进入概念页 → 从侧栏切到「概念地图」（v3.17 第二步：清单/地图入口由页内分段移到侧栏）
+  ui.document.querySelector('#view-nav [data-view="concepts"]').click();
+  for (let i = 0; i < 50 && $('concepts-view').classList.contains('view-hidden'); i++) await sleep(20);
+  for (let i = 0; i < 50 && !ui.document.querySelector('#side-concepts .side-item[data-cview="maps"]'); i++) await sleep(20);
+  ui.document.querySelector('#side-concepts .side-item[data-cview="maps"]').click();
+  await sleep(60);
 });
 
-test('概念页视图 tab 已改名「地图」', async () => {
-  const tab = ui.document.querySelector('#concept-view button[data-view="maps"]');
-  assert.strictEqual(tab.textContent, '地图');
+test('概念地图入口在侧栏，页内工具条不再有视图分段', async () => {
+  const entry = ui.document.querySelector('#side-concepts .side-item[data-cview="maps"]');
+  assert.ok(entry.classList.contains('active'), '当前在地图视图，侧栏该项应高亮');
+  assert.match(entry.textContent, /概念地图/);
+  assert.strictEqual($('concept-view'), null, '页内视图分段已退役');
   assert.strictEqual($('btn-concept-map').textContent, '生成概念地图');
 });
 
@@ -131,7 +134,7 @@ test('error 制品：失败徽标 + 半成品缩略图 + 查看/优化/删除', 
     { id: 'cm_err', name: '概念地图', prompt: '', status: 'error', error: '输出不完整（可能被模型输出上限截断）——已保留半成品', hasHtml: true, createdAt: 100, updatedAt: 101 },
   ];
   // 重进概念页（showConcepts 重新拉 settings → state.conceptMaps 同步假后端）
-  $('btn-concepts').click();
+  ui.document.querySelector('#view-nav [data-view="concepts"]').click();
   for (let i = 0; i < 50 && !$('concept-maps-list').innerHTML.includes('截断'); i++) await sleep(20);
   const html = $('concept-maps-list').innerHTML;
   assert.ok(html.includes('cms-thumb-badge'), '半成品 error 卡应有「不完整」徽标');

@@ -43,12 +43,22 @@ function baseCtx(store, save, opts = {}) {
   const globalConfig = opts.config || { ai: {}, scanIntervalMinutes: 5 };
   const papersDir = opts.papersDir || 'papers';
   const spaceObj = { id: 'default', name: '默认', papersDir, scanIntervalMinutes: 5, lastScanAt: 0, createdAt: 0 };
+  // 全局 AI 渠道（v3.19）：mock 存根，opts.globalAi 可预置；测试经 manager.getGlobalAi() 读结果
+  let globalAi = opts.globalAi || null;
   // 伪造 manager：只实现 api.js 用到的方法，store 直接用测试对象
   const manager = {
     getActiveSpaceId: () => 'default',
     getActiveSpace: () => spaceObj,
     getSpace: (id) => (id === 'default' ? spaceObj : null),
     listSpaces: () => [spaceObj],
+    getGlobalAi: () => globalAi,
+    saveGlobalAi: async (obj) => {
+      globalAi =
+        obj && Array.isArray(obj.channels) && obj.channels.length
+          ? { channels: obj.channels, activeChannelId: obj.activeChannelId || null }
+          : null;
+      return globalAi;
+    },
     getStorePath: () => 'papers.json',
     getSpaceStore: async () => store,
     saveStoreBinder: () => async () => {
@@ -894,12 +904,13 @@ test('GET /api/settings 无渠道存根时从生效配置合成单渠道视图',
   server.close();
 });
 
-test('PUT /api/settings/ai/channels 全量替换、掩码保留 key、迁移删除旧顶层字段', async () => {
+test('PUT /api/settings/ai/channels 全量替换、掩码保留 key、渠道全局化（v3.19）', async () => {
   const store = {
     version: 2, tags: [], topics: [], folders: [], concepts: [], papers: {},
     settings: { ai: { baseURL: 'http://legacy/v1', apiKey: 'sk-legacylegacy', model: 'legacy-model', timeoutMs: 90000 } },
   };
-  const router = createApiRouter(baseCtx(store, async () => {}, { config: { ai: {} } }));
+  const ctx = baseCtx(store, async () => {}, { config: { ai: {} } });
+  const router = createApiRouter(ctx);
   const server = await startServer(router.handle);
   const port = server.address().port;
   // 保存两个渠道：ch_default 掩码回传（应保留旧生效 key），新渠道无 id（应生成）
@@ -913,16 +924,20 @@ test('PUT /api/settings/ai/channels 全量替换、掩码保留 key、迁移删�
   assert.strictEqual(r1.status, 200);
   const ai1 = r1.json.data.ai;
   assert.strictEqual(ai1.channels.length, 2);
-  assert.strictEqual(store.settings.ai.channels[0].apiKey, 'sk-legacylegacy', '掩码回传保留旧生效 key');
-  const gen = store.settings.ai.channels[1];
+  // v3.19：渠道落全局（app_state），不再写 per-space settings.ai
+  const gai1 = ctx.manager.getGlobalAi();
+  assert.ok(gai1 && Array.isArray(gai1.channels), '渠道写全局');
+  assert.strictEqual(store.settings.ai.channels, undefined, '渠道不再写 per-space settings');
+  assert.strictEqual(gai1.channels[0].apiKey, 'sk-legacylegacy', '掩码回传保留旧生效 key');
+  const gen = gai1.channels[1];
   assert.ok(/^ch_[0-9a-f]{8}$/.test(gen.id), '缺省 id 自动生成');
   assert.strictEqual(gen.apiKey, 'sk-kimi-abc');
   assert.strictEqual(gen.maxInputTokens, 1000000);
   assert.strictEqual(ai1.activeChannelId, 'ch_default');
-  // 迁移：旧版顶层三元组删除（渠道成单一事实源），全局字段保留
-  assert.strictEqual(store.settings.ai.baseURL, undefined);
-  assert.strictEqual(store.settings.ai.apiKey, undefined);
-  assert.strictEqual(store.settings.ai.model, undefined);
+  // 旧版顶层三元组保留——降级为「无全局渠道时」的 per-space 兜底
+  assert.strictEqual(store.settings.ai.baseURL, 'http://legacy/v1');
+  assert.strictEqual(store.settings.ai.apiKey, 'sk-legacylegacy');
+  assert.strictEqual(store.settings.ai.model, 'legacy-model');
   assert.strictEqual(store.settings.ai.timeoutMs, 90000);
   // 生效配置 = 活跃渠道
   assert.strictEqual(ai1.baseURL, 'http://legacy/v1');
@@ -941,14 +956,15 @@ test('PUT /api/settings/ai/channels 全量替换、掩码保留 key、迁移删�
   assert.strictEqual(ai2.baseURL, 'https://api.kimi.com/coding/v1');
   assert.strictEqual(ai2.model, 'k3');
   assert.strictEqual(ai2.maxInputTokens, 1000000, '渠道级 tokens 生效');
-  assert.strictEqual(store.settings.ai.channels[1].apiKey, 'sk-kimi-abc', '二次保存掩码仍保留新渠道 key');
+  assert.strictEqual(ctx.manager.getGlobalAi().channels[1].apiKey, 'sk-kimi-abc', '二次保存掩码仍保留新渠道 key');
   assert.strictEqual(ai2.channels.find((c) => c.id === kimiId).active, true);
   server.close();
 });
 
 test('PUT /api/settings/ai/channels 校验：缺 baseURL/model 报 400；activeChannelId 未命中回落第一个', async () => {
   const store = { version: 2, tags: [], topics: [], folders: [], concepts: [], settings: {}, papers: {} };
-  const router = createApiRouter(baseCtx(store));
+  const ctx = baseCtx(store);
+  const router = createApiRouter(ctx);
   const server = await startServer(router.handle);
   const port = server.address().port;
   const bad = await call(port, 'PUT', '/api/settings/ai/channels', { channels: [{ name: 'x', model: 'm' }] });
@@ -959,11 +975,59 @@ test('PUT /api/settings/ai/channels 校验：缺 baseURL/model 报 400；activeC
   });
   assert.strictEqual(r.status, 200);
   assert.strictEqual(r.json.data.ai.activeChannelId, r.json.data.ai.channels[0].id, '未命中回落第一个渠道');
-  // 空列表 = 清除渠道，回落 config/旧版语义
+  // 空列表 = 清除全局渠道，回落 per-space/旧版/config 语义
   const r2 = await call(port, 'PUT', '/api/settings/ai/channels', { channels: [] });
   assert.strictEqual(r2.status, 200);
-  assert.strictEqual(store.settings.ai.channels, undefined);
+  assert.strictEqual(ctx.manager.getGlobalAi(), null, '空列表清除全局渠道');
+  assert.strictEqual(store.settings.ai, undefined, '渠道全程不写 per-space settings');
   assert.strictEqual(r2.json.data.ai.channels.length, 0, 'config 无 ai 配置时无合成渠道');
+  server.close();
+});
+
+test('渠道全局化：A 空间保存的渠道在 B 空间可见且生效（v3.19）', async () => {
+  // 双空间 mock：storeA（含 per-space 提示词覆盖）/ storeB（空设置），共享一份全局渠道
+  const mkStore = (settings) => ({ version: 2, tags: [], topics: [], folders: [], concepts: [], papers: {}, settings });
+  const storeA = mkStore({ ai: { model: 'per-space-model' }, summaryPrompt: 'A 空间提示词' });
+  const storeB = mkStore({});
+  let gai = null;
+  const spA = { id: 'a', name: 'A', papersDir: 'a', scanIntervalMinutes: 5, lastScanAt: 0, createdAt: 0 };
+  const spB = { id: 'b', name: 'B', papersDir: 'b', scanIntervalMinutes: 5, lastScanAt: 0, createdAt: 0 };
+  const manager = {
+    getActiveSpaceId: () => 'a',
+    getActiveSpace: () => spA,
+    getSpace: (id) => (id === 'a' ? spA : id === 'b' ? spB : null),
+    listSpaces: () => [spA, spB],
+    getGlobalAi: () => gai,
+    saveGlobalAi: async (obj) => {
+      gai = obj && Array.isArray(obj.channels) && obj.channels.length
+        ? { channels: obj.channels, activeChannelId: obj.activeChannelId || null }
+        : null;
+      return gai;
+    },
+    getSpaceStore: async (id) => (id === 'b' ? storeB : storeA),
+    saveStoreBinder: () => async () => {},
+    spacesView: async () => ({ activeSpaceId: 'a', spaces: [] }),
+  };
+  const router = createApiRouter({ manager, scanner: null, globalConfig: { ai: {} } });
+  const server = await startServer(router.handle);
+  const port = server.address().port;
+  // 在 B 空间保存渠道
+  const w = await call(port, 'PUT', '/api/settings/ai/channels?space=b', {
+    channels: [{ name: 'Kimi', baseURL: 'https://api.kimi.com/coding/v1', apiKey: 'sk-kimi-xyz', model: 'k3' }],
+  });
+  assert.strictEqual(w.status, 200);
+  // A 空间读设置：同一渠道列表可见 + 生效 model 来自渠道（压过 A 的 per-space model 覆盖）
+  const ra = await call(port, 'GET', '/api/settings?space=a');
+  const aiA = ra.json.data.ai;
+  assert.strictEqual(aiA.channels.length, 1, 'A 空间可见全局渠道');
+  assert.strictEqual(aiA.channels[0].id, gai.channels[0].id, '是全局那张卡（不是 ch_default 合成卡）');
+  assert.strictEqual(aiA.channels[0].model, 'k3');
+  assert.strictEqual(aiA.model, 'k3', '全局活跃渠道压过 per-space ai.model');
+  // A 空间的 per-space 提示词不受影响
+  assert.strictEqual(ra.json.data.summaryPrompt, 'A 空间提示词', '提示词仍 per-space');
+  // B 空间读到的 ai 段一致
+  const rb = await call(port, 'GET', '/api/settings?space=b');
+  assert.strictEqual(rb.json.data.ai.channels[0].model, 'k3');
   server.close();
 });
 

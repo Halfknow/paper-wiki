@@ -470,3 +470,65 @@ test('applyPapersDirChange 校验：越界 / 与其他空间冲突 / 非法 mode
     await cleanup();
   }
 });
+
+// ---- 全局 AI 渠道（v3.19）----
+
+test('全局 AI 渠道：saveGlobalAi 持久化 + getGlobalAi 读取 + 清空', async () => {
+  const { manager, repo, cleanup } = await makeManager();
+  try {
+    await manager.ensureRegistry();
+    assert.strictEqual(manager.getGlobalAi(), null, '初始无全局渠道');
+    await manager.saveGlobalAi({
+      channels: [{ id: 'ch_k', name: 'Kimi', baseURL: 'https://api.kimi.com/coding/v1', model: 'k3', apiKey: 'sk-k' }],
+      activeChannelId: 'ch_k',
+    });
+    assert.strictEqual(manager.getGlobalAi().channels[0].model, 'k3');
+    const raw = await repo.getAppState('globalAi');
+    assert.ok(raw && raw.channels.length === 1, '落 app_state');
+    assert.strictEqual(raw.activeChannelId, 'ch_k');
+    // 清空 → 回落 per-space/三元组/config 语义
+    await manager.saveGlobalAi(null);
+    assert.strictEqual(manager.getGlobalAi(), null);
+    assert.strictEqual(await repo.getAppState('globalAi'), null);
+  } finally {
+    await cleanup();
+  }
+});
+
+test('ensureGlobalAi：把现有空间的 per-space 渠道迁移为全局（active/default 优先），原副本保留', async () => {
+  const { manager, repo, cleanup } = await makeManager();
+  try {
+    await manager.ensureRegistry();
+    // default 空间配两个渠道（含 activeChannelId）
+    const store = await manager.getSpaceStore(DEFAULT_SPACE_ID);
+    store.settings = store.settings || {};
+    store.settings.ai = {
+      channels: [
+        { id: 'ch_g', name: 'GLM', baseURL: 'http://g/v1', model: 'glm', apiKey: 'sk-g' },
+        { id: 'ch_k', name: 'Kimi', baseURL: 'http://k/v1', model: 'k3', apiKey: 'sk-k' },
+      ],
+      activeChannelId: 'ch_g',
+    };
+    await manager.saveSpaceStore(DEFAULT_SPACE_ID, store);
+    // 第二空间配一个渠道（不应赢过 active=default）
+    const sp2 = await manager.createSpace({ name: 'B' });
+    const storeB = await manager.getSpaceStore(sp2.id);
+    storeB.settings = { ai: { channels: [{ id: 'ch_x', name: 'X', baseURL: 'http://x/v1', model: 'x', apiKey: 'sk-x' }] } };
+    await manager.saveSpaceStore(sp2.id, storeB);
+
+    await manager.ensureGlobalAi();
+    const gai = manager.getGlobalAi();
+    assert.ok(gai && gai.channels.length === 2, '迁移 default（active）空间的两渠道');
+    assert.strictEqual(gai.activeChannelId, 'ch_g');
+    // 原空间副本保留（降级为兜底）
+    assert.strictEqual(store.settings.ai.channels.length, 2, 'per-space 副本不删除');
+    assert.strictEqual(storeB.settings.ai.channels.length, 1);
+    // 幂等：已有全局渠道时不重复迁移
+    await manager.ensureGlobalAi();
+    assert.strictEqual(manager.getGlobalAi().channels.length, 2);
+    const raw = await repo.getAppState('globalAi');
+    assert.strictEqual(raw.channels[1].id, 'ch_k');
+  } finally {
+    await cleanup();
+  }
+});

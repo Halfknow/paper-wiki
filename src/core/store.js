@@ -308,6 +308,8 @@ function mergeConcepts(store, items, paperId) {
       if (raw.definition && !c.definition) c.definition = String(raw.definition).trim();
       // category 只在原概念缺分类时补（不覆盖已有）
       if (raw.category && !c.category) c.category = String(raw.category).trim().toLowerCase();
+      // context（论文出处，如「3.2 节，式(1)」）：仅在原概念缺时补，便于回溯
+      if (raw.context && !c.context) c.context = String(raw.context).trim();
       if (paperId && !c.paperIds.includes(paperId)) c.paperIds.push(paperId);
       c.updatedAt = Date.now();
     } else {
@@ -316,6 +318,7 @@ function mergeConcepts(store, items, paperId) {
         term,
         definition: String((raw && raw.definition) || '').trim(),
         category: String((raw && raw.category) || '').trim().toLowerCase() || 'other',
+        context: String((raw && raw.context) || '').trim(),
         source: 'ai',
         paperIds: paperId ? [paperId] : [],
         createdAt: Date.now(),

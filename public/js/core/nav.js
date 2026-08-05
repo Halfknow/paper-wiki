@@ -27,6 +27,21 @@ export function syncFilterToUrl() {
   router.setQuery(filterToQuery(state.filter), { defaults: LIB_QUERY_DEFAULTS });
 }
 
+/** 概念/公式页入场：把路由 ?q= 还原到顶栏搜索框（渲染函数从那里读查询词）。
+ *  在 _routerSyncing 窗口内写，避免立刻又被回写一次 URL。 */
+function setSearchBox(query) {
+  const s = $('search');
+  if (s) s.value = (query && query.q) || '';
+}
+
+/** 概念/公式页的查询词回写 URL（与库视图的 syncFilterToUrl 对称）。 */
+export function syncPageQueryToUrl() {
+  if (_routerSyncing || !router) return;
+  const cur = router.current();
+  if (!cur || !['concepts', 'concept-maps', 'concept-map', 'formulas'].includes(cur.name)) return;
+  router.setQuery({ q: ($('search') || {}).value || '' }, { defaults: { q: '' } });
+}
+
 /** 库视图公共入场：query → state.filter → 拉数据。paper 路由复用它。 */
 async function enterLibraryShell(query) {
   _routerSyncing = true;
@@ -79,13 +94,17 @@ const routeHandlers = {
     if (reader && $('reader-view').classList.contains('active')) reader.close();
   },
 
-  enterConcepts: async ({ view, mapId }) => {
+  enterConcepts: async ({ view, mapId, query }) => {
+    setSearchBox(query);
     await showConcepts(view);
     if (mapId) await viewConceptMap(mapId);
   },
   leaveConcepts: () => _stopConceptMapPolling(),
 
-  enterFormulas: () => showFormulas(),
+  enterFormulas: async ({ query }) => {
+    setSearchBox(query);
+    await showFormulas();
+  },
 
   enterSettings: ({ tab }) => openSettings(tab),
 };

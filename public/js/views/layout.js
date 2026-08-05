@@ -17,7 +17,8 @@ export async function refreshSystemHealth() {
 export function setSidebarCollapsed(collapsed) {
   state.sidebarCollapsed = collapsed;
   localStorage.setItem('pw-sidebar', collapsed ? 'collapsed' : 'open');
-  document.getElementById('library-view').classList.toggle('sidebar-collapsed', collapsed);
+  // v3.17 第二步：侧栏挂在常驻的 .app-shell 上（此前挂 #library-view，切到概念页就没了）
+  document.getElementById('app-shell').classList.toggle('sidebar-collapsed', collapsed);
 }
 
 function clampListWidth(width) {
@@ -44,16 +45,16 @@ export function bindListSplitter() {
   const listPane = document.querySelector('.list-pane');
   if (!splitter || !layout || !listPane) return;
 
+  // 注：v3.17 第二步后 .layout 的列宽不再有 transition（过渡只留在 .app-shell 的侧栏收放上），
+  // 故拖动时无需再切 .resizing 关过渡——列宽本来就是即时跟手的。
   splitter.onpointerdown = (e) => {
     if (window.innerWidth <= 860) return;
     e.preventDefault();
     splitter.setPointerCapture(e.pointerId);
-    layout.classList.add('resizing');
     document.body.classList.add('is-resizing');
     const move = (ev) => applyListWidth(ev.clientX - listPane.getBoundingClientRect().left);
     const up = (ev) => {
       applyListWidth(ev.clientX - listPane.getBoundingClientRect().left, true);
-      layout.classList.remove('resizing');
       document.body.classList.remove('is-resizing');
       splitter.removeEventListener('pointermove', move);
       splitter.removeEventListener('pointerup', up);

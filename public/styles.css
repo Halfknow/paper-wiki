@@ -66,10 +66,10 @@ input,select,textarea { font:inherit; color:var(--text); }
   box-shadow:var(--shadow); flex:0 0 auto;
   backdrop-filter:saturate(1.35) blur(14px);
 }
-/* 非搜索的四个区块自然宽、不收缩（各自内部按钮不换行，避免被挤散） */
-.brand, .space-switcher, .filter-strip, .top-actions { flex:0 0 auto; }
-/* 筛选块起始处吃掉富余空间，把「筛选 + 动作」整组推到右缘 */
-.filter-strip { margin-left:auto; }
+/* 非搜索的区块自然宽、不收缩（各自内部按钮不换行，避免被挤散） */
+.brand, .space-switcher, .view-nav, .top-actions { flex:0 0 auto; }
+/* 富余空间由 .topbar-spacer 吃掉（v3.17）——它在导航与搜索之间，把「搜索 + 动作」
+   整组顶到右缘。论文页专属筛选条已下沉列表工具条（v3.18），顶栏只剩纯 chrome。 */
 .brand { display:flex; align-items:center; gap:8px; font-weight:700; font-size:15px; white-space:nowrap; color:var(--text); }
 /* logo 可点击（回到初始页面）：手型光标 + 悬停轻微抬起 + 主题色 */
 .brand[data-clickable] { cursor:pointer; transition:opacity .15s ease; user-select:none; }
@@ -272,12 +272,12 @@ input,select,textarea { font:inherit; color:var(--text); }
   flex:1 1 200px; min-width:0;
   font-family:ui-monospace,"SFMono-Regular",Consolas,monospace; font-size:12px;
 }
-/* 搜索框：可收缩（放不下先缩它，min 150）、不 grow；用下方 .filter-strip 的 margin-left:auto
-   把「筛选 + 动作」整组顶到右缘，复刻原 grid 的右对齐分组，同时超宽屏也无尾部留白。 */
+/* 搜索框：可收缩（放不下先缩它，min 150）、不 grow；富余空间由 .topbar-spacer 吸收，
+   「搜索 + 动作」整组贴右缘，超宽屏也无尾部留白。 */
 .search-wrap { position:relative; display:flex; align-items:center; flex:0 1 520px; min-width:150px; max-width:600px; }
 .search-ico { position:absolute; left:10px; top:50%; transform:translateY(-50%); color:var(--muted2); pointer-events:none; flex:0 0 auto; }
 #search {
-  width:100%; min-width:0; min-height:34px;
+  width:100%; min-width:0; height:34px;
   padding:6px 112px 6px 32px; background:rgba(241,245,249,.86);
   border:1px solid var(--border); border-radius:var(--radius-sm);
 }
@@ -424,15 +424,15 @@ input,select,textarea { font:inherit; color:var(--text); }
 }
 .search-help-pop .shp-note { color:var(--muted2); font-size:11px; }
 .search-help-pop .shp-examples > div { margin:4px 0; font-size:12px; }
-/* filter-strip / top-actions：不换行（nowrap），浏览器变窄时由搜索框收缩吸收宽度 */
-.filter-strip, .top-actions { display:flex; align-items:center; gap:7px; min-width:0; flex-wrap:nowrap; }
-.filter-strip { justify-content:flex-start; }
+/* top-actions：不换行（nowrap），浏览器变窄时由搜索框收缩吸收宽度。
+   .filter-strip 已随 v3.18 下沉到列表工具条，样式见「论文列表」段。 */
+.top-actions { display:flex; align-items:center; gap:7px; min-width:0; flex-wrap:nowrap; }
 .top-actions { justify-content:flex-end; }
-/* 主题/标签筛选触发器：与 .topbar select 同设计语言（圆角、边框、箭头、焦点光环），
+/* 主题/标签筛选触发器：与 .ui-select / .sort-field 同设计语言（圆角、边框、箭头、焦点光环），
    选中时 active 态 Indigo 强调 + 计数徽标。 */
 .filter-trigger {
   display:inline-flex; align-items:center; gap:6px; flex:0 0 auto;
-  min-height:34px; padding:7px 12px; cursor:pointer;
+  height:34px; padding:7px 12px; cursor:pointer;
   background:rgba(241,245,249,.86); border:1px solid var(--border); border-radius:var(--radius-sm);
   color:var(--text); font-size:13px; font-weight:600; white-space:nowrap;
   transition:border-color .12s ease, background-color .12s ease, box-shadow .12s ease;
@@ -531,18 +531,49 @@ input,select,textarea { font:inherit; color:var(--text); }
   border-top:1px solid var(--border); background:var(--panel2);
 }
 .fp-sel-count { flex:1 1 auto; font-size:12px; color:var(--muted); font-weight:600; }
-.topbar select, .topbar .star-filter, .topbar .seg {
-  background:rgba(241,245,249,.86); border:1px solid var(--border); color:var(--text);
-  padding:7px 8px; border-radius:var(--radius-sm); min-height:34px;
+
+/* ---- 概念筛选面板（漏斗按钮触发）---- */
+.concept-filter-btn { position:relative; }
+.concept-filter-btn.active { color:var(--accent-strong); background:var(--accent-soft); }
+.concept-filter-btn .cf-badge {
+  position:absolute; top:-5px; right:-5px; min-width:16px; height:16px; padding:0 4px;
+  display:inline-flex; align-items:center; justify-content:center;
+  background:var(--accent); color:#fff; font-size:10px; font-weight:700; border-radius:9px;
+  box-shadow:0 1px 3px rgba(79,70,229,.4);
 }
-/* 下拉框统一设计语言（顶栏筛选 / 分类排序 / 任意 .ui-select 共用）：
+.concept-filter-pop { min-width:300px; max-width:340px; }
+.cf-section { padding:10px 12px; border-bottom:1px solid var(--border); }
+.cf-section.cf-row { display:flex; align-items:center; }
+.cf-label { font-size:12px; font-weight:600; color:var(--muted); margin-bottom:8px; }
+.cf-cat-chips { display:flex; flex-wrap:wrap; gap:6px; }
+.cf-cat-chip {
+  display:inline-flex; align-items:center; gap:5px; padding:4px 10px;
+  border:1px solid var(--border2); border-radius:14px; background:var(--panel);
+  color:var(--text); font-size:12px; cursor:pointer; transition:background .12s ease, border-color .12s ease;
+}
+.cf-cat-chip:hover:not(:disabled) { border-color:var(--accent); color:var(--accent-strong); }
+.cf-cat-chip:disabled { opacity:.4; cursor:default; }
+.cf-cat-chip.on { background:var(--accent-soft); border-color:var(--accent); color:var(--accent-strong); font-weight:600; }
+.cf-cat-chip .cf-cat-n { font-size:10px; color:var(--muted2); background:var(--panel2); border-radius:8px; padding:1px 5px; }
+.cf-cat-chip.on .cf-cat-n { background:rgba(255,255,255,.5); color:var(--accent-strong); }
+.cf-freq-opts { display:flex; gap:6px; }
+.cf-freq-opt {
+  flex:1; padding:6px 8px; border:1px solid var(--border2); border-radius:7px; background:var(--panel);
+  color:var(--muted); font-size:12px; cursor:pointer; text-align:center; transition:background .12s ease, color .12s ease;
+}
+.cf-freq-opt:hover { background:var(--panel2); color:var(--text); }
+.cf-freq-opt.on { background:var(--accent); border-color:var(--accent); color:#fff; font-weight:600; }
+.cf-check { display:inline-flex; align-items:center; gap:6px; font-size:13px; color:var(--text); cursor:pointer; }
+.cf-check input { accent-color:var(--accent); }
+.cf-foot { display:flex; align-items:center; gap:8px; padding:9px 12px; background:var(--panel2); }
+.cf-foot .cf-sel { flex:1 1 auto; }
+/* 下拉框统一设计语言（列表工具条排序 / 分类排序 / 任意 .ui-select 共用）：
    去原生箭头 + 自定义 chevron + 悬停边框加深 + 焦点 Indigo 光环，与 .badge/.tag/.sort-field 同源。
    注：列表排序 select 包在 .sort-field 外壳里（外壳自带背景/边框），单独处理；<option>/<optgroup> 弹出面板由系统渲染，无法 CSS 定制。 */
-.topbar select,
 .tax-toolbar select,
 .ui-select {
   appearance:none; -webkit-appearance:none; -moz-appearance:none;
-  min-height:34px; cursor:pointer; font-size:13px; font-weight:600;
+  height:34px; cursor:pointer; font-size:13px; font-weight:600;
   color:var(--text); white-space:nowrap;
   background-color:rgba(241,245,249,.86);
   border:1px solid var(--border); border-radius:var(--radius-sm);
@@ -551,10 +582,7 @@ input,select,textarea { font:inherit; color:var(--text); }
   background-repeat:no-repeat; background-position:right 10px center; background-size:12px;
   transition:border-color .12s ease, box-shadow .12s ease, background-color .12s ease;
 }
-.topbar select { max-width:170px; min-width:116px; }
 .tax-toolbar select { min-width:112px; }
-/* 状态 select 选了非默认值时 active 态（与 .filter-trigger.active 一致的 Indigo 强调） */
-.topbar select.active { border-color:#c7d2fe; background-color:var(--accent-soft); color:var(--accent-strong); }
 /* 列表排序 select：包在 .sort-field 外壳里，自身透明无边框（外壳提供视觉），
    只保留字体/箭头/对齐；option 面板样式走下面的统一规则。 */
 /* 列表排序 select：包在 .sort-field 外壳里，自身透明无边框（外壳提供视觉）。
@@ -563,31 +591,131 @@ input,select,textarea { font:inherit; color:var(--text); }
 .list-toolbar select {
   appearance:none; -webkit-appearance:none; -moz-appearance:none;
   border:0; background-color:transparent; color:var(--text);
-  font-size:13px; font-weight:600; cursor:pointer;
+  font-size:12px; font-weight:600; cursor:pointer;
   flex:1 1 auto; min-width:0; width:100%;
   min-height:20px; padding:0 18px 0 0;
   background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
   background-repeat:no-repeat; background-position:right center; background-size:12px;
 }
 .list-toolbar select:focus { outline:none; }
-/* 统一交互态（顶栏筛选 / 分类排序） */
-.topbar select:hover,
+/* 统一交互态（分类排序 / 通用下拉） */
 .tax-toolbar select:hover,
 .ui-select:hover { border-color:#94a3b8; background-color:#fff; }
-.topbar select:focus,
 .tax-toolbar select:focus,
 .ui-select:focus { outline:none; border-color:var(--accent); background-color:var(--panel); box-shadow:0 0 0 3px var(--accent-soft); }
 /* 弹出面板内的分组标题/选项（系统支持部分定制：字重/颜色） */
-.topbar select optgroup,
 .list-toolbar select optgroup,
 .tax-toolbar select optgroup,
 .ui-select optgroup { color:var(--muted); font-weight:700; font-size:11px; }
-.topbar select option,
 .list-toolbar select option,
 .tax-toolbar select option,
 .ui-select option { color:var(--text); font-weight:500; }
-.star-filter { display:flex; align-items:center; gap:5px; cursor:pointer; white-space:nowrap; flex:0 0 auto; }
 .stats { display:flex; align-items:center; gap:4px; color:var(--muted); font-size:12px; white-space:nowrap; }
+
+/* ---------- 视图显隐 + 首帧选择（v3.17） ---------- */
+/* 运行时由 views/view-switch.js 的 showView 切类。
+   !important 是必需的，不是偷懒：这是个「压过一切」的工具类，而被它作用的元素自带布局
+   display（#library-view 的 .layout 是 grid）。二者特异性同为 (0,1,0)，靠先后顺序定胜负——
+   .layout 在本文件里更靠后就会赢，表现为切到概念页时论文页的列表工具条还挂在左上角。 */
+.view-hidden { display:none !important; }
+/* 首帧：<head> 内联脚本写 data-boot-path，这里直接选中正确视图，避免 app.js（module，defer，
+   且启动要先 await loadSpaces()）接管前先画出论文页再跳走。showView 首次执行会清掉该属性交还控制权。
+   选择器特意带上 .view-hidden 提高特异性，压过上面那条通用规则。
+   每条路径两组：内容区 + 侧栏上下文区块。加一级视图要同步加这两组（见 AGENTS.md 陷阱 0）。
+   /settings 不在此列——它是覆盖层，底下的论文页照常显示。 */
+html[data-boot-path^="/concepts"] #library-view,
+html[data-boot-path^="/formulas"] #library-view,
+html[data-boot-path^="/concepts"] .side-ctx[data-ctx="library"],
+html[data-boot-path^="/formulas"] .side-ctx[data-ctx="library"] { display:none; }
+/* 这几条要显出被 .view-hidden 藏起来的元素，故同样带 !important——两条都 important 时
+   比特异性，这里 (1,2,1) 稳赢 .view-hidden 的 (0,1,0)。 */
+html[data-boot-path^="/concepts"] #concepts-view.view-hidden,
+html[data-boot-path^="/formulas"] #formulas-view.view-hidden { display:flex !important; }
+html[data-boot-path^="/concepts"] .side-ctx[data-ctx="concepts"].view-hidden,
+html[data-boot-path^="/formulas"] .side-ctx[data-ctx="formulas"].view-hidden { display:block !important; }
+html[data-boot-path^="/settings"] #settings-view.view-hidden { display:flex !important; }
+
+/* ---------- 一级导航（论文 / 概念 / 公式） ---------- */
+/* 与 .space-current / .filter-trigger 共用同一套 token（34px 高、--radius-sm、同边框色），
+   视觉上是空间切换器的延伸，读作「在 X 空间里看 Y」。选中段用 accent-soft 内嵌胶囊，
+   刻意不加外阴影——一浮起来就不像「嵌在 bar 里」了。 */
+.view-nav {
+  display:flex; align-items:center; gap:2px; flex:0 0 auto;
+  height:34px; padding:3px; border-radius:var(--radius-sm);
+  background:rgba(241,245,249,.86); border:1px solid var(--border);
+}
+.view-nav .vn-item {
+  display:inline-flex; align-items:center; gap:5px; height:26px; padding:0 10px;
+  border-radius:6px; color:var(--muted); font-size:13px; font-weight:600;
+  text-decoration:none; white-space:nowrap; cursor:pointer;
+  transition:background-color .12s ease, color .12s ease;
+}
+.view-nav .vn-item svg { opacity:.75; }
+.view-nav .vn-item:hover { color:var(--text); background:rgba(255,255,255,.7); }
+.view-nav .vn-item.active { background:var(--accent-soft); color:var(--accent-strong); }
+.view-nav .vn-item.active svg { opacity:1; }
+.view-nav .vn-item:focus-visible { outline:none; box-shadow:0 0 0 2px var(--accent-soft), 0 0 0 3px var(--accent); }
+.view-nav .vn-count {
+  font-size:11px; font-weight:600; color:var(--muted2); font-variant-numeric:tabular-nums;
+}
+.view-nav .vn-count:empty { display:none; }
+.view-nav .vn-item.active .vn-count { color:var(--accent); }
+/* 富余空间吃在导航与搜索之间，把「搜索 + 状态 + 添加 + 设置」整组顶到右缘 */
+.topbar-spacer { flex:1 1 auto; min-width:8px; }
+
+/* ---------- 顶栏状态胶囊（取代原先五个 stat-pill） ---------- */
+.status-chip-wrap { position:relative; flex:0 0 auto; }
+.status-chip {
+  display:inline-flex; align-items:center; gap:6px; height:34px; padding:0 10px;
+  background:transparent; border:1px solid transparent; border-radius:var(--radius-sm);
+  color:var(--muted); font-size:12px; font-weight:600; cursor:pointer; white-space:nowrap;
+  transition:background-color .12s ease, border-color .12s ease;
+}
+.status-chip:hover { background:rgba(241,245,249,.86); border-color:var(--border); }
+/* activity 矢量图标（v3.18 取代色点）：颜色吃 currentColor——idle  muted / busy amber / error red
+   由下面三条 data-level 规则给 .status-chip 设 color，图标随之变色；busy 时整体脉动。 */
+.status-chip .sc-ico { flex:0 0 auto; }
+.status-chip .sc-text:empty { display:none; }
+.status-chip[data-level="busy"] { color:var(--amber); }
+.status-chip[data-level="busy"] .sc-ico { animation:pulse-dot 1.3s ease-in-out infinite; }
+.status-chip[data-level="error"] { color:var(--red); }
+.status-pop {
+  position:absolute; top:calc(100% + 6px); right:0; z-index:60; min-width:220px;
+  background:#fff; border:1px solid var(--border); border-radius:var(--radius);
+  box-shadow:0 12px 32px rgba(15,23,42,.16); padding:8px;
+  animation:spaceMenuIn .1s ease-out;
+}
+.status-pop .sp-row { display:flex; align-items:center; justify-content:space-between; gap:16px; padding:5px 6px; font-size:12.5px; }
+.status-pop .sp-k { display:inline-flex; align-items:center; gap:6px; color:var(--muted); }
+.status-pop .sp-k .pulse { width:7px; height:7px; border-radius:50%; background:var(--amber); animation:pulse-dot 1.3s ease-in-out infinite; }
+.status-pop .sp-v { font-weight:700; color:var(--text); font-variant-numeric:tabular-nums; }
+.status-pop .sp-v.good { color:var(--green); }
+.status-pop .sp-v.busy { color:var(--amber); }
+.status-pop .sp-v.bad { color:var(--red); }
+.status-pop .sp-detail { padding:0 6px 6px; font-size:11.5px; color:var(--muted2); }
+.status-pop .sp-foot { margin-top:4px; padding-top:8px; border-top:1px solid var(--border); }
+.status-pop .sp-foot .btn { width:100%; }
+
+/* ---------- 「+ 添加」下拉 ---------- */
+.add-menu { position:relative; flex:0 0 auto; }
+.add-menu .add-trigger { gap:6px; }
+.add-menu .add-trigger .ft-chev { opacity:.8; }
+.add-menu.open .add-trigger .ft-chev { transform:rotate(180deg); }
+.add-menu-list {
+  position:absolute; top:calc(100% + 6px); right:0; z-index:60; min-width:190px;
+  background:#fff; border:1px solid var(--border); border-radius:var(--radius);
+  box-shadow:0 12px 32px rgba(15,23,42,.16); padding:4px;
+  display:flex; flex-direction:column; gap:1px;
+  animation:spaceMenuIn .1s ease-out;
+}
+.add-menu-list button {
+  display:flex; align-items:center; gap:8px; width:100%; text-align:left;
+  padding:8px 10px; background:transparent; border:none; border-radius:6px;
+  font-size:13px; color:var(--text); cursor:pointer;
+}
+.add-menu-list button:hover { background:var(--accent-soft); color:var(--accent-strong); }
+.add-menu-list button svg { opacity:.75; flex:0 0 auto; }
+
 .stat-pill {
   display:inline-flex; align-items:center; min-height:24px;
   padding:2px 7px; border-radius:6px; background:var(--panel2);
@@ -630,32 +758,56 @@ input,select,textarea { font:inherit; color:var(--text); }
 .toast.error { background:#b91c1c; }
 .toast.success { background:var(--green); }
 
-/* ---------- 主布局：侧栏 + 列表 + 详情 ---------- */
-/* 默认：侧栏 230 + 列表 400 + 详情自适应。列表加宽以容纳更多信息。 */
-.layout {
-  display:grid; grid-template-columns:230px minmax(320px, var(--list-width, 410px)) 8px minmax(0, 1fr);
+/* ---------- 应用骨架：常驻侧栏 + 内容区（v3.17 第二步） ---------- */
+/* 侧栏与 rail 提到三个内容视图之外，切页时只换 .app-content 里的内容与侧栏的 .side-ctx，
+   骨架恒定——此前整块 .layout 属于 #library-view，切到概念页时侧栏连同布局一起塌陷。 */
+.app-shell {
+  display:grid; grid-template-columns:230px minmax(0, 1fr);
   flex:1 1 auto; min-height:0; overflow:hidden; position:relative;
   transition:grid-template-columns .18s ease;
 }
-.layout.resizing { transition:none; }
+.app-shell.sidebar-collapsed { grid-template-columns:56px minmax(0, 1fr); }
+.app-shell.sidebar-collapsed .sidebar { display:none; }
+/* 内容区本身也要 min-height:0 + overflow:hidden，否则内部视图撑不出独立滚动（同陷阱 5） */
+.app-content { display:flex; flex-direction:column; min-width:0; min-height:0; overflow:hidden; }
 body.is-resizing { cursor:col-resize; user-select:none; }
-/* 侧栏收起：保留一条可点击的精简 rail，不遮挡列表。 */
-.layout.sidebar-collapsed { grid-template-columns:56px minmax(320px, var(--list-width, 410px)) 8px minmax(0, 1fr); }
-.layout.sidebar-collapsed .sidebar { display:none; }
+
+/* ---------- 论文页内部布局：列表 + 分隔条 + 详情 ---------- */
+/* 侧栏那一列已由 .app-shell 承担，这里只剩三列。--list-width 仍挂在 #library-view 上。 */
+.layout {
+  display:grid; grid-template-columns:minmax(320px, var(--list-width, 410px)) 8px minmax(0, 1fr);
+  flex:1 1 auto; min-height:0; overflow:hidden; position:relative;
+}
+/* 侧栏上下文区块：同一个 .sidebar 里三份内容，按当前视图切 .view-hidden */
+.side-ctx { display:block; }
+.side-ctx.view-hidden { display:none; }
+/* 分类分面项：复用 .side-item 的骨架，额外给一个小色点表示分类（与收藏夹 .swatch 呼应，
+   但用圆点区分「系统分类」与「用户收藏夹」）。 */
+.side-item .cat-dot {
+  width:8px; height:8px; border-radius:50%; flex:0 0 auto;
+  background:var(--muted2); opacity:.55;
+}
+.side-item.active .cat-dot { background:var(--accent); opacity:1; }
+/* 分面清空按钮：只在有选中分类时出现在分组标题右侧 */
+.side-title .side-clear {
+  background:transparent; border:none; padding:0 2px; cursor:pointer;
+  color:var(--muted2); font-size:11px; font-weight:600;
+}
+.side-title .side-clear:hover { color:var(--accent-strong); }
 /* min-height:0 是 grid 项内部滚动的关键：覆盖默认 min-content，避免子项把行撑高导致整页滚动 */
 .pane { overflow:auto; min-height:0; }
 .sidebar {
   background:#f8fafc; border-right:1px solid var(--border); padding:8px 0;
   overflow:auto; transition:opacity .15s ease;
-  /* flex 列布局：上半部分内容 + 底部设置入口钉底。overflow:auto 让收藏夹多时侧栏内部滚（替代之前的 hidden 裁掉） */
+  /* overflow:auto 让收藏夹多时侧栏内部滚（替代之前的 hidden 裁掉）。
+     底部是设置入口 footer（v3.18 自顶栏移回——侧栏 v3.17 起跨视图常驻，footer 三页可达）。 */
   display:flex; flex-direction:column; min-height:0;
 }
-.sidebar > .side-section:not(.side-footer) { flex:0 0 auto; }
-/* 左下角设置入口 footer：padding 收紧，避免与 .sidebar 自身 padding 叠加导致下方空隙过大 */
+.sidebar > .side-section { flex:0 0 auto; }
+/* 左下角设置入口 footer：margin-top:auto 钉底；padding 收紧，避免与 .sidebar 自身 padding 叠加 */
 .side-footer {
-  margin-top:auto; padding:6px 10px 2px; border-top:1px solid var(--border);
+  margin-top:auto; padding:6px 10px 2px; border-top:1px solid var(--border); flex:0 0 auto;
 }
-.side-footer .side-item { width:100%; justify-content:flex-start; }
 /* 左下角「设置」入口：贴合平台的描边按钮（线性齿轮 + 悬停 Indigo） */
 .side-settings {
   display:flex; align-items:center; gap:8px; width:100%;
@@ -664,33 +816,57 @@ body.is-resizing { cursor:col-resize; user-select:none; }
   cursor:pointer; transition:background .12s ease, color .12s ease, border-color .12s ease;
 }
 .side-settings:hover { background:var(--accent-soft); color:var(--accent-strong); border-color:#c7d2fe; }
-.side-settings .ico { display:inline-flex; align-items:center; color:inherit; opacity:1; }
+.side-settings .ico { display:inline-flex; align-items:center; color:inherit; }
 .side-settings .ico svg { width:16px; height:16px; }
-/* 收起后的展开细条 */
+/* 收起后的图标栏（56px）：展开按钮 + 视图快捷入口 + 收藏夹色点 + 设置（底部，rail-spacer 钉底）。
+   各按钮点击直接生效（不展开侧栏）；只有顶部展开按钮恢复完整侧栏。 */
 .sidebar-rail {
   display:none; min-width:0; width:56px; height:100%; border:0; border-right:1px solid var(--border);
-  background:#f8fafc; color:var(--muted); cursor:pointer;
-  flex-direction:column; align-items:center; gap:14px;
-  padding:12px 0; grid-column:1; grid-row:1;
+  background:#f8fafc; color:var(--muted); overflow:hidden;
+  flex-direction:column; align-items:center; gap:4px;
+  padding:8px 0; grid-column:1; grid-row:1;
 }
-.sidebar-rail:hover { background:#fff; }
-.sidebar-rail .rail-icon {
+.sidebar-rail .rail-btn {
+  width:38px; height:38px; padding:0; display:grid; place-items:center;
+  border:1px solid transparent; border-radius:9px; background:transparent; color:var(--muted);
+  cursor:pointer; transition:background .12s ease, color .12s ease, box-shadow .12s ease;
+}
+.sidebar-rail .rail-btn:hover { background:#fff; color:var(--text); box-shadow:0 1px 3px rgba(15,23,42,.12); }
+.sidebar-rail .rail-btn:active { transform:translateY(1px); }
+.sidebar-rail .rail-btn.active {
+  background:var(--accent-soft); color:var(--accent-strong); border-color:#c7d2fe;
+  box-shadow:inset 3px 0 0 var(--accent); /* 与展开态 .side-item.active 一致的左竖条 */
+}
+.sidebar-rail .rail-btn svg { display:block; }
+/* 各一级视图的 rail 上下文（v3.19）：与侧栏 .side-ctx 同步显隐（showView 切 .view-hidden） */
+.rail-ctx { display:flex; flex-direction:column; align-items:center; gap:4px; width:100%; flex:0 0 auto; }
+/* 顶部展开按钮（原始样式）：面板图标，整体低调；hover 图标变 accent。 */
+.sidebar-rail .rail-expand {
+  border:0; background:transparent; cursor:pointer; padding:0; margin-bottom:4px;
+  transition:background .12s ease, color .12s ease, border-color .12s ease;
+}
+.sidebar-rail .rail-expand-icon {
   display:grid; place-items:center; width:36px; height:36px;
   border-radius:9px; color:var(--muted);
   background:transparent; border:1px solid transparent;
   transition:background .12s ease, color .12s ease, border-color .12s ease;
 }
-.sidebar-rail:hover .rail-icon {
+.sidebar-rail .rail-expand:hover .rail-expand-icon {
   color:var(--accent); background:var(--accent-soft); border-color:#c7d2fe;
 }
-.sidebar-rail .rail-text {
-  writing-mode:vertical-rl; text-orientation:mixed;
-  font-size:11px; font-weight:600; letter-spacing:.06em; color:var(--muted2);
-  transition:color .12s ease;
-}
-.sidebar-rail:hover .rail-text { color:var(--accent-strong); }
-/* 收起时显示展开条（rail 是 .layout 内 .sidebar 的兄弟元素） */
-.layout.sidebar-collapsed .sidebar-rail { display:flex; }
+.sidebar-rail .rail-sep { width:24px; height:1px; background:var(--border2); flex:0 0 auto; margin:2px 0; }
+.sidebar-rail .rail-spacer { flex:1 1 auto; min-height:4px; }
+/* rail 收藏夹列表：内部可滚（收藏夹多时），滚动条彻底隐藏（webkit + Firefox/标准）。 */
+.sidebar-rail .rail-folder-list { display:flex; flex-direction:column; align-items:center; gap:4px; width:100%; max-height:40vh; overflow-y:auto; overflow-x:hidden; scrollbar-width:none; }
+.sidebar-rail .rail-folder-list::-webkit-scrollbar { width:0; height:0; display:none; }
+/* rail 内 button 聚焦时不触发布局位移/自动滚动（点击收藏夹按钮不引发 scrollIntoView） */
+.sidebar-rail button:focus { outline:none; }
+.sidebar-rail button:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+/* rail 收藏夹按钮：复用 .rail-btn（38×38 药丸，与视图按钮同款）；内含 .swatch 方形色块（与展开态一致）。
+   .active / .drop-target 态继承自 .rail-btn（左竖条 + accent-soft 底），此处只补拖放高亮。 */
+.sidebar-rail .rail-folder-dot.drop-target { box-shadow:0 0 0 3px var(--accent); }
+/* 收起时显示图标栏（rail 是 .layout 内 .sidebar 的兄弟元素） */
+.app-shell.sidebar-collapsed .sidebar-rail { display:flex; }
 /* 列表面板用 flex 列布局：工具栏固定、列表独立滚动，只有清单滚动而非整页 */
 .list-pane { background:var(--panel); display:flex; flex-direction:column; overflow:hidden; min-width:0; }
 .pane-splitter {
@@ -748,8 +924,10 @@ body.is-resizing { cursor:col-resize; user-select:none; }
   width:18px; flex:0 0 auto; color:inherit; opacity:1;
 }
 .side-item .ico svg { width:16px; height:16px; }
-.side-item .swatch { width:11px; height:11px; border-radius:3px; flex:0 0 auto; }
-.side-item > span:not(.ico):not(.swatch):not(.count):not([data-edit]) { flex:1 1 auto; min-width:0; }
+.side-item .swatch, .rail-folder-dot .swatch { width:11px; height:11px; border-radius:3px; flex:0 0 auto; display:inline-block; }
+/* 只有「文本」那个 span 该吃掉剩余宽度；图标/色块/色点/计数/编辑入口都是定宽装饰，
+   漏掉哪个它就会被拉长（.cat-dot 漏掉时表现为圆点变成一条横杠）。 */
+.side-item > span:not(.ico):not(.swatch):not(.cat-dot):not(.count):not([data-edit]) { flex:1 1 auto; min-width:0; }
 .side-item .count { margin-left:auto; color:var(--muted2); font-size:11px; font-weight:600; }
 .side-item.active .count { color:var(--accent); }
 /* 收藏夹编辑入口：默认隐去，hover 行时显现，避免常态干扰。 */
@@ -764,22 +942,32 @@ body.is-resizing { cursor:col-resize; user-select:none; }
 }
 
 /* ---------- 论文列表 ---------- */
-/* 工具栏固定在顶部（flex 项，不滚动） */
+/* 工具栏固定在顶部（flex 项，不滚动）。v3.18 起装下整条筛选（状态/主题/标签）+ 排序 + 密度 + 多选：
+   全部控件统一 30px 高 / 12px 字（密度对齐 .seg-btn）；放不下时换行——筛选+排序居左一行、
+   密度+多选（.toolbar-actions，margin-left:auto）右对齐一行，绝不横向溢出看不见。 */
 .list-toolbar {
-  display:flex; align-items:center; gap:6px; flex:0 0 auto;
-  padding:8px 10px; border-bottom:1px solid var(--border);
+  display:flex; align-items:center; gap:6px; flex:0 0 auto; flex-wrap:wrap; row-gap:6px;
+  padding:7px 10px; border-bottom:1px solid var(--border);
   background:var(--panel); z-index:5;
 }
-.toolbar-spacer { flex:1 1 auto; min-width:0; }
+/* 筛选触发器组（v3.18 自顶栏下沉）：基础 .filter-trigger 样式不变——设置中心自定义下拉仍在用，
+   这里只加紧凑覆盖（30px 高、12px 字、padding 收紧）。 */
+.filter-strip { display:flex; align-items:center; gap:5px; min-width:0; flex:0 0 auto; flex-wrap:nowrap; }
+.list-toolbar .filter-trigger { height:30px; min-height:0; padding:0 8px; font-size:12px; gap:5px; }
+/* 工具条内的 .btn.sm（多选）：跟随 30px 密度（全局 .btn 是 min-height:34px） */
+.list-toolbar .btn.sm { min-height:30px; }
+/* 右侧动作组（密度 + 多选）：margin-left:auto 贴右——单行时顶到右缘；
+   换行时落在第二行仍然右对齐，两行都整齐（取代旧 .toolbar-spacer 撑子）。 */
+.toolbar-actions { display:flex; align-items:center; gap:6px; margin-left:auto; flex:0 0 auto; flex-wrap:nowrap; }
 /* 分段控件（视图密度切换）：与设置中心 .tax-seg 同设计语言——圆角胶囊外壳 + 两格按钮，当前格 Indigo 强调 */
 .seg-group {
   display:inline-flex; align-items:stretch; flex:0 0 auto;
   border:1px solid var(--border2); border-radius:var(--radius-sm);
-  background:var(--panel2); overflow:hidden; min-height:34px;
+  background:var(--panel2); overflow:hidden; min-height:30px;
 }
 .seg-btn {
   display:inline-flex; align-items:center; gap:5px;
-  padding:0 11px; border:0; background:transparent; cursor:pointer;
+  padding:0 9px; border:0; background:transparent; cursor:pointer;
   color:var(--muted); font-size:12px; font-weight:600; white-space:nowrap;
   border-left:1px solid var(--border);
   transition:background .12s ease, color .12s ease;
@@ -789,13 +977,13 @@ body.is-resizing { cursor:col-resize; user-select:none; }
 .seg-btn:hover { background:var(--panel3); color:var(--text); }
 .seg-btn.active { background:var(--accent-soft); color:var(--accent-strong); }
 .seg-btn:focus-visible { outline:2px solid var(--accent); outline-offset:-2px; }
-/* 排序（group by）控件：与顶栏 select 统一的设计语言，外壳 + 自定义下拉箭头 */
-/* 排序控件外壳：视觉对齐 .filter-trigger（同色、同 padding、同字号）+ 排序图标 */
+/* 排序（group by）控件：与 .filter-trigger 统一的设计语言，外壳 + 自定义下拉箭头 */
+/* 排序控件外壳：视觉对齐工具条内的 .filter-trigger（30px 高、12px 字、同 padding）+ 排序图标 */
 .sort-field {
-  display:inline-flex; align-items:center; gap:6px; flex:0 0 auto;
-  min-height:34px; padding:7px 12px; cursor:pointer;
+  display:inline-flex; align-items:center; gap:5px; flex:0 0 auto;
+  height:30px; padding:0 8px; cursor:pointer;
   background:rgba(241,245,249,.86); border:1px solid var(--border); border-radius:var(--radius-sm);
-  color:var(--text); font-size:13px; font-weight:600; white-space:nowrap;
+  color:var(--text); font-size:12px; font-weight:600; white-space:nowrap;
   transition:background .12s ease, border-color .12s ease, box-shadow .12s ease;
 }
 .sort-field:hover { background:#fff; border-color:#94a3b8; }
@@ -2388,17 +2576,11 @@ body.fab-dragging { user-select:none; cursor:ns-resize; }
 .page-view { flex:1 1 auto; min-height:0; overflow:auto; }
 /* 概念页全宽（v3.4）：去掉 max-width:1160 限制，仅留 padding 留白，多列网格铺满视口。 */
 #concepts-view { padding:24px 32px 40px; width:100%; margin:0; }
-/* 头部：标题组（返回按钮 + 标题/副标题）+ 工具栏（搜索/排序/下载），响应式 wrap */
+/* 头部：标题组 + 工具栏（排序/下载），响应式 wrap。
+   v3.17 起没有返回按钮——概念/公式与论文是平级页面，由顶栏 #view-nav 切换，
+   返回箭头是「下钻」的语言，与平级导航冲突。 */
 .concepts-head { display:flex; align-items:center; gap:14px; margin-bottom:18px; flex-wrap:wrap; }
 .concepts-head-title { flex:0 1 auto; display:flex; align-items:flex-start; gap:12px; min-width:0; }
-.concepts-head-title > .concepts-back {
-  flex:0 0 auto; align-self:flex-start; margin-top:1px;
-  display:inline-flex; align-items:center; justify-content:center;
-  width:34px; height:34px; padding:0; border-radius:50%;
-  border:1px solid var(--border2); background:var(--panel); color:var(--muted);
-  cursor:pointer; transition:background .12s ease, color .12s ease, border-color .12s ease;
-}
-.concepts-head-title > .concepts-back:hover { background:var(--accent-soft); border-color:#c7d2fe; color:var(--accent-strong); }
 .concepts-head-text { min-width:0; }
 .concepts-head h2 { margin:0; font-size:22px; line-height:1.25; display:inline-flex; align-items:center; gap:10px; }
 .concepts-head h2 .count-badge {
@@ -2407,9 +2589,9 @@ body.fab-dragging { user-select:none; cursor:ns-resize; }
   font-size:13px; font-weight:700; min-width:24px; justify-content:center;
 }
 .concepts-head p { margin:4px 0 0; color:var(--muted); font-size:13px; }
-.concepts-toolbar { display:flex; align-items:center; gap:8px; flex:1 1 auto; min-width:0; justify-content:flex-end; flex-wrap:wrap; }
+.concepts-toolbar { display:flex; align-items:center; gap:8px; flex:0 1 auto; min-width:0; justify-content:flex-end; flex-wrap:nowrap; margin-left:auto; }
 .concepts-toolbar input[type=search] {
-  flex:1 1 240px; max-width:360px; min-width:180px;
+  flex:0 1 180px; max-width:220px; min-width:100px;
   padding:8px 12px; border:1px solid var(--border); border-radius:8px; background:var(--panel);
   font:inherit; color:var(--text);
 }
@@ -2421,6 +2603,38 @@ body.fab-dragging { user-select:none; cursor:ns-resize; }
 }
 .concepts-toolbar .seg button:hover { background:var(--panel2); color:var(--text); }
 .concepts-toolbar .seg button.active { background:var(--accent); color:#fff; font-weight:600; }
+/* 一级视图切换（清单/地图）：提升到标题区（.concepts-head 直接子元素），位置稳定不漂移。
+   带图标的 accent 胶囊分段，视觉最突出——主导航。位置紧邻标题（title 右侧），
+   工具栏用 margin-left:auto 整体推右，view-seg 不随工具栏内容增减漂移。 */
+.concepts-view-tabs { flex:0 0 auto; margin-left:14px; }
+.concepts-view-tabs.view-seg { border-color:#c7d2fe; padding:3px; gap:3px; background:var(--accent-soft); border-radius:10px; }
+.concepts-view-tabs.view-seg button {
+  display:inline-flex; align-items:center; gap:5px; padding:6px 13px; border-radius:7px;
+  color:var(--muted2); font-weight:600; font-size:13px;
+}
+.concepts-view-tabs.view-seg button:hover { background:rgba(255,255,255,.6); color:var(--accent-strong); }
+.concepts-view-tabs.view-seg button.active { background:var(--accent); color:#fff; box-shadow:0 2px 8px rgba(79,70,229,.3); }
+.concepts-view-tabs.view-seg button svg { flex:0 0 auto; }
+/* 二级控件（仅清单视图）：图标排版（icon-seg）+ 文字排序（text-seg）。
+   视觉退后于主导航，但 active 态有明确的 accent 色调（切换感强）。 */
+.concepts-toolbar .icon-seg { padding:2px; gap:2px; background:var(--panel2); border-color:var(--border2); border-radius:8px; }
+.concepts-toolbar .icon-seg button {
+  display:grid; place-items:center; width:30px; height:30px; padding:0; border-radius:6px;
+  color:var(--muted2); transition:background .12s ease, color .12s ease;
+}
+.concepts-toolbar .icon-seg button:hover { background:var(--panel); color:var(--text); }
+.concepts-toolbar .icon-seg button.active { background:var(--accent); color:#fff; box-shadow:0 1px 4px rgba(79,70,229,.3); }
+.concepts-toolbar .text-seg { border-color:transparent; background:transparent; gap:2px; }
+.concepts-toolbar .text-seg button { padding:5px 10px; font-size:12px; border-radius:6px; color:var(--muted2); white-space:nowrap; }
+.concepts-toolbar .text-seg button:hover { background:var(--panel2); color:var(--text); }
+.concepts-toolbar .text-seg button.active { background:var(--accent-soft); color:var(--accent-strong); font-weight:600; }
+/* 下载 Markdown 图标按钮：纯图标，紧凑不占文字宽度 */
+.concepts-toolbar .icon-btn {
+  display:inline-flex; align-items:center; justify-content:center; width:30px; height:30px;
+  padding:0; border-radius:7px; color:var(--muted2);
+}
+.concepts-toolbar .icon-btn:hover { background:var(--panel2); color:var(--accent-strong); }
+.concepts-toolbar .icon-btn svg { display:block; }
 /* 字母分组索引条（仅字母排序时显示）。
    注意：无概念字母的置灰类必须叫 .off 而非 .empty——全局 .empty（详情空态 margin-top:38vh）
    曾撞类把字母砸到行底、索引条撑到 380px 高（v3.9 根因修复）。sep 固定高度防 flex stretch 撑行。 */
@@ -2443,7 +2657,16 @@ body.fab-dragging { user-select:none; cursor:ns-resize; }
    - masonry-view：columns 多列，卡片 break-inside:avoid；卡片为相对定位块，row-actions 浮于右上角。
    - list-view：常规块级流，每张卡片单行紧凑（频次 + 术语 + 解释摘要 + 论文数 + 操作）。 */
 .concepts-grid.masonry-view {
-  column-width:300px; column-gap:12px;
+  display:grid; grid-template-columns:repeat(auto-fill, minmax(300px, 1fr)); gap:12px;
+  align-items:start; /* grid 行优先：顶行从左到右是排序 1..N（JS 瀑布流兜底消除同行空隙） */
+}
+/* JS 完成瀑布流定位后加 .js-masonry：关掉 grid 流（卡片已绝对定位，grid 不再参与排版），
+   容器变 relative + 高度由 JS 设。对齐公式的 .formulas-grid.js-masonry 模式。 */
+.concepts-grid.masonry-view.js-masonry {
+  display:block; position:relative;
+}
+.concepts-grid.masonry-view.js-masonry > .concept-card {
+  position:absolute;
 }
 .concepts-grid.list-view { display:block; }
 .concept-card {
@@ -2547,7 +2770,7 @@ body.fab-dragging { user-select:none; cursor:ns-resize; }
   padding:28px; color:var(--muted); background:rgba(255,255,255,.55);
 }
 /* 懒加载哨兵：grid 跨满列居中提示「已加载 N/M，滚动加载更多」 */
-#formulas-grid .lazy-sentinel {
+#formulas-grid .lazy-sentinel, #concepts-grid .lazy-sentinel {
   grid-column:1 / -1; text-align:center; padding:14px; color:var(--muted2);
   font-size:12px; font-weight:600;
 }
@@ -2822,8 +3045,8 @@ body.fab-dragging { user-select:none; cursor:ns-resize; }
 
 /* 响应式 */
 @media (max-width:1240px) {
-  /* 中等宽度：单行已放不下 → 允许换行，搜索框独占一行（放到品牌/筛选/动作那一行的下方），
-     品牌+空间在左、筛选+动作在右，布局整齐不错位 */
+  /* 中等宽度：单行已放不下 → 允许换行，搜索框独占一行（放到品牌/动作那一行的下方），
+     品牌+空间在左、动作在右，布局整齐不错位 */
   .topbar { flex-wrap:wrap; }
   .search-wrap { flex:1 1 100%; order:1; max-width:none; }
   .layout { grid-template-columns:210px minmax(320px, var(--list-width, 380px)) 8px minmax(0, 1fr); }
@@ -2833,10 +3056,9 @@ body.fab-dragging { user-select:none; cursor:ns-resize; }
 }
 @media (max-width:860px) {
   body { overflow:auto; }
-  /* 窄屏：搜索框独占整行（紧随品牌）；品牌/筛选/动作各自换行、左对齐不挤压 */
+  /* 窄屏：搜索框独占整行（紧随品牌）；品牌/动作各自换行、左对齐不挤压 */
   .search-wrap { flex:1 1 100%; max-width:none; order:0; }
-  .filter-strip { margin-left:0; }
-  .brand, .top-actions, .filter-strip { justify-content:flex-start; flex-wrap:wrap; }
+  .brand, .top-actions { justify-content:flex-start; flex-wrap:wrap; }
   .stats { width:100%; overflow:auto; padding-bottom:2px; }
   .layout { grid-template-columns:1fr; grid-template-rows:auto auto 1fr; min-height:0; overflow:visible; }
   .layout.sidebar-collapsed { grid-template-columns:1fr; }
@@ -2882,13 +3104,26 @@ iframe.pdf { width:100%; height:calc(100vh - 200px); border:1px solid var(--bord
 /* ============================================================================
    设置中心（#settings-view）：左导航 + 右表单，Indigo 设计语言
    ============================================================================ */
-.settings-shell {
-  display:grid; grid-template-columns:220px 1fr; height:100%; min-height:0;
-  background:var(--bg); overflow:hidden;
+/* 覆盖层（v3.17 第二步）：设置不是第四个平级页面，是盖在当前页面之上的配置界面。
+   保留 /settings/:tab 路由（深链有价值），但呈现为遮罩 + 居中面板；点遮罩或 Esc 关闭。 */
+.settings-overlay {
+  position:fixed; inset:0; z-index:80;
+  display:flex; align-items:center; justify-content:center; padding:min(4vh, 40px) min(4vw, 48px);
+  background:rgba(15,23,42,.42); backdrop-filter:blur(2px);
+  animation:settingsOverlayIn .12s ease-out;
 }
-/* 单一滚动条原则：settings-view(page-view) 不再整体滚（overflow:hidden 覆盖 .page-view auto），
-   改由内部 settings-nav（左）和 settings-body（右）各作为独立滚动区——二者是兄弟关系，无嵌套。 */
-#settings-view { overflow:hidden; }
+.settings-overlay.view-hidden { display:none; }
+@keyframes settingsOverlayIn { from { opacity:0; } to { opacity:1; } }
+.settings-shell {
+  display:grid; grid-template-columns:220px 1fr;
+  width:100%; max-width:1180px; height:100%; max-height:860px; min-height:0;
+  background:var(--bg); overflow:hidden;
+  border-radius:var(--radius); box-shadow:0 24px 64px rgba(15,23,42,.32);
+  animation:settingsShellIn .14s ease-out;
+}
+@keyframes settingsShellIn { from { opacity:0; transform:translateY(8px) scale(.99); } to { opacity:1; transform:none; } }
+/* 单一滚动条原则：覆盖层与面板都不整体滚，改由内部 settings-nav（左）和 settings-body（右）
+   各作为独立滚动区——二者是兄弟关系，无嵌套。 */
 .settings-nav {
   background:var(--panel); border-right:1px solid var(--border);
   padding:18px 12px; display:flex; flex-direction:column; gap:2px; overflow:auto;
@@ -3353,11 +3588,12 @@ textarea.pwdlg-textarea { resize:vertical; min-height:84px; line-height:1.55; }
 .formula-candidates-pop .fcp-canon { width:140px; }
 .formula-candidates-pop .fcp-actions { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:10px 14px; border-top:1px solid var(--border); }
 .formula-candidates-pop .fcp-count { font-size:12px; color:var(--muted); font-weight:600; }
-/* 右上角抽取按钮 busy 态（aria-busy） */
-.rb-icon[aria-busy="true"] { color:var(--accent); pointer-events:none; }
-.rb-icon[aria-busy="true"] svg { animation:rb-spin 1s linear infinite; }
+/* 抽取按钮 busy 态（aria-busy）：公式/概念抽取进行中转圈。按钮已并入 rb-center
+   工具组（.rb-tool 样式），保留 .rb-icon 选择器向后兼容。 */
+.rb-icon[aria-busy="true"], .rb-tool[aria-busy="true"] { color:var(--accent); pointer-events:none; }
+.rb-icon[aria-busy="true"] svg, .rb-tool[aria-busy="true"] svg { animation:rb-spin 1s linear infinite; }
 @keyframes rb-spin { to { transform:rotate(360deg); } }
-/* 抽取下拉菜单（rb-right 公式/概念按钮，下弹，仿 space-menu 设计语言） */
+/* 抽取下拉菜单（公式/概念按钮，下弹，仿 space-menu 设计语言） */
 .rb-extract-wrap { position:relative; }
 .reader-extract-menu {
   position:absolute; top:calc(100% + 6px); right:0; z-index:60;

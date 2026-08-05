@@ -3,14 +3,14 @@
 // discover 路由。由 createApiRouter 在启动时调用 register(t, ctx) 注册到路由表。
 // handler 体自 src/api/router.js 的 if 链原样迁移（v3.15 路由化重构），行为逐字不变。
 
-const { applySettingsOverride } = require('../../services/ai');
+const { applySettingsOverride, withGlobalAi } = require('../../services/ai');
 
-function discoverOpts(topic, { config, store }) {
+function discoverOpts(topic, { config, store, gai }) {
   const cfg = config.discover || {};
   const arx = config.arxiv || {};
   const { planViaGateway } = require('../../services/discover');
   // discover 的「网关规划」走 AI 调用，需用生效配置（store.settings.ai 覆盖 config.ai）
-  const effConfig = applySettingsOverride(config, store.settings);
+  const effConfig = applySettingsOverride(config, withGlobalAi(store.settings, gai));
   return {
     topic,
     store,
@@ -31,17 +31,19 @@ function discoverOpts(topic, { config, store }) {
 }
 
 function register(t, ctx) {
-  const { ok, fail, config, isProd, discoverOpts } = ctx;
+  // 注意：discoverOpts 用本文件的模块级函数——ctx 里没有它；此前 `const { discoverOpts } = ctx`
+  // 把它遮蔽成 undefined，是 v3.15 重构引入的潜在 bug（调用即 TypeError）。
+  const { ok, fail, config, isProd } = ctx;
 
   // POST /api/discover  { topic }  —— 非流式发现（一次性返回候选；保留作兜底/脚本调用）
   // 只返回候选列表；勾选后由前端逐个 POST /api/import 走已有下载+入库链路。
-  t.post('/api/discover', async ({ res, body, store }) => {
+  t.post('/api/discover', async ({ res, body, store, gai }) => {
     const op = JSON.parse(body || '{}');
     const topic = typeof op.topic === 'string' ? op.topic.trim() : '';
     if (!topic) return fail(res, 400, '请输入主题');
     const { discoverPapers } = require('../../services/discover');
     try {
-      const data = await discoverPapers(discoverOpts(topic, { config, store }));
+      const data = await discoverPapers(discoverOpts(topic, { config, store, gai }));
       return ok(res, data);
     } catch (e) {
       return fail(res, 502, isProd ? '发现失败：arXiv / Semantic Scholar 检索出错' : `发现失败：${e.message}`);
@@ -50,7 +52,7 @@ function register(t, ctx) {
 
   // GET /api/discover/stream?topic=...  —— SSE 流式发现，逐阶段推送进度
   // 事件：event:progress（每阶段）/ event:done（含 results）/ event:error
-  t.get('/api/discover/stream', async ({ req, res, q, store }) => {
+  t.get('/api/discover/stream', async ({ req, res, q, store, gai }) => {
     const topic = typeof q.topic === 'string' ? q.topic.trim() : '';
     if (!topic) return fail(res, 400, '请输入主题');
     const { discoverPapers } = require('../../services/discover');
@@ -71,7 +73,7 @@ function register(t, ctx) {
     sse('progress', { stage: 'start', message: '开始发现…' });
     try {
       const data = await discoverPapers({
-        ...discoverOpts(topic, { config, store }),
+        ...discoverOpts(topic, { config, store, gai }),
         onProgress: (ev) => {
           if (!aborted) sse('progress', ev);
         },

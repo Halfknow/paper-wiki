@@ -81,6 +81,8 @@ async function boot(initialPath) {
   return ui;
 }
 const view = (ui) => ui.document.body.dataset.view;
+/** 顶栏一级导航段（v3.17 起是 <a href>，取代原先的 #btn-concepts / #btn-formulas 按钮）。 */
+const nav = (ui, name) => ui.document.querySelector(`#view-nav [data-view="${name}"]`);
 
 // ---------------------------------------------------------------------------
 // 深链直达
@@ -161,13 +163,13 @@ test('点列表项 → URL 变 /paper/:id；切 tab → /paper/:id/:tab', async 
   assert.strictEqual(ui.path(), '/paper/p1/notes');
 });
 
-test('点顶部「概念」「公式」按钮 → URL 与视图同步', async () => {
+test('点顶栏导航段「概念」「公式」→ URL 与视图同步', async () => {
   const ui = await boot('/library');
-  ui.$('btn-concepts').click();
+  nav(ui, 'concepts').click();
   for (let i = 0; i < 60 && view(ui) !== 'concepts'; i++) await sleep(20);
   assert.strictEqual(ui.path(), '/concepts');
 
-  ui.$('btn-formulas').click();
+  nav(ui, 'formulas').click();
   for (let i = 0; i < 60 && view(ui) !== 'formulas'; i++) await sleep(20);
   assert.strictEqual(ui.path(), '/formulas');
 
@@ -203,10 +205,14 @@ test('深链带筛选 query：还原筛选并写回搜索框', async () => {
   const ui = await boot('/library?q=bert&tags=llm&starred=1');
   await sleep(60);
   assert.strictEqual(ui.$('search').value, 'bert', '搜索框回填');
-  const st = ui.window.pwState;
-  assert.strictEqual(st.filter.q, 'bert');
-  assert.deepStrictEqual(st.filter.tags, ['llm']);
-  assert.strictEqual(st.filter.starred, true);
+  // 经 DOM 断言筛选已还原（window.pwState 桥已于「退役 window 桥」一并移除，
+  // 测试不再伸手进模块内部——这些控件的状态本就是筛选还原的对外契约）。
+  // 仅星标 checkbox 已退役（v3.18）：starred 筛选还原的对外契约改为侧栏「星标」视图 active 态。
+  const starItem = ui.document.querySelector('.side-item[data-mode="starred"]');
+  assert.ok(starItem.classList.contains('active'), '侧栏星标视图激活');
+  const tagTrigger = ui.$('filter-tag-trigger');
+  assert.ok(tagTrigger.classList.contains('active'), '标签筛选触发器进 active 态');
+  assert.strictEqual(tagTrigger.querySelector('.ft-count').textContent.trim(), '1', '标签计数徽标为 1');
 });
 
 test('筛选 query 在「列表 → 详情」导航中保留', async () => {
@@ -230,13 +236,14 @@ test('后退：/paper/:id → /library，详情面板关闭', async () => {
   await ui.back(120);
   for (let i = 0; i < 60 && ui.path() !== '/library'; i++) await sleep(20);
   assert.strictEqual(ui.path(), '/library', '后退回列表');
-  assert.strictEqual(ui.window.pwState.current, null, '选中已清空');
+  assert.strictEqual(ui.document.querySelector('.paper-item.active'), null, '列表选中已清空');
+  assert.ok(ui.$('detail').querySelector('.empty'), '详情面板回到空态');
 });
 
 test('后退跨视图：/formulas → /concepts，视图跟着回退', async () => {
   const ui = await boot('/concepts');
   for (let i = 0; i < 60 && view(ui) !== 'concepts'; i++) await sleep(20);
-  ui.$('btn-formulas').click();
+  nav(ui, 'formulas').click();
   for (let i = 0; i < 60 && view(ui) !== 'formulas'; i++) await sleep(20);
 
   await ui.back(120);
@@ -247,7 +254,7 @@ test('后退跨视图：/formulas → /concepts，视图跟着回退', async () 
 
 test('前进：后退之后可再前进回原视图', async () => {
   const ui = await boot('/library');
-  ui.$('btn-concepts').click();
+  nav(ui, 'concepts').click();
   for (let i = 0; i < 60 && view(ui) !== 'concepts'; i++) await sleep(20);
   await ui.back(120);
   for (let i = 0; i < 60 && view(ui) !== 'library'; i++) await sleep(20);

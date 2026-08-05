@@ -91,29 +91,31 @@ before(async () => {
 });
 
 async function openFormulas() {
-  $('btn-formulas').click();
+  ui.document.querySelector('#view-nav [data-view="formulas"]').click();
   await sleep(60);
 }
 
 // ---------------------------------------------------------------- 视图切换
 
-test('顶栏「公式」按钮切到公式视图，其余视图隐藏', async () => {
+const hidden = (id) => $(id).classList.contains('view-hidden');
+
+test('顶栏「公式」导航段切到公式视图，其余视图隐藏', async () => {
   await openFormulas();
-  assert.strictEqual($('formulas-view').style.display, '');
-  assert.strictEqual($('library-view').style.display, 'none');
-  assert.strictEqual($('concepts-view').style.display, 'none');
-  assert.strictEqual($('settings-view').style.display, 'none');
-  assert.ok($('btn-formulas').classList.contains('active'));
+  assert.ok(!hidden('formulas-view'));
+  assert.ok(hidden('library-view'));
+  assert.ok(hidden('concepts-view'));
+  assert.ok(hidden('settings-view'));
+  assert.ok(ui.document.querySelector('#view-nav [data-view="formulas"]').classList.contains('active'));
   assert.strictEqual(ui.document.body.dataset.view, 'formulas');
   assert.strictEqual($('formulas-count').textContent, '3');
 });
 
-test('「← 返回」回到论文库', async () => {
+test('点「论文」导航段回到论文库', async () => {
   await openFormulas();
-  $('btn-formulas-close').click();
+  ui.document.querySelector('#view-nav [data-view="library"]').click();
   await sleep(30);
-  assert.strictEqual($('library-view').style.display, '');
-  assert.strictEqual($('formulas-view').style.display, 'none');
+  assert.ok(!hidden('library-view'));
+  assert.ok(hidden('formulas-view'));
 });
 
 // ---------------------------------------------------------------- 卡片渲染
@@ -188,20 +190,20 @@ test('点击论文胶囊：回论文库 + 选中该论文', async () => {
   );
   kl.querySelectorAll('.paper-chip')[1].click();
   await sleep(80);
-  assert.strictEqual($('library-view').style.display, '', '回到论文库视图');
-  assert.strictEqual($('formulas-view').style.display, 'none');
+  assert.ok(!hidden('library-view'), '回到论文库视图');
+  assert.ok(hidden('formulas-view'));
   const active = ui.document.querySelector('.paper-item.active');
   assert.ok(active, '有选中项');
   assert.strictEqual(active.dataset.id, 'p2');
 });
 
-test('搜索框：匹配名称 / 规范名 / LaTeX / 解读 / 分类', async () => {
+test('顶栏搜索框（公式页 scope）：匹配名称 / 规范名 / LaTeX / 解读 / 分类', async () => {
   await openFormulas();
-  const q = $('formula-q');
+  const q = $('search'); // v3.17：页内 #formula-q 退役，统一走顶栏上下文搜索框（250ms 防抖）
   const type = async (v) => {
     q.value = v;
     q.dispatchEvent(new ui.window.Event('input'));
-    await sleep(30);
+    await sleep(320);
   };
   await type('散度');
   assert.strictEqual(ui.document.querySelectorAll('.formula-card').length, 1);
@@ -294,7 +296,7 @@ test('删除：确认后 DELETE，取消则不发请求', async () => {
 // ---------------------------------------------------------------- 论文侧入口
 
 test('详情「信息」tab：显示公式贡献数 + 「重新抽取并追加」调 POST /api/papers/formulas', async () => {
-  $('btn-formulas-close').click();
+  ui.document.querySelector('#view-nav [data-view="library"]').click();
   await sleep(20);
   ui.document.querySelector('.paper-item[data-id="p1"]').click();
   await sleep(60);

@@ -12,7 +12,7 @@
 
 const { createRouteTable } = require('./route-table');
 const { summaryView, detailView } = require('./views');
-const { applySettingsOverride, generateConceptMap, DEFAULT_CONCEPT_MAP_PROMPT } = require('../services/ai');
+const { applySettingsOverride, withGlobalAi, generateConceptMap, DEFAULT_CONCEPT_MAP_PROMPT } = require('../services/ai');
 
 const ROUTE_MODULES = [
   require('./routes/spaces'),
@@ -74,7 +74,7 @@ function createApiRouter(ctx) {
     conceptMapJobs.set(item.id, { abort });
     (async () => {
       try {
-        const effConfig = applySettingsOverride(config, store.settings || {});
+        const effConfig = applySettingsOverride(config, withGlobalAi(store.settings || {}, manager.getGlobalAi()));
         const prompt =
           (item.prompt && String(item.prompt).trim()) || store.settings.conceptMapPrompt || DEFAULT_CONCEPT_MAP_PROMPT;
         const html = await generateConceptMap({
@@ -108,9 +108,12 @@ function createApiRouter(ctx) {
   }
 
   /** 解析当前请求的空间上下文：?space=<id> 指定空间，无参回 active 空间。
-   *  返回 { spaceId, space, store, save }。store 是 manager 内存缓存的引用（与 scanner 共享）。
+   *  返回 { spaceId, space, store, save, gai }。store 是 manager 内存缓存的引用（与 scanner 共享）。
+   *  gai = 全局 AI 渠道（v3.19，跨空间共享；需要 effConfig 的 handler 用
+   *  `applySettingsOverride(config, withGlobalAi(store.settings, gai))` 合成）。
    *  SSE 路由（chat/discover）EventSource 无法设 header，spaceId 走 URL query。 */
   async function resolveSpace(q) {
+    const gai = manager.getGlobalAi();
     const spaceId = (q && q.space) || manager.getActiveSpaceId();
     const space = manager.getSpace(spaceId);
     if (!space) {
@@ -121,10 +124,11 @@ function createApiRouter(ctx) {
         space: manager.getActiveSpace(),
         store: await manager.getSpaceStore(activeId),
         save: manager.saveStoreBinder(activeId),
+        gai,
       };
     }
     const store = await manager.getSpaceStore(spaceId);
-    return { spaceId, space, store, save: manager.saveStoreBinder(spaceId) };
+    return { spaceId, space, store, save: manager.saveStoreBinder(spaceId), gai };
   }
 
   // ---- 注册 ----

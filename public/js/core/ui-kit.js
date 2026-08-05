@@ -82,10 +82,20 @@ export function compactChipList(p, limit = 4) {
     (rest ? `<span class="tag muted compact-more">+${rest}</span>` : '');
 }
 
+/** 全局统计 → 顶栏状态胶囊 + 一级导航计数徽标（v3.17）。
+ *
+ *  设计取舍：正常时胶囊只剩一个灰点（不占顶栏宽度），但**处理中 / 出错时把文案顶出来**。
+ *  把异常也折叠进 hover 会让后台失败完全静默，那是可用性红线。明细与「立即扫描」进 popover。 */
 export function renderStats(stats) {
   state.stats = stats; // 缓存全局统计，供 renderSidebar 读「全部/星标/未读」计数（不随筛选变）
+
+  // 一级导航的计数徽标（取代旧 stats 里重复的「N 概念 / N 公式」pill）
+  setCount('vn-count-papers', stats.total);
+  setCount('vn-count-concepts', stats.concepts);
+  setCount('vn-count-formulas', stats.formulas);
+
   // 处理中时，把当前在跑的阶段从 state.papers 聚合出来，让批量首扫不再是黑盒
-  let processingHtml = '';
+  let detail = '';
   if (stats.processing > 0) {
     const stageCount = {};
     for (const p of state.papers) {
@@ -94,15 +104,40 @@ export function renderStats(stats) {
         stageCount[label] = (stageCount[label] || 0) + 1;
       }
     }
-    const detail = Object.entries(stageCount)
-      .map(([k, v]) => `${k} ${v}`).join(' · ');
-    processingHtml = `<span class="stat-pill busy" title="${escapeHtml(detail || '处理中')}">
-      <span class="pulse"></span>${stats.processing} 处理中${detail ? ' · ' + escapeHtml(detail) : ''}</span>`;
+    detail = Object.entries(stageCount).map(([k, v]) => `${k} ${v}`).join(' · ');
   }
-  $('stats').innerHTML = `
-    <span class="stat-pill good">${stats.ready}/${stats.total} 就绪</span>
-    ${processingHtml}
-    ${stats.error ? `<span class="stat-pill bad">${stats.error} 错误</span>` : ''}
-    <span class="stat-pill">${stats.concepts} 概念</span>
-    ${stats.formulas ? `<span class="stat-pill">${stats.formulas} 公式</span>` : ''}`;
+
+  // 胶囊等级：错误 > 处理中 > 空闲（错误更需要被看见，故优先级最高）
+  const level = stats.error ? 'error' : stats.processing > 0 ? 'busy' : 'idle';
+  const chip = $('status-chip');
+  if (chip) {
+    chip.dataset.level = level;
+    const parts = [];
+    if (stats.processing > 0) parts.push(`${stats.processing} 处理中`);
+    if (stats.error) parts.push(`${stats.error} 错误`);
+    $('sc-text').textContent = parts.join(' · ');
+    chip.title = level === 'idle'
+      ? `${stats.ready}/${stats.total} 就绪`
+      : [`${stats.ready}/${stats.total} 就绪`, detail].filter(Boolean).join(' · ');
+  }
+
+  const rows = $('sp-rows');
+  if (rows) {
+    rows.innerHTML = `
+      <div class="sp-row"><span class="sp-k">就绪</span><span class="sp-v good">${stats.ready}/${stats.total}</span></div>
+      ${stats.processing > 0
+        ? `<div class="sp-row"><span class="sp-k"><span class="pulse"></span>处理中</span><span class="sp-v busy">${stats.processing}</span></div>
+           ${detail ? `<div class="sp-detail">${escapeHtml(detail)}</div>` : ''}`
+        : ''}
+      ${stats.error ? `<div class="sp-row"><span class="sp-k">出错</span><span class="sp-v bad">${stats.error}</span></div>` : ''}
+      <div class="sp-row"><span class="sp-k">概念</span><span class="sp-v">${stats.concepts || 0}</span></div>
+      <div class="sp-row"><span class="sp-k">公式</span><span class="sp-v">${stats.formulas || 0}</span></div>`;
+  }
+}
+
+/** 导航徽标：0 或缺失时留空（不显示「0」，避免空库时三个刺眼的零）。 */
+function setCount(id, n) {
+  const el = $(id);
+  if (!el) return;
+  el.textContent = n > 0 ? String(n) : '';
 }

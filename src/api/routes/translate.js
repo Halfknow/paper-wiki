@@ -3,7 +3,7 @@
 // translate 路由。由 createApiRouter 在启动时调用 register(t, ctx) 注册到路由表。
 // handler 体自 src/api/router.js 的 if 链原样迁移（v3.15 路由化重构），行为逐字不变。
 
-const { applySettingsOverride, callChatStream, TRANSLATE_SYSTEM_PROMPT } = require('../../services/ai');
+const { applySettingsOverride, withGlobalAi, callChatStream, TRANSLATE_SYSTEM_PROMPT } = require('../../services/ai');
 const { proxyFetchJson } = require('../../core/util');
 const { LANG_NAMES, GL_LANG_MAP } = require('../views');
 
@@ -16,10 +16,10 @@ function register(t, ctx) {
   //   - engine=google：RESTful JSON（调用 Google 免费端点 translate.googleapis.com，无需 Key，秒回）。
   //     Google 端点返回 [[["译文","原文",...],...]]，拼接 data[0][*][0] 得完整译文。
   //   用 GET：浏览器 EventSource 只支持 GET（ai 分支）；google 分支也走 GET 保持统一。
-  t.get('/api/translate', async ({ req, res, q, store }) => {
+  t.get('/api/translate', async ({ req, res, q, store, gai }) => {
     const text = typeof q.text === 'string' ? q.text.trim() : '';
     if (!text) return fail(res, 400, 'empty text');
-    const effConfig = applySettingsOverride(config, store.settings || {});
+    const effConfig = applySettingsOverride(config, withGlobalAi(store.settings || {}, gai));
     // engine 优先取 query（前端按用户所选引擎传），回退 config 设置
     const engine =
       q.engine === 'ai' || q.engine === 'google'

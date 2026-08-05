@@ -28,8 +28,8 @@ function formatChatTime(ts) {
 
 /** AI 图标（角色标识用）+ 你/AI label。统一线性 SVG 风格。 */
 export const CHAT_ROLE_ICO = {
-  user: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/></svg>',
-  assistant: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l2 5 5 2-5 2-2 5-2-5-5-2 5-2z"/></svg>',
+  user: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="7" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/></svg>',
+  assistant: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5l2 5 5 2-5 2-2 5-2-5-5-2 5-2z"/></svg>',
 };
 
 /** 操作按钮图标（线性 SVG，统一风格）：复制 / 重新生成 / 显示原文 / 编辑 / 删除。 */

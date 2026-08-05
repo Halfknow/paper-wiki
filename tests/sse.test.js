@@ -33,6 +33,7 @@ function baseCtx(store, save, opts = {}) {
     getActiveSpace: () => spaceObj,
     getSpace: (id) => (id === 'default' ? spaceObj : null),
     listSpaces: () => [spaceObj],
+    getGlobalAi: () => null, // v3.19 全局渠道：本文件不涉及，置空走 per-space 兜底
     getStorePath: () => 'papers.json',
     getSpaceStore: async () => store,
     saveStoreBinder: () => async () => {

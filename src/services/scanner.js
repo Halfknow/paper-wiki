@@ -808,6 +808,21 @@ function createMultiSpaceScanner({ manager, deps }) {
       saveStore,
       // config 用全局 config（applySettingsOverride 在 processOne 内基于各空间 store.settings 合成）
       config: deps.config,
+      // 渠道全局化（v3.19）：ai 段覆盖统一在此收口——所有子扫描器的 applySettingsOverride
+      // 都先把全局渠道（manager.getGlobalAi()）并入 settings，processOne/extractConcepts 等
+      // 六处调用点零改动。withGlobalAi 全局为空时原样透传，行为与旧版一致。
+      ai: deps.ai
+        ? {
+            ...deps.ai,
+            applySettingsOverride: (cfg, st) =>
+              deps.ai.applySettingsOverride(
+                cfg,
+                deps.ai.withGlobalAi && manager.getGlobalAi
+                  ? deps.ai.withGlobalAi(st, manager.getGlobalAi())
+                  : st,
+              ),
+          }
+        : deps.ai,
     };
     const scanner = createScanner({
       store,

@@ -63,7 +63,8 @@ src/                   后端源码（v3.2 分层：core 纯逻辑 / db 持久�
     claude.js  ★       spawn `claude -p` 子进程（永不抛错，失败回退网关）
     parser.js          pdfjs-dist 全文提取（Node 端，无 DOM worker）
 public/                零构建前端（原生 ESM，浏览器直接加载；无打包器，改完刷新即生效）
-  index.html           三栏布局 + 空间切换器 + 阅读器 + 概念/提示词视图 + 各模态。零 inline onclick，
+  index.html           app-shell（常驻侧栏 + 内容区）+ 顶栏 chrome（空间切换器 / 一级导航 /
+                        上下文搜索 / 状态胶囊）+ 阅读器 + 概念/公式视图 + 设置覆盖层 + 各模态。零 inline onclick，
                         全部事件在 js/bind.js 接线
   app.js     ★         入口，47 行：只做 bind() + 布局恢复 + 启动序列（loadSpaces → router.start）
   js/        ★         v3.15 模块化：原 app.js 7070 行按领域拆成 37 个模块（声明体逐字迁移）
@@ -83,19 +84,22 @@ public/                零构建前端（原生 ESM，浏览器直接加载；�
     settings/          settings channels prompts collect taxonomy
     spaces/            spaces dir-wizard
     search/            advanced suggest help saved
-    views/             view-switch layout
-    bind.js            全局事件接线（805 行，唯一仍偏大的模块）
+    views/             view-switch（内容视图与侧栏 .side-ctx 显隐 + 设置覆盖层 + 顶栏 chrome
+                        上下文态：导航 active / 搜索 scope）· layout
+    bind.js            全局事件接线（唯一仍偏大的模块）
   reader.js  ★         pdf.js PDFViewer 阅读器（双页/批注/缩放/续读/AI 抽屉）。本轮未拆
   search-dsl.js ★      高级搜索 DSL 解析（classic script，非 ESM）
   styles.css ★         Indigo 主题
 scripts/               运维脚本：scan-once（CLI 扫描）/ migrate-json-to-pg（旧数据迁移，幂等）/
                         backfill-metadata（arXiv 元数据回填，dry-run 默认）/
-                        e2e-bootstrap（e2e 种子）/ backup-pg.sh（pg_dump）
-tests/                 node --test 单测（全量 650 例，pg-mem 无需真实 PG）：
+                        e2e-bootstrap（e2e 种子）/ backup-pg.sh（pg_dump）/
+                        verify-boot-view.mjs（真实 Chromium 核验深链首帧视图，见陷阱 0）
+tests/                 node --test 单测（全量 670 例，pg-mem 无需真实 PG）：
                         · 纯函数层（毫秒级，不进慢文件守卫）：api-route-table / frontend-router /
                           spa-fallback / search-query / util / store …
                         · jsdom UI 层：chat-ui / notes-panel / regression-ui / search-ui / formulas-ui /
-                          conceptmaps-ui / settings-channels-ui / dialog-ui / routing-ui，
+                          conceptmaps-ui / settings-channels-ui / dialog-ui / routing-ui /
+                          topbar-nav（v3.17 顶栏导航与上下文搜索），
                           共享 helpers/ui.js 的 bootUi（加载真实 index.html + app.js + 假后端）
                         · helpers/slow.js 慢文件守卫——npm test 默认跳过 >5s 文件，test:full 全量
                         · helpers/boot-loader.mjs：ESM resolve 钩子，让 `?boot=N` 沿依赖图传播，
@@ -156,7 +160,7 @@ backups/ logs/         运行时产物（gitignore）：JSON 快照与归档 / �
     "formulaPrompt": "...",            // 公式抽取提示词（强制 JSON，v3.9 三级回退）
     "conceptPrompt": "...",            // 概念抽取提示词（强制 JSON，v3.10 三级回退，含 category 字段）
     "ai": { "baseURL": "...", "apiKey": "...", "model": "...", "maxInputTokens": 32000, "timeoutMs": 120000, "taskMaxInputTokens": {...}, "maxInputChars": 24000（旧别名）, "taskMaxInputChars": {...}（旧别名）,
-            "channels": [ { "id", "name", "baseURL", "apiKey", "model", "maxInputTokens" } ], "activeChannelId": "..." },  // v3.13 渠道（陷阱 43：存在即权威，顶层三元组已迁移删除）
+            "channels": [ { "id", "name", "baseURL", "apiKey", "model", "maxInputTokens" } ], "activeChannelId": "..." },  // v3.13 渠道；v3.19 起迁全局 app_state['globalAi']（陷阱 43），此处的 per-space 副本只是旧数据兜底
     "scanIntervalMinutes": 5,          // 覆盖扫描间隔（热改 → scanner.reschedule；0=关闭定时扫描）
     "arxiv": { "enabled": true, "titleSimilarityThreshold": 0.75, "minIntervalMs": 3000 },
     "discover": { "maxResults": 40, "perAxis": 25, "semanticScholar": true, "openAlex": true,
@@ -197,7 +201,7 @@ backups volume   每日 JSON 快照（PG→JSON 逃生通道，格式兼容旧 p
   `assertNoDirConflict`：禁止与其他空间目录相同/互相嵌套（防双扫描器 rename 竞争）
 - 旧 JSON→PG 迁移不再在 manager 内做，见 `scripts/migrate-json-to-pg.js`（幂等）
 
-**隔离语义**：paper id = `sha1(内容)`，**同 PDF 跨空间是各自 store 里的独立条目**（符合隔离，非 bug）。tags/topics/folders/concepts/settings 全部 per-space（各空间 store 独立）。
+**隔离语义**：paper id = `sha1(内容)`，**同 PDF 跨空间是各自 store 里的独立条目**（符合隔离，非 bug）。tags/topics/folders/concepts/settings 全部 per-space（各空间 store 独立）——**唯一例外是 AI 渠道**（v3.19 起全局，存 `app_state['globalAi']`，见陷阱 43；提示词仍 per-space）。
 
 **多空间扫描器**（`src/services/scanner.js` `createMultiSpaceScanner({manager, deps})`）：
 - 每空间建一个子扫描器（复用 `createScanner` 的完整流水线闭包），子扫描器的 store/papersDir/textStore 各自指向该空间
@@ -276,7 +280,7 @@ arXiv 导入 (POST /api/import { url, meta? }):
 **公式抽取**（`scanner.extractFormulas(ids)` + processOne 步骤 6）：走 `extractFormulasViaEngine` dispatcher（引擎=ai 喂全文 / 引擎=mineru 喂 PDF filepath）；`mergeFormulas` 按 canonicalName 去重，命中只补空字段。阅读器右上角下拉菜单支持「查看本篇/追加抽取/重新抽取（replace）」，候选端点 `POST /api/papers/:id/{formulas,concepts}/candidates` 返回不入库，勾选后 `merge {items, mode?}` 入库（见陷阱 40）。
 
 **概念地图**（`POST /api/concepts/map`，v3.10；v3.14 起**后台任务化**）：POST/PUT 立即落库 `status:'generating'` 占位制品并返回（不挂请求等 AI），`startConceptMapJob` 在后台跑 `generateConceptMap`（**callChatStream 流式**——非流式大产出首字节前静默，会被代理空闲超时掐断；30min 预算、重试 1 次、支持 signal 取消），完成/失败更新占位再落库。切页/刷新不打断生成；前端 4s 轮询 settings 元信息，`generating→ready/error` 跳变 toast。生成中「删除」=取消任务（AbortController）；僵尸 generating（服务重启丢任务句柄）读路径解析为 error；同制品生成中重复优化 409；截断（缺 `</html>`）标 error 但保留半成品。提示词三级回退：当次自定义 > `settings.conceptMapPrompt` > 内置默认。
-制品清单是**缩略图网格**（v3.15）：制品 HTML 在 1280×800 sandboxed iframe（`allow-scripts` 无 same-origin）真实渲染后 `scale()` 缩小做 live 预览，IntersectionObserver 懒挂载；轮询只在状态/成员跳变时重渲（重渲=重挂 iframe，每轮必刷会反复重跑页内动画）。默认提示词为浅色高级风 + 设计令牌规范（:root CSS 变量统一定义，借鉴 Claude 制品 read_me 模块思想）。
+制品清单是**缩略图网格**（v3.15）：制品 HTML 在 1280×800 sandboxed iframe（`allow-scripts` 无 same-origin）真实渲染后 `scale()` 缩小做 live 预览，IntersectionObserver 懒挂载；轮询只在状态/成员跳变时重渲（重渲=重挂 iframe，每轮必刷会反复重跑页内动画）。默认提示词为「**暗色骨架浅色化**」（v3.16）：v3.15 的纯浅色克制风效果不如 v3.10 暗色版，故回到 v3.10 美学骨架（鲜艳渐变主色 indigo→violet→pink + 玻璃拟态卡片 backdrop-filter blur + 氛围光晕背景 + 大胆展示字体 + 3 视图交互 + staggered 微动画），仅把深底翻成浅底（#f8fafc 冷白 + 极淡渐变光晕）。
 
 
 **批注持久化**（reader.js ↔ api.js ↔ annotations.js）：前端 `annotationStorage.onSetModified` → 防抖 serialize（`doc.annotationStorage.serializable.map`）→ PATCH `{annotations:{items}}` → api.js 经 `annotations.normalizeAnnotations` 归一化后存 store。回显：open 时拿 detailView.annotations → loadAnnotations 按 pageIndex 分组 → pagerendered 后 `getPageView(i).annotationEditorLayer.annotationEditorLayer.deserialize(item)`。
@@ -288,6 +292,57 @@ arXiv 导入 (POST /api/import { url, meta? }):
    - **前端加视图 = 加路由**。在 `public/js/core/routes.js` 的路由表里加一条 `{ name, pattern,
      enter, leave? }`，并在 `core/nav.js` 的 `routeHandlers` 里实现 enter。不要再写
      「点按钮直接 showView()」——那样刷新就丢状态。
+   - **`showView()` 必须先于视图的所有 `await`**（v3.17）。它排在数据请求之后时，深链刷新
+     会先停在论文页几百毫秒再跳走。`showConcepts`/`showFormulas` 现在都是「先切视图出骨架 →
+     再拉数据 → render」。
+   - **首帧视图由 CSS 决定，不由 JS 决定**（v3.17）。`<head>` 内联脚本只把 `location.pathname`
+     写进 `data-boot-path`（零逻辑），映射规则全在 `styles.css` 的
+     `html[data-boot-path^="/concepts"] #concepts-view.view-hidden { display:flex !important }`
+     一族里——**加新的一级视图要同时加四条规则**：显示自己的内容视图 + 显示自己的
+     `.side-ctx` + 隐藏 `#library-view` + 隐藏 `.side-ctx[data-ctx="library"]`，否则该路径
+     深链刷新会闪论文页、或侧栏停在论文页那份内容上。`showView` 首次执行会
+     `removeAttribute('data-boot-path')` 交还控制权——**别删这行**，否则 boot 规则会一直把
+     `#library-view` 压成 `display:none`。
+   - **`.view-hidden` 必须带 `!important`**（v3.17 踩过）。它与 `.layout { display:grid }`
+     特异性同为 `(0,1,0)`，胜负只看在 styles.css 里谁更靠后——`.layout` 更靠后就赢，
+     表现为「class 加上了但没真隐藏」（概念页左上角残留论文页的列表工具条）。
+     配套地，首帧那几条「显出某视图」的规则也要 `!important`（都 important 时比特异性，
+     `(1,2,1)` 稳赢）。运行时显隐一律切这个类，不要回到 inline `style.display`。
+     验证手段：`node scripts/verify-boot-view.mjs`（需服务在跑）。它跑两遍——阻断 app.js 读
+     首帧 computed display，再放开 app.js 点导航切页后复读。**jsdom 测不了这类问题**：它不加载
+     外部 CSS，测试只能断言 class，而 bug 恰恰是「class 加了但 display 没变」。
+   - **骨架是 `.app-shell`（侧栏 | 内容区），不是 `#library-view`**（v3.17 第二步）。侧栏与 rail
+     常驻，三个内容视图在 `.app-content` 里换；`#library-view` 只剩「列表 | 分隔条 | 详情」三列。
+     侧栏内是三份 `.side-ctx[data-ctx=...]`，由 `showView` 与内容区同步切换——加一级视图要
+     一并加它的 `.side-ctx`。`sidebar-collapsed` 挂 `#app-shell`（挂 `#library-view` 会在切页时丢）。
+     **收起态 rail 同理是三份 `.rail-ctx[data-ctx=...]`**（v3.19：此前 rail 恒为论文页内容，
+     概念/公式页收起后仍挂着星标/未读/收藏夹，点了改的是看不见的论文筛选）——加一级视图
+     要一并加它的 `.rail-ctx`；rail 不需要 boot CSS 首帧规则（它只在 JS 加 `sidebar-collapsed`
+     后才可见，那时 showView 已跑过）。
+   - **设置是覆盖层，不是第四个平级视图**（v3.17 第二步）。`showView('settings')` 只切
+     `#settings-view` 的显隐就 `return`，**不动底下的内容视图与侧栏**——关掉要原样回到来路。
+     故 `currentView()` 读的是 `body.dataset.contentView`（底层内容视图）而非 `dataset.view`；
+     顶栏搜索/筛选的分派都按前者走。关闭路径由 `bind.js` 的 `closeSettingsOverlay` 收口
+     （记打开前的 URL，深链无来路时兜底 `/library`），Esc 分支与遮罩点击都调它。
+   - **顶栏是纯 chrome，页面专属控件不许往上放**（v3.17；v3.18 连最后的筛选条也下沉了）。
+     顶栏只承载身份（logo/空间）、
+     一级导航（`#view-nav`）、上下文搜索（`#search`）、全局动作与状态（`#status-chip` /
+     `+ 添加`）。`#search` 的 placeholder 与检索目标由 `views/view-switch.js`
+     的 `SEARCH_CONTEXT` 按视图分派，实际过滤在 `bind.js` 的 `pageSearch` 表里派发——
+     **加一级视图要同时补这两处**，否则新页面的搜索框会去搜论文。
+     设置入口在**常驻侧栏 footer（`#btn-settings`）+ rail 底部（`#btn-settings-rail`）**（v3.18 自顶栏移回）。
+     它曾两度搬家：v3.17 前在 `#library-view` 内的侧栏 footer，切到概念/公式页整个库视图
+     `display:none`，设置就进不去了 → v3.17 挪到顶栏齿轮；v3.17 骨架统一后侧栏跨视图常驻，
+     当年的消失问题不复存在，v3.18 按用户偏好移回左下角。
+     **顶栏控件一律 34px 定高**（v3.18 教训）：只写 `min-height:34px` 不写 `line-height` 的控件
+     会被 body 的 `line-height:1.55` 顶超（14px 字体 → 21.7px 行高 + padding + border ≈ 37px），
+     而 `.topbar` 是 `align-items:center` 的 flex——只要某个**随视图显隐**的控件超 34px，
+     顶栏高度就会随切页跳动。论文页筛选条（状态/主题/标签）v3.18 沉入 `.list-toolbar`
+     （随 `#library-view` 整体显隐，showView 不再单独切换）；仅星标 checkbox 退役
+     （星标入口还有三处：侧栏「星标」视图、DSL `star:1`、高级搜索面板 `sf-starred`）。
+     列表工具条全部件 30px/12px 紧凑密度；`.toolbar-actions`（密度+多选）靠 `margin-left:auto`
+     贴右，换行时落第二行仍右对齐——**sort select 的自然宽按最长 option 算**（「年份（新 → 旧）」），
+     别指望它在窄列里收缩。
    - **`/paper/:id` 与 `/paper/:id/:tab` 语义不同**：前者是「选中论文」，**总是重拉详情**
      （`fresh: true`）；后者是「切 tab」，同一篇**不重拉**——否则会打断进行中的聊天流式输出
      和笔记内联编辑。改这两条 enter 时务必保持这个区分。
@@ -500,12 +555,23 @@ arXiv 导入 (POST /api/import { url, meta? }):
     ③ `chatParams.signal` 支持外部取消（`AbortSignal.any` 合并超时信号；外部取消不走退避重试——`cp.signal.aborted` 守卫在退避前抛出）。
     `callChat`/`callChatStream` 支持 `chatParams.timeoutMs`（单次超时）与 `chatParams.maxRetries`（重试次数）覆盖。
 
-43. **模型渠道是 AI 三元组的单一事实源（v3.13）**：`settings.ai.channels[]` + `activeChannelId` 存在时，
-    `applySettingsOverride` 用活跃渠道的 `baseURL/apiKey/model/maxInputTokens` **权威覆盖**旧版顶层同名字段
+43. **模型渠道是全局的（v3.19 起跨空间共享）+ 是 AI 三元组的单一事实源（v3.13）**：
+    `channels[]` + `activeChannelId` 存 **`app_state['globalAi']`**（PG KV），不再落 per-space
+    `spaces.settings`。读取侧一律经 `withGlobalAi(settings, gai)`（services/ai.js 纯函数）把全局渠道
+    并进 settings 再喂 `applySettingsOverride`——后者签名/逻辑未变。**生效优先级阶梯**：
+    全局渠道 → per-space `settings.ai.channels`（v3.18 前的旧数据兜底，不删除）→ 旧版顶层三元组
+    → config.json。**需要 effConfig 的代码勿再直接 `applySettingsOverride(config, store.settings)`**——
+    API handler 从 `resolveSpace` 解构 `gai` 后包一层；scanner 已在 `subFor()` 单收口包好（六处调用点
+    零改动）。写路径只有 `PUT /api/settings/ai/channels` → `manager.saveGlobalAi`。
+    活跃渠道的 `baseURL/apiKey/model/maxInputTokens` **权威覆盖**旧版顶层同名字段
     （渠道 `maxInputTokens` 空 = 跟随全局；渠道 apiKey 显式空串 = 无鉴权端点，连 config 的 key 也不回退）。
-    首次 `PUT /api/settings/ai/channels`（列表非空）会**删除**旧版顶层三元组完成迁移——勿再双写；
     无渠道存根时 GET /api/settings 合成 id=`ch_default` 的单卡片视图（掩码 key 解析到当前生效 key）。
     所有渠道 model 自动并入 `extraModels`（聊天白名单/listModels 候选，勿再手动同步）。
+    启动迁移 `manager.ensureGlobalAi()`（server.js 在 ensureRegistry 后调）：app_state 无 globalAi 时按
+    **active 空间 → default → 其余（渠道多者优先）** 把某空间的 per-space 渠道提升为全局，原副本保留。
+    注意：`POST /api/settings/reset` 只清 per-space 覆盖，**不动全局渠道**；`aiSettingsView` 的
+    aiOverride 入参必须传 `withGlobalAi` 合并后的 ai（只合并 effConfig 会漏——渠道列表退化成
+    per-space/合成视图，v3.19 踩过）。
     **temperature 锁定模型**：Kimi k3 / OpenAI o 系列 / gpt-5 只收 temperature=1，默认 0.3 会被 400
     （`only 1 is allowed`）——callChat/callChatStream 遇 400 且报错提及 temperature 时剥掉
     `temperature/top_p` 立即重发（不占退避额度），新增模型接入遇 400 先查这条。

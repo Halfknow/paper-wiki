@@ -27,20 +27,21 @@ export function renderSidebar() {
   $('cnt-star').textContent = starCount || '';
   $('cnt-unread').textContent = unreadCount || '';
 
-  // 高亮当前视图
-  document.querySelectorAll('.sidebar .side-item[data-mode]').forEach((el) => {
-    const m = el.dataset.mode;
-    // 仅星标特殊：starred 模式
-    el.classList.toggle('active',
-      (m === 'starred' && state.filter.starred) ||
-      (m === 'all' && !state.filter.mode && !state.filter.starred && !state.filter.folder && !state.filter.readStatus) ||
-      (m === 'unread' && (state.filter.mode === 'unread' || state.filter.readStatus === 'unread')));
-  });
+  // 高亮当前视图（展开态侧栏项 + 收起态 rail 图标并行处理）
+  const isAll = !state.filter.mode && !state.filter.starred && !state.filter.folder && !state.filter.readStatus;
+  const isStarred = !!state.filter.starred;
+  const isUnread = state.filter.mode === 'unread' || state.filter.readStatus === 'unread';
+  const modeActive = (m) => (m === 'all' && isAll) || (m === 'starred' && isStarred) || (m === 'unread' && isUnread);
+  document.querySelectorAll('.sidebar .side-item[data-mode]').forEach((el) => el.classList.toggle('active', modeActive(el.dataset.mode)));
+  document.querySelectorAll('.sidebar-rail .rail-btn[data-mode]').forEach((el) => el.classList.toggle('active', modeActive(el.dataset.mode)));
 
   // 收藏夹列表
   const fl = $('folder-list');
   fl.innerHTML = '';
   $('folder-empty').hidden = state.folders.length > 0;
+  // 收起态 rail 收藏夹色点（与展开态列表并行渲染）
+  const rfl = $('rail-folder-list');
+  if (rfl) rfl.innerHTML = '';
   for (const fo of state.folders) {
     const el = document.createElement('div');
     el.className = 'side-item' + (state.filter.folder === fo.id ? ' active' : '');
@@ -56,6 +57,23 @@ export function renderSidebar() {
     };
     setupFolderDropTarget(el, fo);
     fl.appendChild(el);
+    // rail 收藏夹按钮：外层 .rail-btn（与视图按钮同款药丸），内含 .swatch 方形色块（与展开态一致）
+    if (rfl) {
+      const dot = document.createElement('button');
+      dot.type = 'button';
+      dot.className = 'rail-btn rail-folder-dot' + (state.filter.folder === fo.id ? ' active' : '');
+      dot.title = fo.name + (fo.count ? `（${fo.count}）` : '');
+      dot.setAttribute('aria-label', '收藏夹：' + fo.name);
+      dot.dataset.folderId = fo.id;
+      dot.innerHTML = `<span class="swatch" style="background:${escapeHtml(fo.color)}"></span>`;
+      // mousedown preventDefault：阻止 button 获得焦点时浏览器自动 scrollIntoView
+      // （点击列表底部收藏夹会触发焦点元素滚进可视区 → #rail-folder-list 出现可见滚动反馈）。
+      // 键盘可达性保留：键盘 Tab/Enter 仍可正常聚焦触发，:focus-visible 在 CSS 里给轮廓。
+      dot.onmousedown = (e) => e.preventDefault();
+      dot.onclick = () => setView({ folder: fo.id, mode: '', starred: false, readStatus: '', status: '' });
+      setupFolderDropTarget(dot, fo);
+      rfl.appendChild(dot);
+    }
   }
 }
 

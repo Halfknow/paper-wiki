@@ -120,6 +120,8 @@ async function main() {
 
   const manager = createSpaceManager({ repo, papersRoot, globalConfig: config });
   await manager.ensureRegistry();
+  // 渠道全局化迁移（v3.19）：app_state 无 globalAi 时，把现有某空间的 per-space 渠道提升为全局
+  await manager.ensureGlobalAi();
 
   // 每日 JSON 快照备份（PG→JSON 逃生通道）：遍历空间，把 store 序列化到 backups/<spaceId>/
   async function backupAllSpaces() {

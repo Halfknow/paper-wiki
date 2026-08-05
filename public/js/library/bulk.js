@@ -32,7 +32,9 @@ export function togglePickMode(on) {
   if (!on) { state.selected.clear(); closeBulkMenu(); }
   syncPickUI();
   const pickBtn = $('btn-pick');
-  pickBtn.querySelector('.btn-text').textContent = on ? '退出多选' : '多选';
+  // 纯图标按钮（v3.18 去文字）：开关态靠 title / aria-label / active 类表达
+  pickBtn.title = on ? '退出多选' : '多选论文以追加概念';
+  pickBtn.setAttribute('aria-label', on ? '退出多选' : '多选');
   pickBtn.classList.toggle('active', on);
   pickBtn.classList.toggle('subtle', !on);
   renderList();

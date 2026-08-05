@@ -2,17 +2,17 @@
 //
 // 自 public/app.js 拆出（v3.15 模块化重构）——声明体原样迁移，仅补 import/export。
 
-import { _conceptLayout, _conceptSort, _conceptView, generateConceptMap, renderConcepts, set_conceptLayout, set_conceptSort } from './concepts/concepts.js';
+import { _conceptLayout, _conceptSort, _conceptView, generateConceptMap, openConceptFilterPop, renderConcepts, set_conceptLayout, set_conceptSort } from './concepts/concepts.js';
 import { DEL, PATCH, POST, api, sp } from './core/api.js';
 import { $ } from './core/dom.js';
 import { escapeHtml } from './core/format.js';
-import { gotoPaperRoute, router } from './core/nav.js';
+import { gotoPaperRoute, router, syncPageQueryToUrl } from './core/nav.js';
 import { buildPath } from './core/router.js';
 import { state } from './core/state.js';
 import { setBusy, toast } from './core/ui-kit.js';
 import { select } from './detail/detail.js';
 import { patch, reader } from './detail/info-tab.js';
-import { _formulaLayout, _formulaSort, renderFormulas, set_formulaLayout, set_formulaSort } from './formulas/formulas.js';
+import { _formulaLayout, _formulaSort, renderFormulas, resetFormulaFacet, set_formulaLayout, set_formulaSort } from './formulas/formulas.js';
 import { closeBulkMenu, setBulkBusy, syncPickUI, toggleBulkMenu, togglePickMode, updateBulkProgress } from './library/bulk.js';
 import { closeStatusMenu, openFilterPop, renderStatusMenu, toggleStatusMenu } from './library/filters.js';
 import { editingFolder, goHome, openFolderModal, pickedColor } from './library/folders.js';
@@ -26,6 +26,7 @@ import { saveConceptMapPrompt, saveConceptPrompt, saveFormulaPrompt, saveSummary
 import { saveAiConfig, settingsSwitchTab } from './settings/settings.js';
 import { renderTaxonomy, taxBatchDelete, taxBatchMerge, taxState, taxSwitchKind, taxToggleSelectMode } from './settings/taxonomy.js';
 import { applyListWidth, bindListSplitter, refreshSystemHealth, setSidebarCollapsed } from './views/layout.js';
+import { currentView } from './views/view-switch.js';
 import { bindDiscover } from './library/discover.js';
 
 // ---- 绑定事件 ----
@@ -35,8 +36,18 @@ export function bind() {
   //   - DSL 含 body:/in:body → 走正文检索（/api/search），后端把元数据部分作为候选 id 子集
   //   - 否则 → 元数据即时筛选（/api/papers?q=DSL，后端解析字段前缀 + 分词 AND）
   //   - 同时把 DSL 镜像回填高级面板（双向同步）
+  // v3.17 上下文搜索：同一个 #search 在三个视图下检索目标不同。
+  // 概念/公式页只是本地过滤（数据已全量在内存），故直接重渲 + 回写 ?q=；
+  // 论文页保持原有的 DSL / 全文检索链路不变。
+  const pageSearch = { concepts: renderConcepts, formulas: renderFormulas };
   $('search').oninput = (e) => {
     const v = e.target.value;
+    const render = pageSearch[currentView()];
+    if (render) {
+      clearTimeout(t);
+      t = setTimeout(() => { render(); syncPageQueryToUrl(); }, 250);
+      return;
+    }
     state.filter.q = v;
     syncAdvancedPanelFromDsl(v);          // DSL → 面板回填
     updateSearchModeIndicator(v);         // body: 模式提示
@@ -45,8 +56,14 @@ export function bind() {
   };
   // 回车 = 立即应用当前 DSL（不等防抖）；Esc = 清空退出
   $('search').addEventListener('keydown', (e) => {
-    // 内联补全浮层打开时：↑↓/Enter/Tab/Esc 走补全
+    // 内联补全浮层打开时：↑↓/Enter/Tab/Esc 走补全（仅论文页有补全）
     if (handleSuggestKeydown(e)) { e.preventDefault(); return; }
+    const render = pageSearch[currentView()];
+    if (render) {
+      if (e.key === 'Enter') { e.preventDefault(); clearTimeout(t); render(); syncPageQueryToUrl(); }
+      else if (e.key === 'Escape') { e.preventDefault(); $('search').value = ''; clearTimeout(t); render(); syncPageQueryToUrl(); }
+      return;
+    }
     if (e.key === 'Enter') {
       e.preventDefault();
       const v = $('search').value.trim();
@@ -89,19 +106,56 @@ export function bind() {
   if (tagTrig) tagTrig.onclick = () => openFilterPop('tag');
   const topicTrig = $('filter-topic-trigger');
   if (topicTrig) topicTrig.onclick = () => openFilterPop('topic');
-  $('filter-starred').onchange = (e) => { state.filter.starred = e.target.checked; refresh(); };
   $('sort').onchange = (e) => { state.filter.sort = e.target.value; refresh(); };
 
-  // 侧栏视图项
-  document.querySelectorAll('.sidebar .side-item[data-mode]').forEach((el) => {
-    el.onclick = () => {
-      const m = el.dataset.mode;
-      if (m === 'all') state.filter = { ...state.filter, mode: '', starred: false, folder: '', readStatus: '', status: '', tags: [], topics: [] };
-      else if (m === 'starred') state.filter = { ...state.filter, mode: '', starred: true, folder: '', readStatus: '' };
-      else if (m === 'unread') state.filter = { ...state.filter, mode: 'unread', starred: false, folder: '', status: '', readStatus: 'unread' };
-      refresh();
-    };
+  // 侧栏视图项（展开态 .side-item + 收起态 rail .rail-btn 共用同一逻辑）
+  const onSideViewClick = (el) => {
+    const m = el.dataset.mode;
+    if (m === 'all') state.filter = { ...state.filter, mode: '', starred: false, folder: '', readStatus: '', status: '', tags: [], topics: [] };
+    else if (m === 'starred') state.filter = { ...state.filter, mode: '', starred: true, folder: '', readStatus: '' };
+    else if (m === 'unread') state.filter = { ...state.filter, mode: 'unread', starred: false, folder: '', status: '', readStatus: 'unread' };
+    refresh();
+  };
+  document.querySelectorAll('.sidebar .side-item[data-mode]').forEach((el) => { el.onclick = () => onSideViewClick(el); });
+  document.querySelectorAll('.sidebar-rail .rail-btn[data-mode]').forEach((el) => { el.onclick = () => onSideViewClick(el); });
+  // 概念页 rail：清单/地图（与展开侧栏 data-cview 项同语义，走路由切换）
+  document.querySelectorAll('.rail-ctx[data-ctx="concepts"] .rail-btn[data-cview]').forEach((el) => {
+    el.onclick = () => router.navigate(el.dataset.cview === 'maps' ? '/concepts/maps' : '/concepts', { keepQuery: true });
   });
+  // 公式页 rail：「全部公式」= 清空分类分面
+  const railFormulaAll = $('rail-formula-all');
+  if (railFormulaAll) railFormulaAll.onclick = () => resetFormulaFacet();
+
+  // ---- 顶栏状态胶囊（v3.17）：点开 popover 看明细 + 立即扫描 ----
+  const statusPop = $('status-pop');
+  const closeStatusPop = () => {
+    statusPop.hidden = true;
+    $('status-chip').setAttribute('aria-expanded', 'false');
+  };
+  $('status-chip').onclick = (e) => {
+    e.stopPropagation();
+    const open = statusPop.hidden;
+    closeAddMenu();
+    statusPop.hidden = !open;
+    $('status-chip').setAttribute('aria-expanded', String(open));
+  };
+  statusPop.addEventListener('click', (e) => e.stopPropagation());
+
+  // ---- 「+ 添加」下拉（v3.17）：导入 / 发现是同一意图的两条路径 ----
+  const addList = $('add-menu-list');
+  function closeAddMenu() {
+    addList.hidden = true;
+    $('btn-add').setAttribute('aria-expanded', 'false');
+  }
+  $('btn-add').onclick = (e) => {
+    e.stopPropagation();
+    const open = addList.hidden;
+    closeStatusPop();
+    addList.hidden = !open;
+    $('btn-add').setAttribute('aria-expanded', String(open));
+  };
+  addList.addEventListener('click', () => closeAddMenu()); // 选中任一项即收起
+  document.addEventListener('click', () => { closeStatusPop(); closeAddMenu(); });
 
   $('btn-scan').onclick = async () => {
     const btn = $('btn-scan');
@@ -166,13 +220,25 @@ export function bind() {
       if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); goHome(); }
     });
   }
-  $('btn-concepts').onclick = () => router.navigate(_conceptView === 'maps' ? '/concepts/maps' : '/concepts', { force: true }); // 记忆上次子视图
-  $('btn-concepts-close').onclick = () => router.navigate('/library', { keepQuery: true });
-  $('concept-q').oninput = renderConcepts;
-  // 公式清单视图（v3.9，与概念视图同构）
-  $('btn-formulas').onclick = () => router.navigate('/formulas', { force: true });
-  $('btn-formulas-close').onclick = () => router.navigate('/library', { keepQuery: true });
-  $('formula-q').oninput = renderFormulas;
+  // 一级导航（#view-nav）：元素是 <a href>，core/router.js 的站内链接拦截已能接管，
+  // 这里再覆盖一层是为了两件拦截层给不了的事——
+  //   ① force:true：点当前所在页的那一段要重新入场拉数据（沿用旧 btn-concepts 的语义），
+  //      否则同址 navigate 会早退，「点概念刷新一下」变成无反应；
+  //   ② 概念页记忆上次子视图（清单/地图），目标路径要动态改写。
+  // 带修饰键 / 中键的点击一律放行给浏览器，保住「新标签页打开」这个 <a> 的本分。
+  document.querySelectorAll('#view-nav .vn-item').forEach((a) => {
+    a.onclick = (e) => {
+      if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+      e.preventDefault();
+      const v = a.dataset.view;
+      const to = v === 'concepts'
+        ? (_conceptView === 'maps' ? '/concepts/maps' : '/concepts')
+        : a.getAttribute('href');
+      router.navigate(to, { force: true, keepQuery: v === 'library' });
+    };
+  });
+  // 概念筛选漏斗按钮（分类/频次/出处面板）
+  $('concept-filter-btn').onclick = (e) => { e.stopPropagation(); openConceptFilterPop(); };
   document.querySelectorAll('#formula-layout button').forEach((b) => {
     b.onclick = () => {
       set_formulaLayout(b.dataset.layout);
@@ -203,14 +269,28 @@ export function bind() {
       renderConcepts();
     };
   });
-  // 视图切换（清单/总览图），持久化用户选择
-  document.querySelectorAll('#concept-view button').forEach((b) => {
-    b.onclick = () => router.navigate(b.dataset.view === 'maps' ? '/concepts/maps' : '/concepts');
-  });
+  // 概念页「清单 / 地图」切换已移入侧栏（renderConceptSidebar 自行接线）。
 
-  // 设置中心（统一从左下角「设置」进入）
-  $('btn-settings').onclick = () => router.navigate('/settings/overview', { force: true }); // 左下角「设置」→ 概览
-  $('btn-settings-close').onclick = () => router.navigate('/library', { keepQuery: true });
+  // 设置中心（v3.17：顶栏齿轮进入 + 覆盖层呈现）。
+  // 覆盖层关掉要回到**打开它之前的那个页面**，而不是一律回论文库——从概念页点齿轮再关掉
+  // 却落到论文库，是最容易被抱怨的那种「丢上下文」。深链直接进 /settings 时无来路，兜底 /library。
+  let settingsReturnTo = null;
+  const openSettingsOverlay = () => {
+    const cur = window.location.pathname + window.location.search;
+    settingsReturnTo = cur.startsWith('/settings') ? null : cur;
+    router.navigate('/settings/overview', { force: true });
+  };
+  const closeSettingsOverlay = () => {
+    const to = settingsReturnTo || '/library';
+    settingsReturnTo = null;
+    router.navigate(to.split('?')[0], { query: to.includes('?') ? '?' + to.split('?')[1] : '' });
+  };
+  // 设置入口：侧栏 footer（展开态）+ rail 底部（收起态），两处同一行为（v3.18 自顶栏移回）
+  $('btn-settings').onclick = openSettingsOverlay;
+  $('btn-settings-rail').onclick = openSettingsOverlay;
+  $('btn-settings-close').onclick = closeSettingsOverlay;
+  // 点遮罩（面板之外）关闭——覆盖层的常规语义
+  $('settings-view').addEventListener('click', (e) => { if (e.target.id === 'settings-view') closeSettingsOverlay(); });
   // 设置 tab 导航
   document.querySelectorAll('.settings-nav-item').forEach((el) => {
     el.onclick = () => router.navigate(buildPath('/settings/:tab', { tab: el.dataset.tab }));
@@ -545,7 +625,8 @@ export function bind() {
       $('folder-modal').classList.remove('active');
       $('import-modal').classList.remove('active');
       $('discover-modal').classList.remove('active');
-      if (document.body.dataset.view === 'settings') router.navigate('/library', { keepQuery: true });
+      // 设置覆盖层：回到打开它之前的那个页面（同 closeSettingsOverlay）
+      if (document.body.dataset.view === 'settings') closeSettingsOverlay();
     }
   });
 }

@@ -123,6 +123,64 @@ function createSpaceManager({ repo, papersRoot, globalConfig }) {
     return registry;
   }
 
+  // ---- 全局 AI 渠道（v3.19）：channels + activeChannelId 跨空间共享，落 app_state['globalAi']。
+  //      提示词等其他设置仍 per-space。优先级：全局渠道 → per-space settings.ai.channels（旧数据
+  //      兜底）→ 旧版顶层三元组 → config.json。各空间残留的 per-space channels 副本不删除，
+  //      全局清空时它们重新生效。 ----
+  let globalAiCache; // undefined=未加载；null=库中没有；{channels,activeChannelId}=已配置
+
+  async function loadGlobalAi() {
+    if (globalAiCache !== undefined) return globalAiCache;
+    const raw = await repo.getAppState('globalAi');
+    globalAiCache =
+      raw && Array.isArray(raw.channels) && raw.channels.length
+        ? { channels: raw.channels, activeChannelId: raw.activeChannelId || null }
+        : null;
+    return globalAiCache;
+  }
+
+  /** 同步读（调用点都在 ensureGlobalAi/任意 await 之后，缓存必然已热） */
+  function getGlobalAi() {
+    return globalAiCache || null;
+  }
+
+  /** 全量替换全局渠道。obj=null 或空 channels = 清除全局渠道（回落 per-space/三元组/config）。 */
+  async function saveGlobalAi(obj) {
+    const clean =
+      obj && Array.isArray(obj.channels) && obj.channels.length
+        ? { channels: obj.channels, activeChannelId: obj.activeChannelId || null }
+        : null;
+    await repo.setAppState('globalAi', clean);
+    globalAiCache = clean;
+    return clean;
+  }
+
+  /** 启动迁移：库中无全局渠道时，把现有某个空间的 per-space 渠道提升为全局。
+   *  选取顺序：active 空间 → default → 其余（渠道多者优先）。原空间副本保留（降级为兜底）。 */
+  async function ensureGlobalAi() {
+    await loadGlobalAi();
+    if (globalAiCache) return globalAiCache;
+    const channelsOf = (store) => {
+      const chs = store && store.settings && store.settings.ai && store.settings.ai.channels;
+      return Array.isArray(chs) && chs.length ? chs : null;
+    };
+    const ordered = listSpaces().sort((a, b) => {
+      const rank = (s) => (s.id === registry.activeSpaceId ? 0 : s.id === DEFAULT_SPACE_ID ? 1 : 2);
+      return rank(a) - rank(b);
+    });
+    let picked = null;
+    for (const sp of ordered) {
+      const store = await getSpaceStore(sp.id);
+      const chs = channelsOf(store);
+      if (chs && (!picked || chs.length > picked.channels.length)) {
+        picked = { channels: chs, activeChannelId: store.settings.ai.activeChannelId || null };
+        if (sp.id === registry.activeSpaceId || sp.id === DEFAULT_SPACE_ID) break; // 优先级高的命中即收
+      }
+    }
+    if (picked) await saveGlobalAi(picked);
+    return globalAiCache;
+  }
+
   function listSpaces() {
     return registry ? registry.spaces.slice() : [];
   }
@@ -457,6 +515,10 @@ function createSpaceManager({ repo, papersRoot, globalConfig }) {
     previewPapersDirChange,
     applyPapersDirChange,
     changePapersDir,
+    // 全局 AI 渠道（v3.19，跨空间共享；见 ensureGlobalAi 注释的优先级阶梯）
+    ensureGlobalAi,
+    getGlobalAi,
+    saveGlobalAi,
     // store / 全文
     saveSpaceStore,
     saveStoreBinder,
@@ -470,6 +532,7 @@ function createSpaceManager({ repo, papersRoot, globalConfig }) {
     _reloadFromDisk: async () => {
       registry = null;
       storeCache.clear();
+      globalAiCache = undefined;
       await ensureRegistry();
     },
   };

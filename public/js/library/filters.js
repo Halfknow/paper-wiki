@@ -12,7 +12,8 @@ import { refresh } from './refresh.js';
 // 「全部状态」自定义下拉：触发器文案 + active 态 + 菜单项高亮。
 // status（ready/error/pending 处理状态）与 readStatus（unread/reading/done 阅读状态）分属两个字段，
 // 菜单项的 data-field 标记写入哪个字段；renderStatusMenu 读两个字段综合判定当前选中。
-const STATUS_LABELS = { '': '全部状态', ready: '已就绪', unread: '未读', reading: '在读', done: '已读', error: '出错', pending: '处理中' };
+// 触发器默认文案「状态」（列表列宽按字符计预算，「全部状态」放不下）；菜单项仍是「全部状态」。
+const STATUS_LABELS = { '': '状态', ready: '已就绪', unread: '未读', reading: '在读', done: '已读', error: '出错', pending: '处理中' };
 
 function statusCurrentValue() {
   if (state.filter.status) return state.filter.status;
@@ -25,7 +26,7 @@ export function renderStatusMenu() {
   const trig = $('filter-status-trigger');
   if (trig) trig.classList.toggle('active', !!val);
   const label = $('ft-status-label');
-  if (label) label.textContent = STATUS_LABELS[val] || '全部状态';
+  if (label) label.textContent = STATUS_LABELS[val] || '状态';
   // 高亮当前项：item 的 data-value 匹配（status 与 readStatus 值不重叠，故按值匹配即可）
   document.querySelectorAll('#filter-status-menu .fsm-item').forEach((it) => {
     it.classList.toggle('active', it.dataset.value === val);
@@ -41,7 +42,6 @@ export function toggleStatusMenu() { const m = $('filter-status-menu'); if (!m) 
 export function renderFilters() {
   // 「全部状态」改为自定义按钮下拉：回填触发器文案 + active 态 + 菜单项高亮
   renderStatusMenu();
-  $('filter-starred').checked = state.filter.starred;
   // 主题/标签触发器：同步选中数徽标；并剔除已删除/合并的失效项（保留仍存在的）。
   const tagSet = new Set(state.tags.map((t) => t.name));
   state.filter.tags = (state.filter.tags || []).filter((t) => tagSet.has(t));

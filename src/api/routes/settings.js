@@ -11,6 +11,7 @@ const {
   DEFAULT_CONCEPT_PROMPT,
   DEFAULT_CONCEPT_MAP_PROMPT,
   applySettingsOverride,
+  withGlobalAi,
 } = require('../../services/ai');
 const { DEFAULT_MINERU_NAMING_PROMPT } = require('../../services/mineru');
 const {
@@ -27,9 +28,10 @@ function register(t, ctx) {
 
   // ---- 设置（提示词 / AI 接口 / 主题标签等） ----
   // GET /api/settings  返回提示词 + 生效 AI 配置（掩码）+ 内置默认，供设置面板渲染
-  t.get('/api/settings', async ({ res, spaceId, space, store }) => {
+  t.get('/api/settings', async ({ res, spaceId, space, store, gai }) => {
     store.settings = store.settings || {};
-    const effConfig = applySettingsOverride(config, store.settings);
+    const merged = withGlobalAi(store.settings, gai);
+    const effConfig = applySettingsOverride(config, merged);
     const ov = store.settings;
     return ok(res, {
       // --- 智能：提示词（向后兼容 summaryPrompt / configPrompt / defaultPrompt）---
@@ -54,7 +56,7 @@ function register(t, ctx) {
       // v3.14：元信息含 status/error/hasHtml（后台生成任务态；僵尸 generating 解析为 error）
       conceptMaps: (Array.isArray(store.settings.conceptMaps) ? store.settings.conceptMaps : []).map(conceptMapMeta),
       // 生效 AI 配置（store.settings.ai 覆盖 config.ai 后）+ config 原值
-      ai: aiSettingsView(effConfig, store.settings.ai),
+      ai: aiSettingsView(effConfig, merged.ai),
       configAi: { baseURL: (config.ai && config.ai.baseURL) || '', model: (config.ai && config.ai.model) || '' },
       // --- 采集：扫描 / arxiv / discover（生效值 + config 原值）---
       scan: { scanIntervalMinutes: effConfig.scanIntervalMinutes ?? 5 },
@@ -199,7 +201,7 @@ function register(t, ctx) {
   });
 
   // PUT /api/settings/scan  body: { scanIntervalMinutes }  整数 ≥0，0=关闭定时扫描。热生效（reschedule 重置定时器）。
-  t.put('/api/settings/scan', async ({ res, body, spaceId, store, save }) => {
+  t.put('/api/settings/scan', async ({ res, body, spaceId, store, save, gai }) => {
     const op = JSON.parse(body || '{}');
     store.settings = store.settings || {};
     let n = parseInt(op.scanIntervalMinutes, 10);
@@ -208,12 +210,12 @@ function register(t, ctx) {
     store.settings.updatedAt = Date.now();
     await save(store);
     if (scanner && scanner.reschedule) await scanner.reschedule(spaceId, n);
-    const eff = applySettingsOverride(config, store.settings);
+    const eff = applySettingsOverride(config, withGlobalAi(store.settings, gai));
     return ok(res, { scan: { scanIntervalMinutes: eff.scanIntervalMinutes ?? 5 } });
   });
 
   // PUT /api/settings/arxiv  body: { enabled?, titleSimilarityThreshold?, minIntervalMs? }  白名单，未传不改。
-  t.put('/api/settings/arxiv', async ({ res, body, store, save }) => {
+  t.put('/api/settings/arxiv', async ({ res, body, store, save, gai }) => {
     const op = JSON.parse(body || '{}');
     store.settings = store.settings || {};
     const next = { ...(store.settings.arxiv || {}) };
@@ -229,12 +231,12 @@ function register(t, ctx) {
     store.settings.arxiv = next;
     store.settings.updatedAt = Date.now();
     await save(store);
-    const eff = applySettingsOverride(config, store.settings);
+    const eff = applySettingsOverride(config, withGlobalAi(store.settings, gai));
     return ok(res, { arxiv: arxivSettingsView(eff.arxiv) });
   });
 
   // PUT /api/settings/translate  body: { engine?, targetLang? }  划线翻译引擎 + 目标语言。
-  t.put('/api/settings/translate', async ({ res, body, store, save }) => {
+  t.put('/api/settings/translate', async ({ res, body, store, save, gai }) => {
     const op = JSON.parse(body || '{}');
     store.settings = store.settings || {};
     const next = { ...(store.settings.translate || {}) };
@@ -244,13 +246,13 @@ function register(t, ctx) {
     store.settings.translate = next;
     store.settings.updatedAt = Date.now();
     await save(store);
-    const eff = applySettingsOverride(config, store.settings);
+    const eff = applySettingsOverride(config, withGlobalAi(store.settings, gai));
     return ok(res, { translate: translateSettingsView(eff.translate) });
   });
 
   // PUT /api/settings/formulas  公式抽取引擎：engine=ai|mineru，mineruUrl，namingPrompt（MinerU 命名提示词）。
   //   仿 translate 段：白名单枚举校验 + trim；空串 mineruUrl/namingPrompt=未设置（回退 config/默认）。
-  t.put('/api/settings/formulas', async ({ res, body, store, save }) => {
+  t.put('/api/settings/formulas', async ({ res, body, store, save, gai }) => {
     const op = JSON.parse(body || '{}');
     store.settings = store.settings || {};
     const next = { ...(store.settings.formulas || {}) };
@@ -260,12 +262,12 @@ function register(t, ctx) {
     store.settings.formulas = next;
     store.settings.updatedAt = Date.now();
     await save(store);
-    const eff = applySettingsOverride(config, store.settings);
+    const eff = applySettingsOverride(config, withGlobalAi(store.settings, gai));
     return ok(res, { formulas: formulasSettingsView(eff.formulas) });
   });
 
   // PUT /api/settings/discover  body: 白名单字段 + weights{rel,auth,rec}；semanticScholarApiKey 掩码协议同 ai.apiKey。
-  t.put('/api/settings/discover', async ({ res, body, store, save }) => {
+  t.put('/api/settings/discover', async ({ res, body, store, save, gai }) => {
     const op = JSON.parse(body || '{}');
     store.settings = store.settings || {};
     const next = { ...(store.settings.discover || {}) };
@@ -303,7 +305,7 @@ function register(t, ctx) {
     store.settings.discover = next;
     store.settings.updatedAt = Date.now();
     await save(store);
-    const eff = applySettingsOverride(config, store.settings);
+    const eff = applySettingsOverride(config, withGlobalAi(store.settings, gai));
     return ok(res, { discover: discoverSettingsView(eff.discover) });
   });
 

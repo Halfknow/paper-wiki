@@ -9,7 +9,8 @@ import { bind } from './js/bind.js';
 import { $ } from './js/core/dom.js';
 import { router } from './js/core/nav.js';
 import { state } from './js/core/state.js';
-import { toast } from './js/core/ui-kit.js';
+import { renderStats, toast } from './js/core/ui-kit.js';
+import { safeGet } from './js/core/api.js';
 import { loadAiModels } from './js/detail/chat-view.js';
 import { refresh } from './js/library/refresh.js';
 import { loadSettingsData } from './js/settings/settings.js';
@@ -29,6 +30,11 @@ setSidebarCollapsed(state.sidebarCollapsed); // 应用上次记忆的侧栏状�
   if (urlSpace) state.space = urlSpace;
   await loadSpaces();
   await router.start();
+  // 顶栏状态胶囊与导航计数徽标是全局 chrome，但 renderStats 只在 refresh()（库视图）里被调到——
+  // 深链 /concepts、/formulas、/settings 时得单独补一次，否则徽标要等 10s 轮询才出现。
+  if (document.body.dataset.view !== 'library') {
+    safeGet('/api/stats').then((r) => { if (r.ok) renderStats(r.data); });
+  }
   // 后台拉取聊天预置覆盖（store.settings.chatPresets），失败静默用内置默认
   loadSettingsData().catch(() => {});
   // 后台拉取可用模型列表（Phase 2 模型切换器），失败静默用默认占位

@@ -4,6 +4,78 @@
 
 ## [Unpublished]
 
+### Fixed — 收起态 rail 在概念/公式页仍挂论文筛选按钮（v3.19）
+
+侧栏收起后的图标栏（rail）原来是一份**静态的论文页内容**（全部论文/星标/未读 + 收藏夹色点）——切到概念/公式页再收起侧栏，这些按钮还杵在那，点了改的是看不见的论文筛选。rail 改为与侧栏 `.side-ctx` 同机制的 `.rail-ctx[data-ctx=...]` 三份上下文，由 `showView` 同步切换：论文 = 原有视图快捷入口 + 收藏夹；概念 = 清单/地图（走路由，active 态与展开侧栏同步）；公式 = 全部公式（清分类分面）。展开按钮与设置齿轮三页共用。
+
+### Changed — 模型渠道全局化：跨空间共享，提示词保持 per-space（v3.19）
+
+此前渠道（`settings.ai.channels` + `activeChannelId`）存在各空间的 settings 里，在 A 空间配的 Kimi 到 B 空间就「消失」。渠道本质是「用哪个上游端点」的全局决策，与空间内容无关——改为全局共享；提示词（总结/标签/概念/公式/概念地图/笔记）是内容偏好，**保持 per-space 不动**。
+
+- **存储**：渠道落 `app_state['globalAi']`（PG KV），不再写 `spaces.settings`。repository 新增通用 `getAppState/setAppState`。
+- **生效链路**：读取侧统一经 `withGlobalAi(settings, gai)` 把全局渠道并进 settings 再喂 `applySettingsOverride`（后者零改动）。API handler 从 `resolveSpace` 解构 `gai`；scanner 在 `subFor()` 单收口包装，六处调用点不动。
+- **优先级阶梯（向后兼容）**：全局渠道 → per-space channels（旧数据兜底，不删除）→ 旧版顶层三元组 → config.json。清空全局渠道后逐层回落。
+- **启动迁移**：`ensureGlobalAi()` 按 active 空间 → default → 其余（渠道多者优先）把现有 per-space 渠道提升为全局，原副本保留作兜底。升级后各空间立即可见同一组渠道卡片。
+- **前端零改动**：GET/PUT 接口契约不变（渠道列表照常出现在 `GET /api/settings` 的 `ai.channels`）。
+- **语义微调**：首次保存渠道不再删除空间的旧版顶层三元组——它降级为「无全局渠道时」的 per-space 兜底（v3.13 的「删除防双写」语义在全局化后已无必要）。`POST /api/settings/reset` 不动全局渠道。
+- **顺带修复**：`routes/discover.js` 里 `const { discoverOpts } = ctx` 遮蔽了模块级同名函数（ctx 从未提供它），`/api/discover` 一调就 TypeError——v3.15 路由化重构引入的潜伏 bug。
+
+### Changed — 筛选条下沉列表工具条，顶栏达成纯 chrome（v3.18）
+
+v3.17 第一步留了条尾巴：状态/主题/标签/仅星标还寄居顶栏（当时放不下——列表列最窄 320px）。这一步完成下沉，顶栏从此只剩全局控件。
+
+- **筛选条沉入 `.list-toolbar`**：状态/主题/标签触发器与排序、视图密度、多选同处论文页自己的工具条，随 `#library-view` 整体显隐（`showView` 不再单独切换）。工具条全部件统一 30px 高 / 12px 字紧凑密度；状态触发器默认文案「全部状态」收成「状态」（列表列宽按字符计预算）。放不下时换行——筛选+排序居左一行，密度+多选（`.toolbar-actions`，`margin-left:auto`）右对齐一行，任何列宽都不横向溢出。
+- **仅星标 checkbox 退役**：星标入口仍有三处——侧栏「星标」视图、搜索 DSL `star:1`、高级搜索面板，顶栏这个 checkbox 是第四处冗余。
+- **紧凑/舒适与多选改纯图标**：文字交给 title/aria-label（多选的开关态由 title「多选⇄退出多选」+ active 类表达）。
+- **设置入口移回左下角**：顶栏齿轮 `#btn-settings-top` 退役，恢复侧栏 footer（`#btn-settings`）+ rail 底部（`#btn-settings-rail`）双入口。当年从侧栏搬走是因为 footer 藏在 `#library-view` 里、切页即消失；v3.17 骨架统一后侧栏跨视图常驻，这个问题已不存在，顶栏进一步纯化。
+- **状态胶囊色点换 activity 矢量图标**：色点语义太弱。图标吃 `currentColor`，沿用 data-level 三色（idle 灰 / busy 琥珀脉动 / error 红）。
+- **顶栏高度统一 34px 定高**：`#search` 从 `min-height` 改 `height`。原先 `.star-filter` 只写 `min-height:34px`、继承 body `line-height:1.55`，实测 37px 高——它是随视图显隐的控件，把 `align-items:center` 的顶栏在论文页撑高 2px、切概念/公式页又缩回去（切页时顶栏「跳一下」的根因）。死样式 `.topbar select` / `.star-filter` 一族一并清除。
+
+### Fixed — 聊天用户/AI 头像矢量图标偏心
+
+`CHAT_ROLE_ICO`（`public/js/detail/chat-view.js`）两个图标的路径几何不在 24×24 viewBox 正中，CSS 的 `align-items/justify-content:center` 只能把 SVG 整体居中，纠正不了字形内部偏移：
+
+- **AI 四角星**：起点 `M12 3`，垂直跨度 y=[3,17]，中心 y=10，比 viewBox 中心 12 偏上 2 个单位（上空 3、下空 7）→ 看起来「漂在圆里偏上」。起点改为 `M12 5`，垂直跨度 y=[5,19]，中心回到 12（后续 `l` 相对命令整体跟随平移，形状不变）。
+- **用户胸像**：头圆 `cy=8`（y=[4,12]）+ 肩部路径（y=[15,21]），合成中心偏下。`cy` 改为 7（与 lucide `user` 对齐），合成垂直跨度 y=[3,21]，中心回到 12。
+
+水平方向两图均已在中心（x 跨度中心=12），无需调整。
+
+### Changed — 顶栏重构为纯 chrome：一级导航 + 上下文搜索 + 状态胶囊（v3.17，第一步）
+
+把顶栏从「身份 + 导航 + 论文页专属筛选 + 全局动作」混在一行，收敛为**顶栏管全局、工具条管本页**。确立「一个空间，三种切面」的信息架构——概念与公式是当前空间论文的派生物（概念卡片的论文胶囊能跳回论文即是证据），故与论文平级、共享同一套 chrome。设计文档见 `docs/superpowers/specs/2026-08-04-navigation-ia-design.md`。
+
+- **一级导航 `#view-nav`**：论文 / 概念 / 公式 分段控件，紧贴空间切换器右侧（读作「在 X 空间里看 Y」），与 `.space-current` / `.filter-trigger` 共用同一套 token（34px 高、`--radius-sm`、同边框色），选中段是 `accent-soft` 内嵌胶囊、**不加外阴影**（一浮起来就不像嵌在 bar 里）。元素是 `<a href>` 而非 `<button>`——`core/router.js` 已拦截站内链接，故中键可开新标签页、右键可复制链接；`bind.js` 再覆盖一层只为 `force:true`（点当前页那一段要重新入场拉数据）与概念页子视图记忆。段上带**计数徽标**，取代旧 stats 里重复的「N 概念 / N 公式」pill。
+- **上下文搜索**：唯一的 `#search` 靠右，placeholder 与检索目标随视图切换（论文 → 现有 DSL/全文检索链路不动；概念 / 公式 → 本地过滤）。页内 `#concept-q` / `#formula-q` **退役**（此前概念页同屏两个搜索框，顶栏那个还搜不了概念）。语法帮助与高级搜索仅论文页可用；`Ctrl K` 三页通用。概念/公式页的查询词**进 URL**（`/concepts?q=`），与论文页对称。
+- **论文页专属筛选条随视图隐藏**：状态 / 主题 / 标签 / 仅星标只对论文有效，`showView` 在概念、公式页整条隐藏（旧实现照样杵着）。完整下沉到页面工具条留到第二步——列表列最窄 320px，塞四个下拉必然溢出。
+- **状态胶囊 `#status-chip`** 取代五个 stat-pill：空闲时只剩一个灰点，**处理中 / 出错时把文案顶出来**（把异常也折叠进 hover 会让后台失败完全静默）。hover/点击展开 popover 看就绪 / 处理中明细 / 错误 / 概念 / 公式，底部收纳「立即扫描」——扫描本质是重建索引，属状态维护而非主动作。
+- **动作收敛**：导入 / 发现合并为 `+ 添加` 下拉（同一意图的两条路径）。顶栏右侧控件由 5 个降到 3 个。
+- **设置入口全局化**：旧入口 `#btn-settings` 在 `#library-view` 内的侧栏 footer，切到概念/公式页时整个库视图 `display:none`，**设置就进不去了**。改为顶栏齿轮 `#btn-settings-top`，侧栏 footer 与 rail 的重复入口一并移除。
+- **删掉概念页 / 公式页的「返回论文库」箭头**：返回箭头是「下钻」的交互语言，与平级导航冲突。
+
+### Changed — 骨架统一：常驻侧栏 + 分面下沉 + 设置改覆盖层（v3.17，第二步）
+
+第一步只动了顶栏，三个平级页面的**布局骨架**仍不一致（论文页三栏、概念/公式页全宽无侧栏），切页时整块塌陷重建。这一步把骨架也统一了。
+
+- **`.app-shell` 常驻骨架**：侧栏与 rail 从 `#library-view` 内部提到三个内容视图之外，`.app-shell` 是 `侧栏 | 内容区` 两列，`#library-view` 降级为内容区里的 `列表 | 分隔条 | 详情` 三列。切页只换 `.app-content` 里的内容与侧栏的 `.side-ctx`，骨架恒定。`sidebar-collapsed` 随之改挂 `#app-shell`（收起态跨视图保持）。
+- **侧栏按视图切上下文区块**：论文 = 视图 + 收藏夹（不变）；概念 = 视图（清单 / 地图）+ 分类分面；公式 = 全部公式 + 分类分面。分类项点击是多选切换（同 Zotero 标签选择器），带计数。
+- **分面下沉，消除同一状态两处入口**：概念页的「清单 / 地图」分段与分类筛选从页内搬到侧栏（它们决定「看哪一批」，属分面导航）；页内漏斗只剩「共享频次 / 章节出处」，工具条只剩「怎么显示」（排版 / 排序 / 下载）。
+- **概念分类清单改从数据现算**：旧漏斗面板照 `_CONCEPT_CATEGORIES` 枚举列 chips，而提示词里的枚举只是建议——模型返回枚举外的分类时，那些概念在分面里**彻底消失**。现在分类从 `state.concepts` 现算，枚举只用来提供中文标签与已知分类的排序，枚举外的排在最后。
+- **设置改覆盖层**：仍是 `/settings/:tab` 路由，但呈现为遮罩 + 居中面板，Esc / 点遮罩 / 「关闭」都能退出，且**回到打开它之前的那个页面**（从概念页点齿轮再关掉却落到论文库，是最容易被抱怨的丢上下文）。深链直达无来路时兜底 `/library`。
+
+### Fixed — 切到概念/公式页时论文页的列表工具条仍挂在左上角（v3.17）
+
+`.view-hidden { display:none }` 与 `.layout { display:grid }` 特异性同为 `(0,1,0)`，胜负取决于在 styles.css 里的先后——`.layout` 更靠后就赢了，于是 `#library-view` 加上了 `.view-hidden` 类却没真隐藏，概念页左上角残留论文页的排序下拉与密度分段。`.view-hidden` 改为 `display:none !important`（工具类压过元素自带的布局 display 是它该有的语义），首帧那几条「显出某视图」的规则同步加 `!important`（两条都 important 时比特异性，`(1,2,1)` 稳赢）。
+
+**为什么单测没抓到**：jsdom 不加载外部 CSS，测试只能断言 class 是否加上——而 bug 恰恰是「class 加了但 display 没变」。`scripts/verify-boot-view.mjs` 因此补了第二遍：让 app.js 正常跑，点导航切页后读 computed display。
+
+### Fixed — 深链 /concepts /formulas /settings 刷新时先闪现论文页（v3.17）
+
+两处根因，缺一不可修：
+
+- **首帧**：`#library-view` 是四个视图里唯一没有 `display:none` 的，首帧必然画论文页。视图显隐从 inline style 改为 `.view-hidden` 类（inline style 的恢复靠 `style.display=''`，依赖各视图 CSS 默认 display —— 首帧规则若要选对就得复制这套默认值，脆弱）；`<head>` 加一行内联脚本把 `location.pathname` 写进 `data-boot-path`，由 `styles.css` 的 `[data-boot-path^="/concepts"]` 一族规则在解析阶段就选中正确视图。脚本**故意不含任何映射逻辑**（映射全在 CSS），避免与 `showView()` 两处实现漂移；脚本失败也只退化成当前行为。`showView` 首次执行清掉该属性交还控制权。
+- **二次延迟**：`showConcepts()` 里 `showView('concepts')` 排在 `/api/concepts` + `/api/papers` + `/api/settings` **三个网络请求之后**。现已提到所有 `await` 之前，`showFormulas` 同样处理。
+- **验证**：`scripts/verify-boot-view.mjs`（真实 Chromium，阻断 app.js 把页面钉在首帧后读各视图 computed display）——jsdom 测不了这个，它不加载外部 CSS。
+
 ### Fixed — 深链 /formulas /concepts 时卡片关联论文丢失显示「独立条目」（v3.15）
 
 `state.papers` 只由 `refresh()`（库视图 enter / 10s 轮询）填充。v3.15 引入 URL 路由后，**直接刷新/深链 /formulas 或 /concepts 时 refresh() 尚未跑过**，`state.papers` 为空 → 卡片 `occurrences`/`paperIds` 全部解析不到 → 误显示「（独立条目）」；10s 轮询补拉后渲染的懒加载批次才有论文，看起来「前面独立条目、滚动到后面又有了」。`showFormulas`/`showConcepts` 现在在 `state.papers` 为空时直接补拉一次列表（不走 refresh()，避免 renderList/syncFilterToUrl 副作用污染当前页 URL）。
@@ -21,6 +93,7 @@
 ### Changed — 概念地图提示词改浅色高级风 + 制品清单改缩略图网格（v3.15）
 
 - **提示词参考 Claude 制品提示词优化（深色 → 浅色）**：默认提示词的设计美学段落从暗色玻璃拟态改为**浅色高级风**（明亮暖白/冷白底、纯白卡片 + 细边框 + 柔和投影、配色克制、强调色仅用于标题/徽标/连线）。借鉴 Claude `read_me` 设计模块的思想——提示词内置一份权威**设计令牌**规范（`:root` CSS 变量统一定义配色/间距刻度/圆角/字号层级，全部样式只引用变量，不散落硬编码色值）；并加入 never-expose-machinery（只输出 HTML 文档，不输出"我将要…"式叙述）。路由判断/`sendPrompt`/`window.storage` 等 Claude 运行时机制与独立生成场景无关，未采纳。
+- **提示词回退为「暗色骨架浅色化」（v3.16 调整）**：v3.15 的「浅色高级风 + 设计令牌」过于克制（大面积留白、禁止渐变糊屏），生成效果不如 v3.10 暗色版。v3.16 回到 v3.10 暗色版的美学骨架——保留**鲜艳渐变主色（indigo→violet→pink）、玻璃拟态卡片质感（backdrop-filter blur + 半透明白底）、氛围光晕背景、大胆展示字体、3 视图交互与 staggered 微动画**，仅把深色底（#0a0e1a）翻成**浅色底**（#f8fafc 冷白 + 多层极淡渐变光晕）。视觉冲击力与暗色版相当，但配色为浅色。
 - **制品清单列表行 → 缩略图网格**：制品卡上方是**live 缩略图**——制品 HTML 在 1280×800 sandboxed iframe（`allow-scripts`，不放 same-origin）里真实渲染后 CSS `scale()` 缩小到卡宽；IntersectionObserver 滚进视口才 GET html 挂载（jsdom/老浏览器立即全挂）。点缩略图直接查看；generating 卡显示 spinner 占位，error 卡（含半成品）显示「不完整」徽标 + 半成品缩略图。
 - **轮询只在状态/成员变化时重渲**：制品卡重渲 = 卸载重挂 iframe（重新拉 html + 重跑页内动画），`_pollConceptMaps` 改为检测到跳变才 render；`_stopConceptMapPolling` 后残留回调短路（定时器句柄即开关）。
 - **测试**：tests/conceptmaps-ui.test.js 改写 5 例（网格渲染 / 占位卡 / 跳变重渲挂 iframe + 轮询停止 / error 徽标 + 半成品缩略图 / 设置面板）。

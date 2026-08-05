@@ -90,28 +90,30 @@ export function createAppRouter(h) {
       enter: ({ params, query }) => h.enterReader({ id: params.id, query }),
       leave: () => h.leaveReader(),
     },
+    // 概念/公式页的 ?q= 与论文页的 ?q= 对称（v3.17）：三个平级页面都该能深链到某个查询词，
+    // 切走再切回来查询词还在。三者共用顶栏那个上下文搜索框。
     {
       name: 'concepts',
       pattern: '/concepts',
-      enter: () => h.enterConcepts({ view: 'list' }),
+      enter: ({ query }) => h.enterConcepts({ view: 'list', query }),
       leave: () => h.leaveConcepts(),
     },
     {
       name: 'concept-maps',
       pattern: '/concepts/maps',
-      enter: () => h.enterConcepts({ view: 'maps' }),
+      enter: ({ query }) => h.enterConcepts({ view: 'maps', query }),
       leave: () => h.leaveConcepts(),
     },
     {
       name: 'concept-map',
       pattern: '/concepts/maps/:id',
-      enter: ({ params }) => h.enterConcepts({ view: 'maps', mapId: params.id }),
+      enter: ({ params, query }) => h.enterConcepts({ view: 'maps', mapId: params.id, query }),
       leave: () => h.leaveConcepts(),
     },
     {
       name: 'formulas',
       pattern: '/formulas',
-      enter: () => h.enterFormulas(),
+      enter: ({ query }) => h.enterFormulas({ query }),
     },
     {
       name: 'settings',

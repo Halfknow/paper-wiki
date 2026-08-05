@@ -3,7 +3,7 @@
 // system 路由。由 createApiRouter 在启动时调用 register(t, ctx) 注册到路由表。
 // handler 体自 src/api/router.js 的 if 链原样迁移（v3.15 路由化重构），行为逐字不变。
 
-const { applySettingsOverride, listModels } = require('../../services/ai');
+const { applySettingsOverride, withGlobalAi, listModels } = require('../../services/ai');
 
 function register(t, ctx) {
   const { ok, fail, config, manager, scanner, isProd } = ctx;
@@ -24,8 +24,8 @@ function register(t, ctx) {
   // GET /api/ai/models  返回可用模型列表（Phase 2 模型切换器用）。
   //   优先调上游 /v1/models；失败回退 config.ai.model + config.ai.extraModels。
   //   永不抛错——上游不可达时返回静态候选，保证前端切换器总能渲染。
-  t.get('/api/ai/models', async ({ res, store }) => {
-    const effConfig = applySettingsOverride(config, store.settings || {});
+  t.get('/api/ai/models', async ({ res, store, gai }) => {
+    const effConfig = applySettingsOverride(config, withGlobalAi(store.settings || {}, gai));
     try {
       const r = await listModels({ config: effConfig });
       return ok(res, r);

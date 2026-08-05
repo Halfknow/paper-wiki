@@ -10,6 +10,7 @@ import { router } from '../core/nav.js';
 import { buildPath } from '../core/router.js';
 import { state } from '../core/state.js';
 import { toast } from '../core/ui-kit.js';
+import { setSidebarCollapsed } from '../views/layout.js';
 import { showView } from '../views/view-switch.js';
 
 // ---- 公式清单视图（v3.9）----
@@ -17,6 +18,8 @@ import { showView } from '../views/view-switch.js';
 // 「归一化到一般形式」的展示落点在 occurrences[].symbolMap：清单页给一般形式，
 // 展开某篇论文能看到「这篇里 d_k 写作 d」。
 export async function showFormulas() {
+  // showView 必须先于所有 await（v3.17）：排在网络请求之后时，深链 /formulas 刷新会先闪论文页。
+  showView('formulas');
   // state.papers 只由 refresh()（库视图 / 10s 轮询）填充——v3.15 深链 /formulas 时为空，
   // 卡片 occurrences 全解析不到 → 误显示「独立条目」（等 10s 轮询后渲染的批次才有论文，看起来像时好时坏）。
   // 这里直接补拉一次列表（不走 refresh()，避免 renderList/syncFilterToUrl 副作用污染公式页 URL）。
@@ -26,7 +29,7 @@ export async function showFormulas() {
   if (pr && Array.isArray(pr.data)) state.papers = pr.data;
   const dl = document.querySelector('a[href="/api/formulas.md"]');
   if (dl) dl.href = sp('/api/formulas.md');
-  showView('formulas');
+  renderFormulaSidebar(); // 分类计数要等数据到位
   renderFormulas();
 }
 
@@ -61,13 +64,76 @@ function renderKatex(latex, display) {
 
 const VAR_ROLE_LABEL = { input: '输入', param: '参数', output: '输出', const: '常量' };
 
+// 分类分面选中集（v3.17 第二步，侧栏多选；空 = 不限）。内存态，不持久化。
+const _formulaCats = new Set();
+
+/** 渲染公式页侧栏：分类分面（与概念页同构；分类值是模型产出的自由字符串，故从数据里现算）。 */
+export function renderFormulaSidebar() {
+  const host = $('side-formulas');
+  if (!host) return;
+  const counts = {};
+  for (const f of state.formulas || []) {
+    const k = f.category || '未分类';
+    counts[k] = (counts[k] || 0) + 1;
+  }
+  const cats = Object.keys(counts).sort((a, b) => counts[b] - counts[a] || a.localeCompare(b));
+  const total = (state.formulas || []).length;
+
+  host.innerHTML = `
+    <div class="side-section">
+      <div class="side-title">
+        <span>视图</span>
+        <span class="side-actions">
+          <button class="side-icon-btn" id="btn-collapse-formulas" title="收起侧栏" aria-label="收起侧栏"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 18 9 12 15 6"/></svg></button>
+        </span>
+      </div>
+      <div class="side-item${_formulaCats.size ? '' : ' active'}" data-cat=""><span class="ico"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 4h9"/><path d="M13 4L8 20"/><path d="M4 12h8"/><path d="M15.5 10.5l5 7"/><path d="M20.5 10.5l-5 7"/></svg></span><span>全部公式</span><span class="count">${total || ''}</span></div>
+    </div>
+    <div class="side-section">
+      <div class="side-title">
+        <span>分类</span>
+        ${_formulaCats.size ? '<button class="side-clear" id="side-fcat-clear" type="button">清除</button>' : ''}
+      </div>
+      ${cats.length
+    ? cats.map((k) => `<div class="side-item${_formulaCats.has(k) ? ' active' : ''}" data-cat="${escapeHtml(k)}"><span class="cat-dot"></span><span>${escapeHtml(k)}</span><span class="count">${counts[k]}</span></div>`).join('')
+    : '<div class="side-item" style="color:var(--muted2);cursor:default;">（暂无分类）</div>'}
+    </div>`;
+
+  host.querySelectorAll('.side-item[data-cat]').forEach((el) => {
+    el.onclick = () => {
+      const k = el.dataset.cat;
+      if (!k) _formulaCats.clear();                              // 「全部公式」= 清空分面
+      else if (_formulaCats.has(k)) _formulaCats.delete(k);
+      else _formulaCats.add(k);
+      renderFormulaSidebar();
+      renderFormulas();
+    };
+  });
+  const clear = $('side-fcat-clear');
+  if (clear) clear.onclick = () => { _formulaCats.clear(); renderFormulaSidebar(); renderFormulas(); };
+  const collapse = $('btn-collapse-formulas');
+  if (collapse) collapse.onclick = () => setSidebarCollapsed(true);
+  // 收起态 rail 的「全部公式」按钮 active 态（无分面选中时高亮）
+  const railAll = $('rail-formula-all');
+  if (railAll) railAll.classList.toggle('active', !_formulaCats.size);
+}
+
+/** 「全部公式」= 清空分类分面。收起态 rail 按钮（bind.js 接线）与展开侧栏项共用入口。 */
+export function resetFormulaFacet() {
+  _formulaCats.clear();
+  renderFormulaSidebar();
+  renderFormulas();
+}
+
 export function renderFormulas() {
-  const q = ($('formula-q').value || '').trim().toLowerCase();
+  // 查询词来自顶栏那个上下文搜索框（v3.17，页内 #formula-q 已退役）
+  const q = (($('search') || {}).value || '').trim().toLowerCase();
   const sort = _formulaSort;
   const layout = _formulaLayout;
   let list = (state.formulas || []).filter(
     (f) => !q || [f.name, f.canonicalName, f.latex, f.description, f.category].join(' ').toLowerCase().includes(q),
   );
+  if (_formulaCats.size) list = list.filter((f) => _formulaCats.has(f.category || '未分类')); // 侧栏分类分面
   const byName = (a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'zh-Hans-CN-u-co-pinyin');
   if (sort === 'freq') {
     list = list.slice().sort((a, b) => (b.paperIds || []).length - (a.paperIds || []).length || byName(a, b));
