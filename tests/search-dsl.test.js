@@ -44,7 +44,11 @@ const QUERIES = [
 test('镜像 parseSearchQuery 与后端结构一致（20 组查询）', () => {
   assert.ok(FE && typeof FE.parseSearchQuery === 'function', 'window.PaperWikiSearch 已挂载');
   for (const q of QUERIES) {
-    assert.deepStrictEqual(norm(FE.parseSearchQuery(q)), norm(BE.parseSearchQuery(q)), `查询不一致: ${JSON.stringify(q)}`);
+    assert.deepStrictEqual(
+      norm(FE.parseSearchQuery(q)),
+      norm(BE.parseSearchQuery(q)),
+      `查询不一致: ${JSON.stringify(q)}`,
+    );
   }
 });
 
@@ -82,8 +86,16 @@ test('镜像 parseToPanel 与后端一致（DSL → 面板回填）', () => {
     'year:2020',
     '(tag:a OR tag:b)',
   ];
+  // v3.20：前端 parseToPanel 比后端多 6 个概念/公式专用键（categories/excludeCategories/
+  // freq/hasContext/source/plottable，前端客户端过滤专用，后端不解析）。比较时剥离这些键。
+  const FE_ONLY = ['categories', 'excludeCategories', 'freq', 'hasContext', 'source', 'plottable'];
+  const stripFe = (p) => {
+    const o = { ...p };
+    for (const k of FE_ONLY) delete o[k];
+    return o;
+  };
   for (const d of dsls) {
-    assert.deepStrictEqual(norm(FE.parseToPanel(d)), norm(BE.parseToPanel(d)), `回填不一致: ${d}`);
+    assert.deepStrictEqual(norm(stripFe(FE.parseToPanel(d))), norm(BE.parseToPanel(d)), `回填不一致: ${d}`);
   }
 });
 
@@ -124,7 +136,20 @@ test('detectFieldAtCursor：光标处字段识别（前端独有，补全用）'
 });
 
 test('FIELD_ALIASES 与后端字段集合一致', () => {
-  const beFields = ['title', 'abstract', 'summary', 'notes', 'author', 'tag', 'topic', 'year', 'status', 'read', 'starred', 'body'];
+  const beFields = [
+    'title',
+    'abstract',
+    'summary',
+    'notes',
+    'author',
+    'tag',
+    'topic',
+    'year',
+    'status',
+    'read',
+    'starred',
+    'body',
+  ];
   for (const f of beFields) {
     const probe = FE.parseSearchQuery(`${f === 'read' ? 'read' : f}:x`);
     assert.ok(probe, `${f} 可解析`);

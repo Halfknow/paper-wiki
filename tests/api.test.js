@@ -101,10 +101,26 @@ function baseCtx(store, save, opts = {}) {
     reschedule: async () => {},
     invalidate: () => {},
   };
-  return { manager, scanner, globalConfig };
+  // health 探测依赖：默认注入成功的 mock query + 系统临时目录（statfs 必返真实剩余空间）。
+  // 测试可经 opts.healthDeps / opts.dbError / opts.diskDir 覆盖。
+  const tmpDirForHealth = opts.diskDir || os.tmpdir();
+  const ctx = { manager, scanner, globalConfig };
+  ctx.healthDeps =
+    opts.healthDeps ||
+    ({
+      query: opts.dbError
+        ? async () => {
+            throw new Error(opts.dbError);
+          }
+        : async () => ({ rows: [{ '?column?': 1 }] }),
+      papersDir: tmpDirForHealth,
+      backupsDir: tmpDirForHealth,
+      minDiskMb: 0,
+    });
+  return ctx;
 }
 
-test('GET /api/health 返回状态信息', async () => {
+test('GET /api/health 返回状态信息（含 db/磁盘 checks 子结构）', async () => {
   const store = { papers: { a: {}, b: {} }, tags: [], topics: [], folders: [], concepts: [], settings: {} };
   const router = createApiRouter(baseCtx(store));
   const server = await startServer(router.handle);
@@ -115,6 +131,68 @@ test('GET /api/health 返回状态信息', async () => {
   assert.strictEqual(r.json.data.status, 'ok');
   assert.strictEqual(r.json.data.papers, 2);
   assert.strictEqual(typeof r.json.data.uptime, 'number');
+  // checks 子结构：db 探测成功（mock query）+ 磁盘探测成功（os.tmpdir）
+  assert.strictEqual(r.json.data.checks.db.status, 'ok');
+  assert.strictEqual(typeof r.json.data.checks.db.latencyMs, 'number');
+  assert.strictEqual(r.json.data.checks.disk.papersDir.status, 'ok');
+  assert.ok(r.json.data.checks.disk.papersDir.freeMb >= 0);
+  assert.strictEqual(r.json.data.checks.disk.backupsDir.status, 'ok');
+  server.close();
+});
+
+test('GET /api/health：DB 探测失败时 status=degraded（HTTP 仍 200）', async () => {
+  const store = { papers: {}, tags: [], topics: [], folders: [], concepts: [], settings: {} };
+  const router = createApiRouter(baseCtx(store, null, { dbError: 'connection refused' }));
+  const server = await startServer(router.handle);
+  const port = server.address().port;
+  const r = await call(port, 'GET', '/api/health');
+  assert.strictEqual(r.status, 200, '探活失败不整体 500');
+  assert.strictEqual(r.json.data.status, 'degraded');
+  assert.strictEqual(r.json.data.checks.db.status, 'down');
+  assert.match(r.json.data.checks.db.error, /connection refused/);
+  // 磁盘探测仍应成功（独立于 DB）
+  assert.strictEqual(r.json.data.checks.disk.papersDir.status, 'ok');
+  server.close();
+});
+
+test('GET /api/health：DB 探测超时（慢 query）标 timeout', async () => {
+  const store = { papers: {}, tags: [], topics: [], folders: [], concepts: [], settings: {} };
+  // 模拟一个永远慢于 2s 超时的 query
+  const slowQuery = () => new Promise((resolve) => setTimeout(() => resolve({ rows: [] }), 5000));
+  const router = createApiRouter(baseCtx(store, null, { healthDeps: { query: slowQuery, papersDir: os.tmpdir(), backupsDir: os.tmpdir(), minDiskMb: 0 } }));
+  const server = await startServer(router.handle);
+  const port = server.address().port;
+  const r = await call(port, 'GET', '/api/health');
+  assert.strictEqual(r.status, 200);
+  assert.strictEqual(r.json.data.status, 'degraded');
+  assert.strictEqual(r.json.data.checks.db.status, 'timeout');
+  server.close();
+});
+
+test('GET /api/health：磁盘剩余低于阈值标 degraded', async () => {
+  const store = { papers: {}, tags: [], topics: [], folders: [], concepts: [], settings: {} };
+  // minDiskMb 设极高（1TB），任何真实磁盘都判定为不足
+  const router = createApiRouter(baseCtx(store, null, { healthDeps: { query: async () => ({ rows: [] }), papersDir: os.tmpdir(), backupsDir: os.tmpdir(), minDiskMb: 1024 * 1024 } }));
+  const server = await startServer(router.handle);
+  const port = server.address().port;
+  const r = await call(port, 'GET', '/api/health');
+  assert.strictEqual(r.json.data.status, 'degraded');
+  assert.strictEqual(r.json.data.checks.disk.papersDir.status, 'degraded');
+  server.close();
+});
+
+test('GET /api/health/ai：无 baseURL 时回退 config 候选，status=degraded', async () => {
+  // config.ai 无 baseURL → listModels 返回 source:'config'（上游不可达的等价情形）
+  const store = { papers: {}, tags: [], topics: [], folders: [], concepts: [], settings: {} };
+  const ctx = baseCtx(store, null, { config: { ai: { model: 'glm-4.6' } } });
+  const router = createApiRouter(ctx);
+  const server = await startServer(router.handle);
+  const port = server.address().port;
+  const r = await call(port, 'GET', '/api/health/ai');
+  assert.strictEqual(r.status, 200);
+  assert.strictEqual(r.json.data.status, 'degraded');
+  assert.strictEqual(r.json.data.source, 'config');
+  assert.strictEqual(typeof r.json.data.latencyMs, 'number');
   server.close();
 });
 
@@ -393,6 +471,36 @@ test('收藏夹 CRUD：POST / PATCH / DELETE，计数随论文变化', async () 
   assert.strictEqual(del.status, 200);
   assert.strictEqual(store.folders.length, 0);
   assert.deepStrictEqual(store.papers.a.folders, []); // 自动解绑
+  server.close();
+});
+
+test('PUT /api/folders/order：按给定顺序重排；未知 id 忽略、未列出的补末尾（v3.22）', async () => {
+  const store = {
+    version: 2,
+    tags: [], topics: [], concepts: [],
+    folders: [
+      { id: 'f1', name: '精读', color: '#2563eb', createdAt: 1 },
+      { id: 'f2', name: '待复现', color: '#4f46e5', createdAt: 2 },
+      { id: 'f3', name: '综述', color: '#0891b2', createdAt: 3 },
+    ],
+    papers: {
+      a: { id: 'a', title: 'A', folders: ['f2'], status: 'ready' },
+    },
+  };
+  const router = createApiRouter(baseCtx(store));
+  const server = await startServer(router.handle);
+  const port = server.address().port;
+
+  const r = await call(port, 'PUT', '/api/folders/order', { ids: ['f3', 'ghost', 'f1', 'f3'] });
+  assert.strictEqual(r.status, 200);
+  // ghost 忽略、f3 重复取首现；未列出的 f2 按原相对顺序补在末尾
+  assert.deepStrictEqual(store.folders.map((f) => f.id), ['f3', 'f1', 'f2']);
+  // 返回与 GET 同形（带 count）
+  assert.deepStrictEqual(r.json.data.map((f) => [f.id, f.count]), [['f3', 0], ['f1', 0], ['f2', 1]]);
+
+  // 空 ids / 非数组：不动原顺序（全补末尾=原序）
+  const r2 = await call(port, 'PUT', '/api/folders/order', { ids: 'not-array' });
+  assert.deepStrictEqual(store.folders.map((f) => f.id), ['f3', 'f1', 'f2']);
   server.close();
 });
 

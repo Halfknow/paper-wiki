@@ -24,6 +24,8 @@ export function setBusy(el, busy, label) {
   if (!el) return;
   if (busy) {
     el.dataset.prevText = el.textContent;
+    // 钉住当前宽度：busy 文案（如「复制中…」）比原文案短时按钮先坍缩再恢复，造成布局抖动
+    if (!el.style.minWidth) el.style.minWidth = el.offsetWidth + 'px';
     el.textContent = label || '处理中…';
     el.disabled = true;
     el.classList.add('is-busy');
@@ -31,6 +33,7 @@ export function setBusy(el, busy, label) {
     el.textContent = el.dataset.prevText || el.textContent;
     el.disabled = false;
     el.classList.remove('is-busy');
+    el.style.minWidth = '';
     delete el.dataset.prevText;
   }
 }

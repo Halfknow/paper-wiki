@@ -9,11 +9,11 @@ import { $ } from '../core/dom.js';
 /** 三个平级内容视图。设置不在其列——它是覆盖层，见下方 showView。 */
 const CONTENT_VIEWS = ['library', 'concepts', 'formulas'];
 
-/** 各视图下顶栏搜索框的语义。scope 决定 oninput 派发到哪个渲染函数（见 bind.js）。 */
+/** 各视图下顶栏搜索框的语义。advanced 决定帮助/高级搜索按钮是否显示（v3.20：概念/公式页也支持）。 */
 const SEARCH_CONTEXT = {
   library: { placeholder: '搜索论文…', advanced: true },
-  concepts: { placeholder: '搜索术语或解释…', advanced: false },
-  formulas: { placeholder: '搜索公式名、LaTeX 或解读…', advanced: false },
+  concepts: { placeholder: '搜索术语或解释…', advanced: true },
+  formulas: { placeholder: '搜索公式名、LaTeX 或解读…', advanced: true },
 };
 
 /** 当前内容视图名（顶栏搜索/筛选按它分派）。设置覆盖层打开时仍返回底下那个内容视图——

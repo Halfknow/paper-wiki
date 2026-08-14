@@ -10,6 +10,7 @@ const { removePaperFromFormulas, mergeFormulas } = require('../../core/formulas'
 const { normalizeAnnotations } = require('../../core/annotations');
 const { normalizeNoteCards } = require('../../core/notes');
 const { parseSearchQuery, applyMetadataQuery } = require('../../core/search-query');
+const { papersToBibtex, papersToCsv } = require('../../core/export');
 const { summaryView, detailView, mergeInto, deletePapersCleanup } = require('../views');
 
 function register(t, ctx) {
@@ -88,6 +89,32 @@ function register(t, ctx) {
       }
     });
     return ok(res, list.map(summaryView));
+  });
+
+  // GET /api/papers.bib / /api/papers.csv  导出（BibTeX / CSV）。
+  // ?ids=a,b,c 限定子集（前端「导出选中/当前筛选」走这里）；无参 = 全库。
+  // 静态段优先于 /api/papers/:id 参数段，与注册顺序无关。
+  const pickExportList = (q, store) => {
+    const all = Object.values(store.papers);
+    if (!q.ids) return all;
+    const ids = new Set(String(q.ids).split(',').filter(Boolean));
+    return all.filter((p) => ids.has(p.id));
+  };
+  t.get('/api/papers.bib', async ({ res, q, store }) => {
+    const bib = papersToBibtex(pickExportList(q, store));
+    res.writeHead(200, {
+      'Content-Type': 'application/x-bibtex; charset=utf-8',
+      'Content-Disposition': 'attachment; filename="paperwiki.bib"',
+    });
+    return res.end(bib);
+  });
+  t.get('/api/papers.csv', async ({ res, q, store }) => {
+    const csv = papersToCsv(pickExportList(q, store));
+    res.writeHead(200, {
+      'Content-Type': 'text/csv; charset=utf-8',
+      'Content-Disposition': 'attachment; filename="paperwiki.csv"',
+    });
+    return res.end(csv);
   });
 
   // GET /api/papers/:id

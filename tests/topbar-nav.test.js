@@ -80,9 +80,7 @@ function extraRoutes({ delayConcepts = 0, stats } = {}) {
     },
     '/api/formulas': () => json(FORMULAS),
     '/api/stats': () =>
-      json(
-        stats || { ready: 2, total: 2, processing: 0, error: 0, concepts: 2, formulas: 1, starred: 0, unread: 2 },
-      ),
+      json(stats || { ready: 2, total: 2, processing: 0, error: 0, concepts: 2, formulas: 1, starred: 0, unread: 2 }),
     '/api/settings': () =>
       json({
         conceptMaps: [],
@@ -116,10 +114,7 @@ test('深链 /concepts：视图在概念数据到达前就已切换（不闪现�
   const ui = await boot('/concepts', { delayConcepts: 200 });
   // bootUi 一见 dataset.view 非 library 就返回——此刻 /api/concepts 仍挂起
   assert.equal(view(ui), 'concepts');
-  assert.ok(
-    ui.$('library-view').classList.contains('view-hidden'),
-    '论文视图应已隐藏，而不是等数据回来才切',
-  );
+  assert.ok(ui.$('library-view').classList.contains('view-hidden'), '论文视图应已隐藏，而不是等数据回来才切');
   assert.equal(ui.$('concepts-grid').children.length, 0, '此时数据未到，网格应为空（证明 showView 抢在前面）');
   await sleep(300);
   assert.ok(ui.$('concepts-grid').children.length > 0, '数据到达后应渲染概念卡片');
@@ -195,7 +190,7 @@ test('/concepts?q= 深链还原查询词并应用过滤', async () => {
   assert.equal(ui.$('concepts-grid').children.length, 1);
 });
 
-test('论文页专属筛选条已沉进库视图工具条（顶栏只剩纯 chrome）；高级搜索控件在概念页隐藏', async () => {
+test('论文页专属筛选条已沉进库视图工具条（顶栏只剩纯 chrome）；高级搜索控件三页都可用（v3.20）', async () => {
   const ui = await boot('/library');
   const strip = ui.document.querySelector('.filter-strip');
   assert.ok(strip.closest('#library-view .list-toolbar'), '筛选条应收进库视图的列表工具条');
@@ -204,7 +199,9 @@ test('论文页专属筛选条已沉进库视图工具条（顶栏只剩纯 chro
   navItem(ui, 'concepts').click();
   await sleep(80);
   assert.ok(ui.$('library-view').classList.contains('view-hidden'), '库视图整体隐藏，筛选条随之消失');
-  assert.ok(ui.$('search-advanced-toggle').hasAttribute('hidden'), '高级搜索仅论文页可用');
+  // v3.20：概念/公式页也支持高级搜索（category:/freq:/source: 等前端字段），不再隐藏
+  assert.ok(!ui.$('search-advanced-toggle').hasAttribute('hidden'), '概念页高级搜索按钮可见（v3.20）');
+  assert.ok(!ui.$('search-help').hasAttribute('hidden'), '概念页语法帮助按钮可见（v3.20）');
 });
 
 test('收起态 rail 随视图切上下文：概念/公式页不再挂论文筛选按钮（v3.19）', async () => {
@@ -361,10 +358,7 @@ test('设置是覆盖层：打开时底下的内容视图仍在，关闭回到�
   ui.$('btn-settings').click();
   await sleep(120);
   assert.equal(view(ui), 'settings');
-  assert.ok(
-    !ui.$('concepts-view').classList.contains('view-hidden'),
-    '覆盖层不应把底下的概念页藏掉——关掉后要原样回来',
-  );
+  assert.ok(!ui.$('concepts-view').classList.contains('view-hidden'), '覆盖层不应把底下的概念页藏掉——关掉后要原样回来');
   assert.ok(!ui.$('settings-view').classList.contains('view-hidden'));
 
   ui.$('btn-settings-close').click();

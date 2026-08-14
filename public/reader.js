@@ -7,10 +7,12 @@
 import '/vendor/pdfjs.js';
 import '/vendor/pdfjs-viewer.js';
 import { sp } from './js/core/api.js';
+import { runAfterSelectionRelease, selectionWithin } from './js/core/dom.js';
 import { state } from './js/core/state.js';
 import { renderMd, renderChatMd, truncateChatTitle } from './js/core/markdown.js';
 import { NotesPanel } from './js/detail/notes-panel.js';
 import { saveQaCardToNotes } from './js/detail/detail.js';
+import { createShelfDrawer } from './js/reader/shelf-drawer.js';
 import {
   CHAT_ROLE_ICO, chatMsgHtml, chatEmptyHtml, getChatPresets,
   getSelectedModel, toggleModelSwitcher,
@@ -138,7 +140,10 @@ const { AnnotationEditorType, AnnotationEditorParamsType, PixelsPerInch } = pdfj
     }
 
     bind() {
-      this.elBack.onclick = () => this.close();
+      // 返回按钮走 onBack 钩子（reader-host 注入路由感知逻辑：当前在 /reader/:id 路由时
+      // history.back() 由路由 leave 关阅读器，保证 URL 与视图同步退回去；
+      // 直接 this.close() 只关视图不动路由，URL 会停在 /reader 与页面状态脱节）。
+      this.elBack.onclick = () => { if (this.onBack) { this.onBack(); return; } this.close(); };
       this.elPrev.onclick = () => this.scrollToPage(this.page - 1);
       this.elNext.onclick = () => this.scrollToPage(this.page + 1);
       this.elPageInput.onchange = () => {
@@ -192,6 +197,14 @@ const { AnnotationEditorType, AnnotationEditorParamsType, PixelsPerInch } = pdfj
             e.stopImmediatePropagation();
             return;
           }
+          // 阅读架抽屉（v3.21 Esc 分层：搜索结果浮着时先让输入框清结果，再关抽屉，最后才轮到阅读器）
+          if (this._shelfDrawer && this._shelfDrawer.isOpen()) {
+            if (typing && this._shelfDrawer.resultsShown && this._shelfDrawer.resultsShown()) return;
+            this._shelfDrawer.close();
+            e.preventDefault();
+            e.stopImmediatePropagation();
+            return;
+          }
           if (typing) return;
           const hadAnnotationSelection = !!(this.uiManager && this.uiManager.hasSelection);
           const hadTextPopup = !!(this._pop && !this._pop.hidden);
@@ -207,6 +220,12 @@ const { AnnotationEditorType, AnnotationEditorParamsType, PixelsPerInch } = pdfj
           return;
         }
         if (this.isTypingTarget(e.target || document.activeElement)) return;
+        // [ / ]：阅读架切上/下一篇（v3.21；非输入态才生效，环绕回绕）
+        if (e.key === '[' || e.key === ']') {
+          e.preventDefault();
+          if (this._shelfDrawer) this._shelfDrawer.stepSwitch(e.key === ']' ? 1 : -1);
+          return;
+        }
         if (e.key !== 'Delete' && e.key !== 'Backspace') return;
         e.preventDefault();                              // 吞掉，避免 Backspace 触发浏览器后退
         if (this.curTool !== 'cursor') {
@@ -234,6 +253,13 @@ const { AnnotationEditorType, AnnotationEditorParamsType, PixelsPerInch } = pdfj
       }
       // AI 对话抽屉绑定（按钮/关闭/发送），仅当 DOM 存在时
       this.bindChat();
+      // 阅读架抽屉（v3.21）：切论文走 onSwitchPaper（reader-host 注入路由导航）；
+      // 架子清空/移除当前篇时按返回语义关阅读器。
+      this._shelfDrawer = createShelfDrawer({
+        onSwitch: (id) => { if (this.onSwitchPaper) this.onSwitchPaper(id); },
+        onCloseReader: () => { if (this.onBack) this.onBack(); else this.close(); },
+        notify: (m, err) => this.setStatus(m, err),
+      });
     }
 
     // ---- AI 对话抽屉 ----
@@ -253,6 +279,10 @@ const { AnnotationEditorType, AnnotationEditorParamsType, PixelsPerInch } = pdfj
       // 在抽屉冒泡阶段统一 stopPropagation：textarea 默认行为（输入/删除/全选/移动光标）不受影响；
       // Esc 分层由 document capture 阶段的 _onKey 先行处理，也不受影响。
       this.elChatDrawer.addEventListener('keydown', (e) => { e.stopPropagation(); });
+      // copy/cut/paste 同理必须拦在抽屉内：pdf.js UIManager 在 document 级挂的 copy/cut/paste 监听
+      // 是无条件 preventDefault 的（服务批注编辑器剪贴板）——光标模式底层借用 FREETEXT（陷阱 11），
+      // 监听在阅读器打开期间常驻，不拦会吞掉抽屉里聊天输入/笔记卡的一切粘贴与复制。
+      for (const t of ['copy', 'cut', 'paste']) this.elChatDrawer.addEventListener(t, (e) => { e.stopPropagation(); });
       // 点击与拖动共用一按钮：拖动过则吞掉随后的 click（见 wireFabDrag），否则切抽屉。
       this.elChatBtn.onclick = () => {
         if (this._fabJustDragged) { this._fabJustDragged = false; return; }
@@ -1257,6 +1287,9 @@ const { AnnotationEditorType, AnnotationEditorParamsType, PixelsPerInch } = pdfj
         if (!content) { content = document.createElement('div'); content.className = 'chat-content streaming'; bubble.appendChild(content); }
         content.classList.remove('thinking');
         content.classList.add('streaming');
+        // 选区保护：用户正在气泡里选中文字时跳过本次 innerHTML 重建（每 token 全量重渲
+        // 会摧毁选区——「流式回答无法选中复制」的根因）。下个 token 自然补渲。
+        if (selectionWithin(content)) return;
         content.innerHTML = renderMdSafe(accumulated, false);
         scrollIfStuck();
       };
@@ -1272,6 +1305,8 @@ const { AnnotationEditorType, AnnotationEditorParamsType, PixelsPerInch } = pdfj
           reasoningEl.className = 'chat-reasoning';
           body.insertBefore(reasoningEl, body.firstChild);
         }
+        // 选区保护（同正文）：选中思考内容时不重建（innerHTML 会摧毁选区）
+        if (selectionWithin(reasoningEl)) return;
         reasoningEl.innerHTML = '<details open><summary>思考中…</summary><div class="chat-reasoning-body"></div></details>';
         const rb = reasoningEl.querySelector('.chat-reasoning-body');
         if (rb) { rb.innerHTML = renderMdSafe(accumulatedReasoning, false); } // 思考内容也渲染 markdown（对齐 detail）
@@ -1288,7 +1323,8 @@ const { AnnotationEditorType, AnnotationEditorParamsType, PixelsPerInch } = pdfj
           this.setSending(false);
           this.updateSendEnabled();
           this.elChatInput.disabled = false;
-          if (restore) { try { this.elChatInput.focus(); } catch {} }
+          // 选区保护：用户正在聊天区选中文字时不抢焦点（focus() 会塌陷文档选区）
+          if (restore && !selectionWithin(listEl)) { try { this.elChatInput.focus(); } catch {} }
         }
       };
 
@@ -1324,23 +1360,29 @@ const { AnnotationEditorType, AnnotationEditorParamsType, PixelsPerInch } = pdfj
               // 历史上读 livePh.dataset.mi 恒得 0，导致「存入笔记/复制/编辑」错取首条消息。
               const mi = this.paper.chat.length - 1;
               const hadReasoning = !!accumulatedReasoning;
-              const tmp = document.createElement('div');
-              tmp.innerHTML = chatMsgHtml(lastMsg, mi, { regenerable: true });
-              if (tmp.firstElementChild) {
-                livePh.replaceWith(tmp.firstElementChild);
-                // 思考过程：完成后自动收起 + 显示「思考了 X 秒」
-                if (hadReasoning) {
-                  const newBody = tmp.firstElementChild.querySelector('.chat-body');
-                  if (newBody) {
-                    const dur = Math.max(1, Math.round((Date.now() - reasoningStart) / 1000));
-                    const rEl = document.createElement('div');
-                    rEl.className = 'chat-reasoning';
-                    rEl.innerHTML = `<details><summary><span class="rs-label">思考过程</span><span class="rs-duration">思考了 ${dur} 秒</span></summary><div class="chat-reasoning-body"></div></details>`;
-                    rEl.querySelector('.chat-reasoning-body').textContent = accumulatedReasoning;
-                    newBody.insertBefore(rEl, newBody.firstChild);
+              const finalizeBubble = () => {
+                if (!livePh.isConnected) return; // 已被切论文/关抽屉重建，放弃
+                const tmp = document.createElement('div');
+                tmp.innerHTML = chatMsgHtml(lastMsg, mi, { regenerable: true });
+                if (tmp.firstElementChild) {
+                  livePh.replaceWith(tmp.firstElementChild);
+                  // 思考过程：完成后自动收起 + 显示「思考了 X 秒」
+                  if (hadReasoning) {
+                    const newBody = tmp.firstElementChild.querySelector('.chat-body');
+                    if (newBody) {
+                      const dur = Math.max(1, Math.round((Date.now() - reasoningStart) / 1000));
+                      const rEl = document.createElement('div');
+                      rEl.className = 'chat-reasoning';
+                      rEl.innerHTML = `<details><summary><span class="rs-label">思考过程</span><span class="rs-duration">思考了 ${dur} 秒</span></summary><div class="chat-reasoning-body"></div></details>`;
+                      rEl.querySelector('.chat-reasoning-body').textContent = accumulatedReasoning;
+                      newBody.insertBefore(rEl, newBody.firstChild);
+                    }
                   }
                 }
-              }
+              };
+              // 用户正在气泡里选中文字：replaceWith 会摧毁选区——推迟到选区释放再定型
+              if (selectionWithin(livePh)) runAfterSelectionRelease(livePh, finalizeBubble);
+              else finalizeBubble();
             } else {
               renderAccumulated();
             }
@@ -1412,6 +1454,8 @@ const { AnnotationEditorType, AnnotationEditorParamsType, PixelsPerInch } = pdfj
       const switchingPaper = !this.paper || this.paper.id !== paper.id;
       this.paper = paper;
       if (switchingPaper) this._resetChatState();
+      // 阅读架徽章/列表随当前篇刷新（v3.21；shelfAddAndActivate 的订阅也会触发，此处兜底首开时机）
+      if (this._shelfDrawer) this._shelfDrawer.render();
       // 文字清晰度（综合 SO 高赞方案的完整技术，核心是「过采样 + 高质量降采样」缺一不可）：
       //   ① pdf.js 的 OutputScale 直接读 window.devicePixelRatio 决定 canvas 内部分辨率。
       //     双页模式每页 CSS 显示仅 ~675px，论文密集小字若 canvas 也只 675px(1:1) 会发糊。
@@ -1445,12 +1489,20 @@ const { AnnotationEditorType, AnnotationEditorParamsType, PixelsPerInch } = pdfj
 
       // PDF 原文：必须带 ?space= 让 server.js 从该空间绑定的文件夹解析（filename 跨空间可能重复）
       const url = sp('/papers/' + encodeURIComponent(paper.filename));
+      // 并发 open 令牌（v3.21）：阅读架快速连点切换时，两次 open 的 getDocument 会交错——
+      // 旧请求后完成会把新 viewer 覆盖成旧论文。令牌失配即销毁弃用。
+      const openToken = (this._openToken = (this._openToken || 0) + 1);
       try {
         const task = pdfjsLib.getDocument({ url, isEvalSupported: false, disableAutoFetch: false });
         this.doc = await task.promise;
       } catch (e) {
         this.setStatus('PDF 加载失败', true);
         return;
+      }
+      if (openToken !== this._openToken) {
+        try { this.doc.destroy(); } catch {}
+        this.doc = null;
+        return; // 已有更新的打开请求在途，本次作废
       }
       this.elPageTotal.textContent = '/ ' + this.total;   // total 由 get total() 从 doc 读取
 
@@ -2580,6 +2632,11 @@ const { AnnotationEditorType, AnnotationEditorParamsType, PixelsPerInch } = pdfj
       if (this._pop) { this._pop.remove(); this._pop = null; }
       // 等批注/进度落盘完成后再销毁 doc，避免网络尚未返回就被 destroy 打断
       try { await saveP; } catch {}
+      // 关键：卸掉 UIManager 的 document 级编辑监听（copy/cut/paste 无条件 preventDefault +
+      // KeyboardManager 抢键）。cursor 模式底层借用 FREETEXT（非 NONE），这些监听在阅读器
+      // 打开期间常驻；viewer 保活复用、没人调 setDocument(null)，不关会泄漏到全局——
+      // 表现为「开过 PDF 后，全应用输入框无法粘贴」。
+      try { if (this.uiManager) this.uiManager.removeEditListeners(); } catch {}
       try { if (this.viewer) this.viewer.cleanup(); } catch {}
       try { if (this.doc) this.doc.destroy(); } catch {}
       this.doc = null;
@@ -2605,4 +2662,5 @@ const { AnnotationEditorType, AnnotationEditorParamsType, PixelsPerInch } = pdfj
     }
   }
 
-  // v3.16：reader-host.js 已改为静态 import { PaperReader }，window.PaperReader 桥退役删除。
+  // v3.16：reader-host.js import { PaperReader }，window.PaperReader 桥退役删除。
+  // v3.20：reader-host 改为**动态** import（首次打开阅读器时才加载本模块 + pdf.js ~770KB），首屏不再背这份成本。

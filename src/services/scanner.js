@@ -1,14 +1,20 @@
 const fsp = require('fs/promises');
 const path = require('path');
-const { sha1OfFile, log, sleep, parseArxivUrl, buildPaperFilename, extractArxivIdFromFilename } = require('../core/util');
+const { sha1OfFile, log, sleep, buildPaperFilename, extractArxivIdFromFilename } = require('../core/util');
+const { createLogger } = require('../core/logger');
 const { splitMarkdownToCards } = require('../core/notes');
+
+// 错误路径统一走 logger.warn/error（生产 NODE_ENV=production 默认阈值 warn，info 级 log() 会被吞掉）。
+const logger = createLogger('scanner');
 
 /** 扫描目录下所有 PDF 文件信息 */
 async function scanDir(dir) {
   let names;
   try {
     names = await fsp.readdir(dir);
-  } catch {
+  } catch (e) {
+    // 目录读取失败（挂载失效/权限）与「空目录」必须可区分——静默返回 [] 会让 missing 熔断的根因无迹可查
+    logger.warn('scanDir 读取目录失败（按空目录处理）', { dir, error: e && e.message });
     return [];
   }
   const out = [];
@@ -77,13 +83,13 @@ function createScanner({ store, papersDir, textStore, deps, scanIntervalMs, onEn
   let inFlight = null; // 当前 processOne 的 Promise，供 drain() 等待，保证关停时不丢「正在写盘的那一篇」
   let lastFuse = null; // 上次 scan 的 missing 熔断状态（null=正常），/api/health 经 getFuseState 暴露
 
-  function enqueue(ids) {
+  function enqueue(ids, opts) {
     if (onEnqueue) {
       // 多空间子扫描器模式：转交共享队列（子扫描器自身不被 start，内部 queue 无人 pump）
-      onEnqueue(ids);
+      onEnqueue(ids, opts);
       return;
     }
-    for (const id of ids) queue.push(id);
+    for (const id of ids) queue.push({ id, metaOnly: !!(opts && opts.metaOnly) });
     pump();
   }
 
@@ -92,12 +98,12 @@ function createScanner({ store, papersDir, textStore, deps, scanIntervalMs, onEn
     processing = true;
     try {
       while (queue.length) {
-        const id = queue.shift();
+        const job = queue.shift();
         try {
-          inFlight = processOne(id);
+          inFlight = processOne(job.id, job);
           await inFlight;
         } catch (e) {
-          log('process error', id, e.message);
+          logger.error('process error', { id: job.id, error: e.message });
         } finally {
           inFlight = null;
         }
@@ -111,7 +117,135 @@ function createScanner({ store, papersDir, textStore, deps, scanIntervalMs, onEn
     if (store.papers[id]) store.papers[id].status = status;
   }
 
-  async function processOne(id) {
+  /** 规范化文件名：统一改成「作者 等 - 年份 - 标题.pdf」（Zotero 风格）。
+   *  早期只改裸 arXiv ID 名（发现/URL 导入落地名），用户自有命名一律不动；
+   *  现按产品决策全量规范化（本地扫描的自有命名文件也统一）。
+   *  有标题才改（否则 buildPaperFilename 只能退回 arxivId.pdf，没有信息量）；
+   *  撞名加 (arxivId|id) 后缀；id 基于内容 sha1，重命名不影响 id/全文/概念/批注。
+   *  返回 true = 发生了改名。调用方负责 try/catch（改名失败不影响入库）。 */
+  async function normalizePaperFilename(p) {
+    if (!p || !p.title) return false;
+    let desired = buildPaperFilename({ authors: p.authors, year: p.year, title: p.title, arxivId: p.arxivId });
+    if (!desired || desired === p.filename) return false;
+    const dir = path.dirname(p.filepath);
+    let target = path.join(dir, desired);
+    const same = (a, b) => path.resolve(a) === path.resolve(b);
+    if ((await fileExists(target)) && !same(target, p.filepath)) {
+      desired = desired.replace(/\.pdf$/i, ` (${p.arxivId || p.id}).pdf`); // 撞名 → 加 arxivId 区分
+      target = path.join(dir, desired);
+    }
+    if (!same(target, p.filepath) && (await fileExists(target))) return false; // 加后缀仍撞名（罕见）：放弃
+    await fsp.rename(p.filepath, target);
+    p.filename = desired;
+    p.filepath = target;
+    return true;
+  }
+
+  /** arXiv 元数据补全（processOne 第 2 步与 metaOnly 回填共用）。
+   *  读 effConfig.arxiv（enabled / minIntervalMs / titleSimilarityThreshold 可热改）。
+   *  quiet=true 时不动状态灯（存量回填不打搅 ready 状态）。 */
+  async function enrichArxiv(id, effConfig, { quiet = false } = {}) {
+    if (!effConfig.arxiv || effConfig.arxiv.enabled === false) return;
+    const p = store.papers[id];
+    if (!quiet) setStatus(id, 'enriching');
+    try {
+      await deps.rateLimitArxiv();
+      // 已知 arxivId（URL/发现导入）或文件名本身就是裸 arXiv ID（2401.12345.pdf）→ 用 id: 精确查，
+      // 跳过 cleanFilenameToTitle 猜标题（裸ID当标题搜必失败，正是历史上元数据为空的根因）。
+      // 其余文件走原 ti: 搜索 + pickBest。
+      // 文件名取 arXiv ID：裸 ID / arxiv.org URL / 标准下载命名 [2306.02781v4] / 括号内 ID / 老格式。
+      // id: 精确查跳过 cleanFilenameToTitle 猜标题（裸ID当标题搜必失败，正是历史上元数据为空的根因）。
+      let knownArxivId = p.arxivId;
+      if (!knownArxivId) {
+        const fromName = extractArxivIdFromFilename(p.filename);
+        if (fromName) knownArxivId = fromName.arxivId;
+      }
+      if (knownArxivId) {
+        const { entries } = await deps.arxiv.searchArxiv(`id:${knownArxivId}`, fetch, {
+          minIntervalMs: effConfig.arxiv.minIntervalMs || 0,
+          timeoutMs: effConfig.arxiv.timeoutMs ?? 15000,
+          maxRetries: effConfig.arxiv.maxRetries ?? 2,
+        });
+        if (entries && entries[0]) {
+          const best = entries[0];
+          Object.assign(store.papers[id], {
+            title: best.title,
+            authors: best.authors,
+            abstract: best.summary,
+            year: best.published ? String(best.published).slice(0, 4) : store.papers[id].year,
+            arxivId: deps.arxiv.extractArxivId(best) || knownArxivId,
+            arxivUrl: best.id,
+            primaryCategory: best.primaryCategory,
+            metaSource: 'arxiv',
+            metaConfidence: 1,
+          });
+        }
+      } else {
+        const candidate = deps.arxiv.cleanFilenameToTitle(p.filename);
+        const { entries } = await deps.arxiv.searchArxiv(`ti:"${candidate}"`, fetch, {
+          minIntervalMs: effConfig.arxiv.minIntervalMs || 0,
+          timeoutMs: effConfig.arxiv.timeoutMs ?? 15000,
+          maxRetries: effConfig.arxiv.maxRetries ?? 2,
+        });
+        const { best, confidence, source } = deps.arxiv.pickBest(candidate, entries, {
+          threshold: effConfig.arxiv.titleSimilarityThreshold,
+        });
+        if (best && source === 'arxiv') {
+          Object.assign(store.papers[id], {
+            title: best.title,
+            authors: best.authors,
+            abstract: best.summary,
+            year: best.published ? String(best.published).slice(0, 4) : store.papers[id].year,
+            arxivId: deps.arxiv.extractArxivId(best),
+            arxivUrl: best.id,
+            primaryCategory: best.primaryCategory,
+            metaSource: 'arxiv',
+            metaConfidence: confidence,
+          });
+        }
+      }
+    } catch (e) {
+      logger.warn('arxiv error', { id, error: e.message });
+    }
+  }
+
+  /** 元数据回填（存量无标题 ready 论文的轻量任务，走串行队列不重解析/不重总结）：
+   *  arXiv 重试（文件名可能是自有命名，ti: 搜索仍有机会命中）→ 仍无标题则 AI 从已存全文提取
+   *  （只补 title/authors/year 空字段，不动 tags/topics/summary）→ 规范改名。 */
+  async function processMetaOnly(id, effConfig) {
+    await enrichArxiv(id, effConfig, { quiet: true });
+    if (!store.papers[id].title) {
+      try {
+        const text = (await textStore.load(id)) || '';
+        if (text) {
+          const tagsPrompt = (store.settings && store.settings.tagsPrompt) || deps.config.tagsPrompt || undefined;
+          const tt = await deps.ai.extractTagsTopics({
+            title: '',
+            abstract: store.papers[id].abstract || '',
+            fulltext: text,
+            config: effConfig,
+            prompt: tagsPrompt,
+          });
+          if (tt && tt.metadata && tt.metadata.title) {
+            store.papers[id].title = tt.metadata.title;
+            store.papers[id].authors = tt.metadata.authors || [];
+            store.papers[id].year = tt.metadata.year || null;
+            store.papers[id].metaSource = store.papers[id].metaSource || 'ai-fallback';
+          }
+        }
+      } catch (e) {
+        logger.warn('meta backfill ai error', { id, error: e.message });
+      }
+    }
+    try {
+      if (await normalizePaperFilename(store.papers[id])) log('meta backfill renamed', id, '→', store.papers[id].filename);
+    } catch (e) {
+      logger.warn('rename error', { id, error: e.message });
+    }
+  }
+
+  async function processOne(id, opts) {
+    const metaOnly = !!(opts && opts.metaOnly);
     const p = store.papers[id];
     if (!p) return;
     // 运行时配置覆盖：store.settings 覆盖 config（设置面板热改，无需重启）。
@@ -126,6 +260,11 @@ function createScanner({ store, papersDir, textStore, deps, scanIntervalMs, onEn
         store.papers[id].error = 'PDF 文件缺失（不在 papers/ 目录），无法处理';
         return;
       }
+      // 元数据回填任务（存量无标题论文）：只补元数据 + 规范改名，不动总结/标签/概念/公式
+      if (metaOnly) {
+        await processMetaOnly(id, effConfig);
+        return;
+      }
       // 1) 解析全文
       setStatus(id, 'parsing');
       const { text } = await deps.parser.extractText(p.filepath);
@@ -134,68 +273,7 @@ function createScanner({ store, papersDir, textStore, deps, scanIntervalMs, onEn
       store.papers[id].fulltextPath = null; // v3：全文入 PG paper_texts，路径字段废弃
 
       // 2) arXiv 元数据（读 effConfig.arxiv：enabled / minIntervalMs / titleSimilarityThreshold 可热改）
-      if (effConfig.arxiv && effConfig.arxiv.enabled !== false) {
-        setStatus(id, 'enriching');
-        try {
-          await deps.rateLimitArxiv();
-          // 已知 arxivId（URL/发现导入）或文件名本身就是裸 arXiv ID（2401.12345.pdf）→ 用 id: 精确查，
-          // 跳过 cleanFilenameToTitle 猜标题（裸ID当标题搜必失败，正是历史上元数据为空的根因）。
-          // 其余文件走原 ti: 搜索 + pickBest。
-          // 文件名取 arXiv ID：裸 ID / arxiv.org URL / 标准下载命名 [2306.02781v4] / 括号内 ID / 老格式。
-          // id: 精确查跳过 cleanFilenameToTitle 猜标题（裸ID当标题搜必失败，正是历史上元数据为空的根因）。
-          let knownArxivId = p.arxivId;
-          if (!knownArxivId) {
-            const fromName = extractArxivIdFromFilename(p.filename);
-            if (fromName) knownArxivId = fromName.arxivId;
-          }
-          if (knownArxivId) {
-            const { entries } = await deps.arxiv.searchArxiv(`id:${knownArxivId}`, fetch, {
-              minIntervalMs: effConfig.arxiv.minIntervalMs || 0,
-              timeoutMs: effConfig.arxiv.timeoutMs ?? 15000,
-              maxRetries: effConfig.arxiv.maxRetries ?? 2,
-            });
-            if (entries && entries[0]) {
-              const best = entries[0];
-              Object.assign(store.papers[id], {
-                title: best.title,
-                authors: best.authors,
-                abstract: best.summary,
-                year: best.published ? String(best.published).slice(0, 4) : store.papers[id].year,
-                arxivId: deps.arxiv.extractArxivId(best) || knownArxivId,
-                arxivUrl: best.id,
-                primaryCategory: best.primaryCategory,
-                metaSource: 'arxiv',
-                metaConfidence: 1,
-              });
-            }
-          } else {
-            const candidate = deps.arxiv.cleanFilenameToTitle(p.filename);
-            const { entries } = await deps.arxiv.searchArxiv(`ti:"${candidate}"`, fetch, {
-              minIntervalMs: effConfig.arxiv.minIntervalMs || 0,
-              timeoutMs: effConfig.arxiv.timeoutMs ?? 15000,
-              maxRetries: effConfig.arxiv.maxRetries ?? 2,
-            });
-            const { best, confidence, source } = deps.arxiv.pickBest(candidate, entries, {
-              threshold: effConfig.arxiv.titleSimilarityThreshold,
-            });
-            if (best && source === 'arxiv') {
-              Object.assign(store.papers[id], {
-                title: best.title,
-                authors: best.authors,
-                abstract: best.summary,
-                year: best.published ? String(best.published).slice(0, 4) : store.papers[id].year,
-                arxivId: deps.arxiv.extractArxivId(best),
-                arxivUrl: best.id,
-                primaryCategory: best.primaryCategory,
-                metaSource: 'arxiv',
-                metaConfidence: confidence,
-              });
-            }
-          }
-        } catch (e) {
-          log('arxiv error', id, e.message);
-        }
-      }
+      await enrichArxiv(id, effConfig);
 
       // 3) AI 总结 + 标签 + 主题（两次独立调用，互不阻塞）
       //    v2.4 重构：总结走自由 Markdown（jsonMode:false），标签/主题走强制 JSON。
@@ -220,7 +298,7 @@ function createScanner({ store, papersDir, textStore, deps, scanIntervalMs, onEn
           prompt: summaryPrompt,
         });
       } catch (e) {
-        log('summary call failed', id, e.message);
+        logger.warn('summary call failed', { id, error: e.message });
       }
       const hasSummary = summaryMd && String(summaryMd).trim();
       if (hasSummary) {
@@ -232,7 +310,7 @@ function createScanner({ store, papersDir, textStore, deps, scanIntervalMs, onEn
         store.papers[id].summary = deps.ai.buildSummaryMarkdown(null);
         store.papers[id].summaryModel = null;
         store.papers[id].summaryAt = null;
-        log('empty summary', id, '(model returned no content)');
+        logger.warn('empty summary', { id, reason: 'model returned no content' });
       }
 
       // ---- 调用 2：标签/主题（独立调用，失败不影响已成功的总结）----
@@ -263,40 +341,15 @@ function createScanner({ store, papersDir, textStore, deps, scanIntervalMs, onEn
           store.papers[id].metaSource = store.papers[id].metaSource || 'ai-fallback';
         }
       } catch (e) {
-        log('tags/topics call failed', id, e.message);
+        logger.warn('tags/topics call failed', { id, error: e.message });
       }
 
-      // 4) 规范化文件名：仅对「裸 arXiv ID 命名」的文件（发现/URL 导入落地名）改成
-      //    「作者 等 - 年份 - 标题.pdf」。id 基于内容 sha1，重命名不影响 id/全文/概念/批注。
-      //    用户自己起的描述性文件名（非裸ID）一律保留不动。
+      // 4) 规范化文件名：统一改成「作者 等 - 年份 - 标题.pdf」（含用户自有命名的本地文件；
+      //    此前仅改裸 arXiv ID 名）。id 基于内容 sha1，重命名不影响 id/全文/概念/批注。
       try {
-        const cur = store.papers[id];
-        // 与 enrichment 同一判定（extractArxivIdFromFilename）：裸 ID / [id] 下载命名 / 括号内 ID 都规范改名
-        const isBareId = !!extractArxivIdFromFilename(cur.filename);
-        if (isBareId && cur.title) {
-          let desired = buildPaperFilename({
-            authors: cur.authors,
-            year: cur.year,
-            title: cur.title,
-            arxivId: cur.arxivId,
-          });
-          if (desired && desired !== cur.filename) {
-            const dir = path.dirname(cur.filepath);
-            let target = path.join(dir, desired);
-            const same = (a, b) => path.resolve(a) === path.resolve(b);
-            if ((await fileExists(target)) && !same(target, cur.filepath)) {
-              desired = desired.replace(/\.pdf$/i, ` (${cur.arxivId || id}).pdf`); // 撞名 → 加 arxivId 区分
-              target = path.join(dir, desired);
-            }
-            if (same(target, cur.filepath) || !(await fileExists(target))) {
-              await fsp.rename(cur.filepath, target);
-              cur.filename = desired;
-              cur.filepath = target;
-            }
-          }
-        }
+        await normalizePaperFilename(store.papers[id]);
       } catch (e) {
-        log('rename error', id, e.message); // 改名失败不影响入库
+        logger.warn('rename error', { id, error: e.message }); // 改名失败不影响入库
       }
 
       // 5) 自动抽取概念：复用已提取的全文，增量抽取并追加到全局概念库 + p.conceptIds。
@@ -317,7 +370,7 @@ function createScanner({ store, papersDir, textStore, deps, scanIntervalMs, onEn
           log('concepts extracted', id, '+', newIds.length);
         }
       } catch (e) {
-        log('concepts extract failed', id, e.message);
+        logger.warn('concepts extract failed', { id, error: e.message });
       }
 
       // 6) 自动抽取核心公式（v3.9）：与概念同构——复用全文，归一化后并入空间级公式清单。
@@ -340,7 +393,7 @@ function createScanner({ store, papersDir, textStore, deps, scanIntervalMs, onEn
           store.papers[id].formulaIds = formulaIdsOfPaper(store, id);
           if (touched.length) log('formulas extracted', id, '+', touched.length, 'new');
         } catch (e) {
-          log('formulas extract failed', id, e.message);
+          logger.warn('formulas extract failed', { id, error: e.message });
         }
       }
 
@@ -351,7 +404,7 @@ function createScanner({ store, papersDir, textStore, deps, scanIntervalMs, onEn
       const isMissing = e && (e.code === 'ENOENT' || /ENOENT/i.test(e.message || ''));
       store.papers[id].status = isMissing ? 'missing' : 'error';
       store.papers[id].error = e.message;
-      log('pipeline error', id, e.message);
+      logger.error('pipeline error', { id, status: store.papers[id].status, error: e.message });
     } finally {
       store.papers[id].updatedAt = Date.now();
       await deps.saveStore(store);
@@ -420,7 +473,7 @@ function createScanner({ store, papersDir, textStore, deps, scanIntervalMs, onEn
     const missingFuse = missing.length > 5 && missing.length > totalPapers * 0.5;
     if (missingFuse) {
       lastFuse = { at: Date.now(), missing: missing.length, total: totalPapers, papersDir };
-      log(`[scan] missing 熔断：${missing.length}/${totalPapers} 篇同时缺失，疑似目录挂载失效，本轮不翻转状态`);
+      logger.warn('missing 熔断', { missing: missing.length, total: totalPapers, papersDir, note: '疑似目录挂载失效，本轮不翻转状态' });
     } else {
       lastFuse = null;
       for (const m of missing) store.papers[m.id].status = 'missing';
@@ -441,15 +494,47 @@ function createScanner({ store, papersDir, textStore, deps, scanIntervalMs, onEn
       healed++;
     }
     if (healed > 0) log(`[scan] 中间态自愈：${healed} 篇已有完整内容但 status 卡在中间态，已修正为 ready`);
+    // 存量规范化改名：processOne 只处理新增/变更，早已入库的论文不会再过流水线——
+    // 在此对扫描到的文件做轻量改名检查（字符串比对，已规范的零开销），保证全库最终都
+    // 统一成「作者 等 - 年份 - 标题.pdf」。顺带修正「外部手动改名未同步」的 desync：
+    // diffPapers 对同尺寸纯改名不判 changed，store.filename 会一直指向旧路径（PDF 404）——
+    // 扫描到的文件名是磁盘事实，先同步再规范化。
+    let renamed = 0;
+    for (const s of fp) {
+      const p = store.papers[s.id];
+      if (!p || p.status === 'missing') continue;
+      if (p.filename !== s.filename) {
+        p.filename = s.filename;
+        p.filepath = s.filepath;
+      }
+      if (p.status !== 'ready' || !p.title) continue;
+      try {
+        if (await normalizePaperFilename(p)) renamed++;
+      } catch (e) {
+        logger.warn('rename error', { id: p.id, error: e.message });
+      }
+    }
+    if (renamed > 0) log(`[scan] 规范化改名：${renamed} 篇`);
+    // 无标题 ready 论文的元数据回填：规范改名需要标题，缺失时经串行队列做轻量回填
+    // （arXiv 重试 + AI 从已存全文提取，不重解析/不重总结）。metaBackfillAt 一次性标记
+    // 防每轮扫描重复入队（补不出标题的论文不会反复白调 AI）。
+    const backfillIds = [];
+    for (const p of Object.values(store.papers)) {
+      if (!p || p.status !== 'ready' || p.title || p.metaBackfillAt) continue;
+      p.metaBackfillAt = Date.now();
+      backfillIds.push(p.id);
+    }
+    if (backfillIds.length) log(`[scan] 元数据回填入队：${backfillIds.length} 篇（无标题存量）`);
     await deps.saveStore(store);
     enqueue([...added, ...changed].map((s) => s.id));
-    return { added: added.length, changed: changed.length, missing: missing.length, missingFuse, healed };
+    if (backfillIds.length) enqueue(backfillIds, { metaOnly: true });
+    return { added: added.length, changed: changed.length, missing: missing.length, missingFuse, healed, renamed, backfilled: backfillIds.length };
   }
 
   function start() {
-    scan().catch((e) => log('initial scan error', e.message));
+    scan().catch((e) => logger.error('initial scan error', { error: e.message }));
     if (currentIntervalMs > 0) {
-      timer = setInterval(() => scan().catch((e) => log('scan error', e.message)), currentIntervalMs);
+      timer = setInterval(() => scan().catch((e) => logger.error('scan error', { error: e.message })), currentIntervalMs);
     }
   }
   function stop() {
@@ -465,7 +550,7 @@ function createScanner({ store, papersDir, textStore, deps, scanIntervalMs, onEn
     }
     currentIntervalMs = (Number(minutes) || 0) * 60 * 1000;
     if (currentIntervalMs > 0) {
-      timer = setInterval(() => scan().catch((e) => log('scan error', e.message)), currentIntervalMs);
+      timer = setInterval(() => scan().catch((e) => logger.error('scan error', { error: e.message })), currentIntervalMs);
     }
   }
 
@@ -534,7 +619,7 @@ function createScanner({ store, papersDir, textStore, deps, scanIntervalMs, onEn
         }
         processed++;
       } catch (e) {
-        log('formula extract error', id, e.message);
+        logger.warn('formula extract error', { id, error: e.message });
       }
     }
     await deps.saveStore(store);
@@ -579,7 +664,7 @@ function createScanner({ store, papersDir, textStore, deps, scanIntervalMs, onEn
         }
         processed++;
       } catch (e) {
-        log('concept extract error', id, e.message);
+        logger.warn('concept extract error', { id, error: e.message });
       }
     }
     await deps.saveStore(store);
@@ -620,7 +705,7 @@ function createScanner({ store, papersDir, textStore, deps, scanIntervalMs, onEn
         p.updatedAt = Date.now();
         processed++;
       } catch (e) {
-        log('retag error', id, e.message);
+        logger.warn('retag error', { id, error: e.message });
       }
     }
     // 联动：从所有论文重新聚合字典——多的入库，被所有论文放弃的自动清除。
@@ -775,7 +860,8 @@ function createScanner({ store, papersDir, textStore, deps, scanIntervalMs, onEn
  *   - 每个空间创建一个「子扫描器」（复用 createScanner 的完整流水线闭包：processOne/extractConcepts/
  *     retagPapers/chatPaper/scanDir），子扫描器的 store/storePath/papersDir 各自指向该空间。
  *   - 子扫描器自带的内部队列/pump **被绕过**——所有 enqueue/scan 入队都进本多空间扫描器的共享队列。
- *     共享队列项 = {spaceId, id}，pump 串行 await 对应子扫描器的 processOne，保证全局串行。
+ *     共享队列项 = {spaceId, id, metaOnly?}，pump 串行 await 对应子扫描器的 processOne，保证全局串行。
+ *     metaOnly=元数据回填任务（存量无标题论文：只补元数据+规范改名，不重解析/不重总结）。
  *   - 单一定时器：间隔 = min(所有 scheduled 空间 scanInterval)；每次 tick 调 scan()，内部按 per-space
  *     lastScanAt 判定哪些空间到点（遵守陷阱 20：reschedule 热改定时器）。
  *
@@ -831,7 +917,7 @@ function createMultiSpaceScanner({ manager, deps }) {
       deps: subDeps,
       scanIntervalMs: 0,
       // 子扫描器 scan() 发现新论文后，转交到多空间共享队列（子扫描器自身不被 start，内部 queue 无人 pump）
-      onEnqueue: (ids) => enqueue(spaceId, ids),
+      onEnqueue: (ids, opts) => enqueue(spaceId, ids, opts),
     });
     const entry = { scanner, store, saveStore };
     subScanners.set(spaceId, entry);
@@ -843,9 +929,9 @@ function createMultiSpaceScanner({ manager, deps }) {
     subScanners.delete(spaceId);
   }
 
-  /** 入队 {spaceId, id} 到共享队列，触发 pump */
-  function enqueue(spaceId, ids) {
-    for (const id of ids || []) queue.push({ spaceId, id });
+  /** 入队 {spaceId, id, metaOnly?} 到共享队列，触发 pump */
+  function enqueue(spaceId, ids, opts) {
+    for (const id of ids || []) queue.push({ spaceId, id, metaOnly: !!(opts && opts.metaOnly) });
     pump();
   }
 
@@ -854,14 +940,14 @@ function createMultiSpaceScanner({ manager, deps }) {
     processing = true;
     try {
       while (queue.length) {
-        const { spaceId, id } = queue.shift();
+        const { spaceId, id, metaOnly } = queue.shift();
         try {
           const sub = await subFor(spaceId);
           if (!sub) continue;
-          inFlight = sub.scanner.processOne(id);
+          inFlight = sub.scanner.processOne(id, { metaOnly });
           await inFlight;
         } catch (e) {
-          log('process error', spaceId, id, e.message);
+          logger.error('process error', { spaceId, id, error: e.message });
         } finally {
           inFlight = null;
         }
@@ -889,7 +975,7 @@ function createMultiSpaceScanner({ manager, deps }) {
         await manager.markScanned(space.id);
         results.push({ spaceId: space.id, ...r });
       } catch (e) {
-        log('scan error', space.id, e.message);
+        logger.error('scan error', { spaceId: space.id, error: e.message });
         results.push({ spaceId: space.id, error: e.message });
       }
     }
@@ -906,7 +992,7 @@ function createMultiSpaceScanner({ manager, deps }) {
   }
 
   function start() {
-    scan({ dueOnly: false }).catch((e) => log('initial multi-space scan error', e.message));
+    scan({ dueOnly: false }).catch((e) => logger.error('initial multi-space scan error', { error: e.message }));
     rescheduleTimer();
   }
   function stop() {
@@ -923,7 +1009,7 @@ function createMultiSpaceScanner({ manager, deps }) {
     }
     const ms = manager.minScheduledIntervalMs();
     if (ms > 0) {
-      timer = setInterval(() => scan({ dueOnly: true }).catch((e) => log('scheduled scan error', e.message)), ms);
+      timer = setInterval(() => scan({ dueOnly: true }).catch((e) => logger.error('scheduled scan error', { error: e.message })), ms);
     }
   }
 

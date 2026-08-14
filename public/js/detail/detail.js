@@ -2,7 +2,7 @@
 //
 // 自 public/app.js 拆出（v3.15 模块化重构）——声明体原样迁移，仅补 import/export。
 
-import { DEL, PATCH, POST, api, jget } from '../core/api.js';
+import { DEL, PATCH, POST, api, jget, sp } from '../core/api.js';
 import { $ } from '../core/dom.js';
 import { escapeHtml, starSvg, statusDot } from '../core/format.js';
 import { truncateChatTitle } from '../core/markdown.js';
@@ -77,6 +77,7 @@ export function renderDetail() {
           <button class="btn sm" id="b-open-pdf" title="在新视图打开 PDF 阅读器">打开 PDF</button>
           <button class="btn ghost sm" id="b-read" title="切换阅读状态">${p.readStatus === 'done' ? '✓ 已读' : '标记已读'}</button>
           <button class="btn ghost sm" id="b-resume" title="重新总结（含主题/概念）">重新总结</button>
+          <button class="btn ghost sm" id="b-copy-bib" title="复制本篇 BibTeX 引用到剪贴板">复制 BibTeX</button>
           <button class="btn ghost sm" id="b-retag" title="用当前标签提示词重新打标（标签库联动增删）">重新打标</button>
           <button class="btn ghost sm danger" id="b-delete" title="删除论文（连同本地 PDF 与全文，不可恢复）">删除</button>
         </div>
@@ -148,6 +149,22 @@ export function renderDetail() {
     if (r.ok) toast('已加入重新总结队列');
     else toast(r.error || '重新总结失败', 'error');
     setTimeout(refresh, 600);
+  };
+  // 复制本篇 BibTeX：从导出端点取单篇文本 → 剪贴板（写论文引用即取即用）
+  $('b-copy-bib').onclick = async () => {
+    const btn = $('b-copy-bib');
+    setBusy(btn, true, '复制中…');
+    try {
+      const r = await fetch(sp('/api/papers.bib?ids=' + encodeURIComponent(p.id)));
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const bib = await r.text();
+      await navigator.clipboard.writeText(bib);
+      toast('BibTeX 已复制到剪贴板');
+    } catch (e) {
+      toast('复制失败：' + (e && e.message ? e.message : '网络错误'), 'error');
+    } finally {
+      setBusy(btn, false);
+    }
   };
   // 重新打标：用当前标签提示词重新生成标签/主题（同步覆盖 + 标签库联动增删）
   $('b-retag').onclick = async () => {

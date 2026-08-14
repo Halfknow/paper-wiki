@@ -379,3 +379,58 @@ test('草稿保护：输入后切走再切回聊天 tab，草稿回填', async (
   await sleep(30);
   assert.strictEqual($('chat-input').value, '还没打完的草稿', 'renderDetail 重建后草稿从 chatState 回填');
 });
+
+test('流式选区保护：选中流式气泡时 token 重渲跳过、done 定型推迟到选区释放', async () => {
+  resetDetail();
+  await openChatTab();
+  // 手动驱动的 EventSource（真实流式时序：token 逐个到达，done 最后）
+  let es = null;
+  class ManualES {
+    constructor(url) { es = this; this._ls = {}; this.onerror = null; backend.esUrls.push(new URL(url, 'http://localhost').pathname); }
+    addEventListener(t, f) { (this._ls[t] = this._ls[t] || []).push(f); }
+    fire(t, obj) { (this._ls[t] || []).forEach((f) => f({ data: JSON.stringify(obj) })); }
+    close() {}
+  }
+  const OrigES = globalThis.EventSource;
+  globalThis.EventSource = ManualES;
+  dom.window.EventSource = ManualES;
+  const doc = dom.window.document;
+  try {
+    typeInto($('chat-input'), '流式选区测试');
+    pressKey($('chat-input'), 'Enter');
+    await sleep(10);
+    assert.ok(es, '流式请求已发起');
+    es.fire('token', { t: '第一段内容。', kind: 'content' });
+    await sleep(10);
+    const content = doc.querySelector('#chat-list .chat-msg.assistant[data-streaming="1"] .chat-content');
+    assert.ok(content && content.textContent.includes('第一段'), '首段上屏');
+    // 在流式气泡内建立选区
+    const range = doc.createRange();
+    range.selectNodeContents(content);
+    const sel = dom.window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+    assert.ok(!sel.isCollapsed, '选区已建立');
+    // 后续 token：渲染被守卫跳过（DOM 不重建），选区存活
+    es.fire('token', { t: '第二段内容。', kind: 'content' });
+    await sleep(10);
+    assert.ok(!content.textContent.includes('第二段'), '有选区：token 渲染跳过（未重建 DOM）');
+    assert.ok(!sel.isCollapsed && sel.toString().includes('第一段'), '选区未被摧毁');
+    // done：定型 replaceWith 推迟——占位节点仍在、操作按钮未出
+    backend.detail.chat.push({ role: 'user', content: '流式选区测试', ts: 10 }, { role: 'assistant', content: '第一段内容。第二段内容。', ts: 11 });
+    es.fire('done', { reply: '第一段内容。第二段内容。', chat: backend.detail.chat });
+    await sleep(10);
+    assert.ok(!sel.isCollapsed, 'done 后选区仍在（定型推迟）');
+    assert.ok(doc.querySelector('#chat-list .chat-msg.assistant[data-streaming="1"]'), '流式占位未被替换（推迟中）');
+    // 释放选区 → 补渲定型结构（占位消失，末条出现操作按钮）
+    sel.removeAllRanges();
+    doc.dispatchEvent(new dom.window.Event('selectionchange'));
+    await sleep(10);
+    assert.ok(!doc.querySelector('#chat-list .chat-msg.assistant[data-streaming="1"]'), '选区释放后定型补渲');
+    const lastMsg = [...doc.querySelectorAll('#chat-list .chat-msg')].pop();
+    assert.ok(lastMsg.querySelector('.chat-act[data-act="regen"]'), '末条消息已定型（含操作按钮）');
+  } finally {
+    globalThis.EventSource = OrigES;
+    dom.window.EventSource = OrigES;
+  }
+});

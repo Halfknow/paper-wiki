@@ -4,6 +4,98 @@
 
 ## [Unpublished]
 
+### Changed — 收藏夹管理重设计：管理入口收敛到「收藏夹」标题行 ⚙（v3.22)
+
+旧入口有三处且都有问题：「新建」的 + 挂在**视图**标题行（语义错位）、编辑藏在每个收藏夹行的 **hover 铅笔**里（发现性差 + 18px 小目标误触率高，想点收藏夹切视图却点进编辑）、删除又藏在编辑弹窗内——三个动作三处入口，没有一处能看全收藏夹全貌，且**无法排序**。重设计为一处收口：
+
+- **入口**：侧栏「收藏夹」标题行右侧一个 ⚙ 小按钮（side-icon-btn 同款，与「视图」行的收起按钮对称）→ 打开「管理收藏夹」面板；「视图」标题行的错位 + 移除。
+- **管理面板**（`folder-manager.js` + `#folder-manager` 模态，取代旧 `folder-modal` 与行内铅笔，二者连同 `openFolderModal/editingFolder/pickedColor` 一并退役）：
+  - **列表行**：拖拽柄 + 色块 + 名称 + 篇数 + hover 显形的 ✏️/🗑️ 操作；
+  - **行内编辑**：✏️ 原地展开为「名称输入 + 8 色色板 + 保存/取消」（不嵌套二级弹窗），Enter 保存 / Esc 取消；
+  - **新建**：底部虚线「＋ 新建收藏夹」→ 顶部插入编辑行，保存即 POST；
+  - **拖拽排序**：HTML5 DnD（上半/下半定插前/插后，拖到空白 = 移到末尾，落点指示线与阅读架抽屉同语言），落库后侧栏**即时**重排（纯排序不走全量 refresh）；
+  - **删除**：PWDialog 确认；当前筛选正指向被删夹时顺手清筛选（避免空视图）。
+- **新端点** `PUT /api/folders/order {ids}`：按给定顺序重排 `store.folders`——未知 id 忽略、重复取首现、未列出的按原相对顺序补末尾（收藏夹数组顺序从此是用户语义，不再是创建时间序）。返回与 GET 同形（带 count）。
+- **不变式**：侧栏行点击切视图、拖论文入夹、rail 色点等主交互零改动；`bind.js` 全局 Esc 与列表键盘导航守卫从 `#folder-modal` 换到 `#folder-manager`。
+- **测试**：`tests/folder-manager-ui.test.js`（jsdom 直驱模块 + 真实 index.html：渲染/行内编辑保存链/取消/新建/空名拦截/删除清筛选/拖拽排序 + 侧栏即时重排/空态，8 例）+ `tests/api.test.js` 新增 order 端点用例。
+
+### Added — 阅读架：阅读器内多篇论文切换（v3.21）
+
+一次只能开一篇 PDF 是阅读器的核心瓶颈——对比阅读、按主题顺读都要「退回列表 → 找到下一篇 → 再打开」。新增**阅读架**（浏览器多标签的学术版）：打开过的论文自动上架，左下角 FAB（带计数徽章）展开左侧抽屉即可切换，全程不离开阅读器。
+
+- **数据与端点**：per-space 存 `store.settings.readerShelf`（有序 id 数组）。新增 `GET /api/reader-shelf`（返回富化条目：标题/年份/阅读进度）与 `PUT /api/reader-shelf`（整体替换；规整：去重保首次出现、滤掉已删论文、上限 50）。删除论文时 `deletePapersCleanup` 联动剔除架上死 id（GET 规整作兜底自愈）。
+- **顺序语义**：数组顺序即阅读顺序，**完全由用户手动维护**（抽屉内 HTML5 拖拽重排，落点指示线区分插前/插后，拖到列表空白 = 移到末尾）；打开/切换绝不重排。打开新论文追加到末尾，已在架上只激活不重复加。
+- **切换走整链路由**：点条目 → `/reader/:id` **replace** 导航。同名路由不触发 leave（阅读器不闪关），enter 重跑 `openReader` 全链（拉详情/上架/打开 PDF）——URL 深链与刷新语义天然正确，replace 不污染后退栈；移除当前篇自动切邻居（优先下一篇，末尾篇切前一篇），架子清空则关阅读器（确认弹窗提示）。
+- **抽屉顶部搜索框**：`GET /api/papers?q=` 实时搜索库内论文（250ms 防抖），点结果直接打开上架——组织一次阅读会话不用回库视图。已上架的标「已在架上」不可重复选。
+- **快捷键**：`[` / `]` 环绕切换上/下一篇（输入态自动跳过）；Esc 分层新增「关阅读架抽屉」（在聊天抽屉之后、批注/阅读器之前；搜索结果浮着时先清结果）。
+- **架构**：`public/js/reader/shelf.js`（状态单例：per-space 惰性加载 + subscribeShelf 订阅 + 串行 PUT 链防乱序）与 `shelf-drawer.js`（FAB/抽屉 UI）**与 pdf.js 完全解耦**——常驻侧 reader-host（打开时上架）与惰性 reader.js 共享同一实例，jsdom 测试无需加载 pdf.js 即可直测。reader-host 注入 `onSwitchPaper`（路由导航）钩子，reader.js 不 import 路由（避免与 nav.js 循环依赖）。
+- **顺带加固**：`reader.open()` 增加**并发打开令牌**——阅读架快速连点切换时两次 getDocument 交错，旧请求后完成会把新 viewer 覆盖回旧论文；令牌失配即销毁弃用。
+- **测试**：`tests/api-shelf.test.js`（端点往返/规整/per-space/删除联动 6 例）+ `tests/reader-shelf-ui.test.js`（jsdom 直驱抽屉：加载渲染/上架/切换/移除语义/拖拽重排/环绕切换/搜索添加/清空 12 例）。测试抓出 `toggle()` 语义写反的真 bug（无参调用永远走 close，浏览器里 FAB 打不开抽屉）。
+
+### Fixed — 开过 PDF 阅读器后全应用无法粘贴（pdf.js 全局 paste 拦截）
+
+- **根因**：阅读器光标模式底层借用 `AnnotationEditorType.FREETEXT`（陷阱 11：NONE 下批注不可点选），而 pdf.js 的 `AnnotationEditorUIManager` 在非 NONE 模式下经 `setEditingState(true)` 在 **document 级**挂 `copy/cut/paste` 监听且**无条件 `event.preventDefault()`**（为批注编辑器剪贴板设计）。阅读器关闭时 viewer 保活复用、无人调 `setDocument(null)`，监听泄漏到全局——开过 PDF 后，搜索框/设置/导入框等一切输入框都无法粘贴。
+- **修复**：
+  - `reader.js _teardown`：关闭时 `uiManager.removeEditListeners()` 卸掉 document 级编辑监听（切工具时 pdf.js 会按需重新挂载）；
+  - `reader.js bindChat`：抽屉冒泡防护盾从 keydown 扩展到 `copy/cut/paste`——阅读器打开期间（监听常驻）抽屉内聊天输入/笔记卡的粘贴复制不再被吞；
+  - `chat-tab.js`：详情聊天输入框 paste 加 `stopPropagation` 防御。
+- **验证**：真实浏览器全链路——开/关阅读器后顶栏搜索框 Ctrl+V 正常；阅读器打开态抽屉聊天框粘贴正常。
+
+
+### Fixed — 搜索框清空 × / 阅读器退出 URL 脱节 / busy 按钮抖动
+
+- **搜索框清空 × 回归**：原生 `::-webkit-search-cancel-button` 此前因与右侧动作区重叠被 CSS 隐藏，清空只剩 Esc 一条路。新增自定义 × 按钮（`.search-actions` 内首位），显隐用 `:placeholder-shown` 纯 CSS 驱动（对程序化赋值同样生效，无需 JS 同步）；点击与 Esc 共用提取出的 `clearSearch()`（按视图分派清理 + 回写 URL）。
+- **阅读器返回按钮 URL 脱节**：左上角 ← 此前直接 `reader.close()` 只关视图不动路由，URL 停在 `/reader/:id` 与页面状态脱节（退出后搜索/导航异常、刷新又弹回阅读器）。新增 `onBack` 钩子（reader-host 注入）：当前在 `/reader/:id` 路由时 `history.back()` 由路由 leave 关阅读器，与全局 Esc 同语义。
+- **busy 按钮宽度抖动**：`setBusy` 换文案时按钮先坍缩再恢复（如信息页「复制 BibTeX」→「复制中…」）。`setBusy` 现在在换文案前钉住 `min-width`，结束恢复——所有 busy 按钮通用。
+
+
+### Removed — 列表工具条「导出」按钮
+
+工具条（多选那一栏）的导出下拉（当前列表/全部 → BibTeX/CSV）退役：详情头已有「复制 BibTeX」、多选菜单里也有选中项的 BibTeX/CSV 导出，工具条入口是第三处冗余。后端 `/api/papers.bib|.csv` 端点保留（多选导出继续用）。
+
+
+### Changed — 规范改名全量化：本地扫描的自有命名文件也统一为「作者 等 - 年份 - 标题.pdf」
+
+此前 `processOne` 只对**裸 arXiv ID 命名**的文件（发现/URL 导入落地名）做规范改名，用户自有命名的本地文件（如 `2015-作者-标题.pdf`、出版社下载名 `1-s2.0-Sxxx-main.pdf`）一律不动——导致本地扫描入库的文件命名风格不统一。现按产品决策全量规范化：
+
+- **`normalizePaperFilename()` 统一收口**（`scanner.js`）：有标题即改名（无标题时规范名没有信息量，跳过）；撞名加 `(arxivId|id)` 后缀；id 基于内容 sha1，重命名不影响 id/全文/概念/批注。
+- **processOne 第 4 步**去掉「仅裸 ID」门槛，所有新入库论文处理后即规范命名。
+- **scan() 新增存量 pass**：processOne 只处理新增/变更，已入库论文不会再过流水线——每轮扫描对库内 ready 论文做轻量改名检查（字符串比对，已规范零开销），存量文件最终全部统一。
+- **存量 pass 顺带修复「外部改名 desync」**：`diffPapers` 对同尺寸纯改名不判 changed，此前用户在文件管理器里手动改名后 store.filename 永远指向旧路径（打开 PDF 404）。扫描 pass 先把 filename/filepath 同步为磁盘事实，再做规范化。
+- **无标题存量的元数据回填（metaOnly 队列任务）**：规范改名需要标题，而部分存量论文是 ready 但标题为空（早期 arXiv 补全失败的遗留）。scan() 把这类论文（一次性 `metaBackfillAt` 标记防重复入队）送进串行队列跑轻量回填：arXiv 重试（自有命名也可能 `ti:` 命中）→ 仍无标题则 AI 从已存全文提取 `title/authors/year`（只补空字段，**不动**总结/标签/主题/概念/公式）→ 规范改名。全程复用共享串行队列，不并发压 AI/arXiv。
+- **注意**：手动把文件改成自定义名后，下一轮扫描会被规范名覆盖（无豁免机制）；如需保留自定义命名，后续可加 per-space 开关。
+- **测试**：`tests/scanner.test.js` 更新非裸 ID 断言为新行为，新增「scan 存量规范化改名 + 外部改名同步 + 二轮幂等」「元数据回填（arXiv 命中/AI 兜底两路径 + 不动既有内容 + 防重复入队）」用例（39/39 通过）。
+
+### Fixed — AI 聊天流式回答无法选中复制（token 级重渲根因）
+
+- **根因**：流式期间每个 token 都 `content.innerHTML = renderChatMd(accumulated)` 全量重渲气泡（实测 ~96 次/秒），选区锚点节点被移除 → 选区立即塌陷。思考型模型一次回答流式几分钟，期间任何选中/复制尝试都会失败。`onDone` 的定型 `replaceWith` 与 `input.focus()` 同样摧毁选区；`ensureStreamingBubble` 还有无条件 `innerHTML=''` 的二次清空。
+- **修复**（`detail/chat-tab.js` + `reader.js` 抽屉，两处同构）：
+  - token 渲染前检查 `selectionWithin(content)`：气泡内有活动选区则跳过本次重建，下个 token 自然补渲；
+  - `ensureStreamingBubble` 幂等化：仅在思维骨架 → 流式切换时清空一次；
+  - `onDone` 定型渲染（补时间戳/操作按钮）在用户持选区时经 `runAfterSelectionRelease` 推迟到选区释放；`onDone`/`onFail` 的 `input.focus()` 在聊天区有选区时跳过（focus 会塌陷文档选区）。
+- **共用 helper**：`core/dom.js` 新增 `selectionWithin()` / `runAfterSelectionRelease()`；list.js / refresh.js 的同名局部实现统一收口到此处。
+- **测试**：`tests/chat-ui.test.js` 新增「流式选区保护」用例（手动 EventSource 驱动：token 渲染跳过 → done 定型推迟 → 释放补渲全链路）。
+
+### Fixed — 论文列表文字无法选中复制（draggable 根因）+ 轮询重建选区守卫补齐
+
+- **根因**：列表卡片为「拖入收藏夹」挂了常驻 `draggable=true`，Chromium UA 样式给 `[draggable]` 元素上 `user-select:none`——整张卡片的标题/作者/主题/标签全部无法选中复制，且作者 CSS `user-select:text` 盖不掉（拖拽手势恒优先于文本选择）。
+- **修复（`library/list.js`）**：条目默认 `draggable=false`（文本可选）；`mouseover` 按悬停位置分派——悬在文本区（标题/作者/chips）保持不可拖（拖动手势 = 文本选择），悬在留白/圆点/进度条才启用拖拽（拖入收藏夹）。`draggable` 必须在 mousedown 之前就位，故用 mouseover 而非 mousedown 设置。
+- **拖选后 click 抑制（`library/list.js`）**：拖选结束的 mouseup 会紧跟一个 click，此前直接触发 `gotoPaperRoute` 跳转、路由重建立刻摧毁选区——「选中了却复制不了」的第二根因。条目内有活动选区时 click/dblclick 视为选择手势的尾巴，不触发打开论文/阅读器（普通点击：mousedown 已使旧选区塌陷，不受影响）。全文检索结果项同款处理。
+- **轮询守卫补齐（`library/refresh.js`）**：10s 轮询此前对列表/侧栏/筛选条**无选区守卫**——用户在这些区域选中的文字每 10s 必被 innerHTML 重建摧毁。新增 `selectionWithin()` helper：容器内有活动选区时跳过本轮重建（数据已进 state，下一轮无选区自然补渲）。
+- **顺手修「推迟后永不补渲」**：detail 守卫此前在选区检查**之前**就合并 `state.detail`，导致被推迟的重建下一轮因 `updatedAt` 已相等而永远补不上（视图静默变旧）。改为守卫通过后才合并——推迟的更新会在选区释放后下一轮补上。
+- **测试**：`tests/regression-ui.test.js` 新增 4 例（hover 分派 draggable / 拖选后 click 抑制 / 列表选区守卫 / detail 推迟补渲语义锁定）。
+
+### Changed — 可靠性地基：健康检查探测 + 结构化日志 + 中文搜索 trigram 索引
+
+针对一次系统性审查发现的可靠性盲区，做三件相互独立、向后兼容的改进。
+
+- **健康检查真正探活（`GET /api/health`）**：此前 `status` 硬编码 `ok`、篇数取自启动时缓存的内存 store，PG 断了 / 磁盘满了探活照常绿。改为：① 探 DB 连通性（`SELECT 1`，2s 超时标 `timeout`，异常标 `down`）；② 探磁盘剩余空间（`fs.statfs` papers/backups 目录，低于 `config.health.minDiskMb` 默认 100MB 标 `degraded`）。返回新增 `checks:{db,disk}` 子结构，任一子项异常则总体 `degraded`，但 **HTTP 仍 200**（探活语义 = 进程能响应）。旧字段（`status/uptime/spaces/papers/missingFuse`）全部保留。
+- **AI 上游探测独立端点（`GET /api/health/ai`）**：复用 `listModels`（已有 8s 超时 + 永不抛错语义），返回 `{status, source, latencyMs}`。`source:'upstream'` 表示打到上游，`'config'` 表示回退静态候选（degraded）。慢探测隔离开，不拖累主 health 响应。
+- **结构化日志（`src/core/logger.js`）**：新增零依赖 logger（`createLogger(module)` → `{debug,info,warn,error}`），格式 `ISO LEVEL [module] msg {json}`，level 由 env `PW_LOG_LEVEL` 控制（默认 info，生产默认 warn）。`core/util.js` 的 `log()` 内部委托 logger（38 处现有调用零改动）；`store.js`（9 处）、`db/index.js`、`server.js` 的裸 `console.error` 统一迁到 logger（可选 migration 跳过由 error 降为 warn——本就是预期行为）。
+- **错误不再静默吞**：`server.js` 两处 `backupAllSpaces().catch(()=>{})`（定时 + 启动）改为 `.catch(e => logger.error(...))`——此前「listSpaces 抛错」类未捕获错误被完全吞掉，运维无感。
+- **中文全文搜索 trigram 索引（migration 006）**：`paper_texts.searchFulltext` 对中文查询（`hasCjk` 为真）永远走 `fulltext ILIKE '%q%'`，该路径**无索引可用**全表扫大文本。新增 `006-paper-texts-trigram.optional.sql`（`pg_trgm` 扩展 + GIN trigram 索引，`.optional.` 同 002 语义，pg-mem 跳过）。真实 PG 上中文搜索走索引；`searchFulltext` 代码零改动（查询优化器自动选用）。
+- **测试**：新增 `tests/logger.test.js`（9 例，level 过滤/模块名/stderr/env 优先级/util.log 兼容）；`tests/api.test.js` health 用例补 `checks` 断言 + 新增 degraded/timeout/磁盘/health-ai 5 例（共 95 例全过）；`tests/db.test.js` 加 optional migration 跳过用例（共 31 例）。
+
 ### Fixed — 收起态 rail 在概念/公式页仍挂论文筛选按钮（v3.19）
 
 侧栏收起后的图标栏（rail）原来是一份**静态的论文页内容**（全部论文/星标/未读 + 收藏夹色点）——切到概念/公式页再收起侧栏，这些按钮还杵在那，点了改的是看不见的论文筛选。rail 改为与侧栏 `.side-ctx` 同机制的 `.rail-ctx[data-ctx=...]` 三份上下文，由 `showView` 同步切换：论文 = 原有视图快捷入口 + 收藏夹；概念 = 清单/地图（走路由，active 态与展开侧栏同步）；公式 = 全部公式（清分类分面）。展开按钮与设置齿轮三页共用。

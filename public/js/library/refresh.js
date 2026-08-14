@@ -3,7 +3,7 @@
 // 自 public/app.js 拆出（v3.15 模块化重构）——声明体原样迁移，仅补 import/export。
 
 import { api, safeGet } from '../core/api.js';
-import { $ } from '../core/dom.js';
+import { $, selectionWithin } from '../core/dom.js';
 import { syncFilterToUrl } from '../core/nav.js';
 import { state } from '../core/state.js';
 import { renderStats, toast } from '../core/ui-kit.js';
@@ -43,9 +43,10 @@ export async function refresh() {
   const [papers, tags, topics, folders, stats] = results;
   const failed = results.filter((x) => !x.ok);
   // 仅在各自成功时更新对应 state；失败的保留旧值，UI 不清空
+  const listPane = document.querySelector('.list-pane');
   if (papers.ok) {
     state.papers = papers.data || [];
-    renderList();
+    if (!selectionWithin(listPane)) renderList();
   }
   if (tags.ok) state.tags = tags.data || [];
   if (topics.ok) state.topics = topics.data || [];
@@ -63,14 +64,14 @@ export async function refresh() {
           starred: all.data.filter((p) => p.starred).length,
           unread: all.data.filter((p) => (p.readStatus || 'unread') === 'unread').length,
         };
-        renderSidebar();
+        if (!selectionWithin($('sidebar'))) renderSidebar();
       }
     } catch { /* ignore */ }
   }
   // 至少 papers 成功时才重渲染依赖它的侧栏/筛选器，避免半失败态下清空
   if (papers.ok) {
-    renderSidebar();
-    renderFilters();
+    if (!selectionWithin($('sidebar'))) renderSidebar();
+    if (!selectionWithin(listPane)) renderFilters();
   }
   if (failed.length) toast(`刷新部分失败：${failed.length} 个接口（已保留旧数据）`, 'error');
   if (state.current && !state.detail) ; // 列表选中后由 select 拉详情
@@ -79,18 +80,22 @@ export async function refresh() {
     const fresh = state.papers.find((p) => p.id === state.current);
     if (fresh && state.detail) {
       const prevUpdatedAt = state.detail.updatedAt;
-      state.detail = { ...state.detail, ...fresh };
       // chat / notes tab：定时刷新不重建详情面板。renderDetail 会 innerHTML 全量重建，
       // 销毁 #chat-list / 笔记 textarea —— 每 10s 打断阅读（重置滚动 / 闪烁流式占位 / 抢焦点）。
       // 这两个 tab 的数据由专属 handler 维护（聊天：清空/编辑/重新生成 + 流式增量；笔记：本地编辑+防抖落盘），
       // 无需定时全量刷新；detail-head 的状态变化（如总结完成）会在切 tab / 重开论文时自然反映（state.detail 已更新）。
-      if (state.tab === 'chat' || state.tab === 'notes') return;
+      if (state.tab === 'chat' || state.tab === 'notes') {
+        state.detail = { ...state.detail, ...fresh };
+        return;
+      }
       // summary/info tab：数据没变就不重建。每 10s 的 innerHTML 全量重建会摧毁用户正在进行的
       // 文本选择（标题/总结「无法选中复制」的根因）——updatedAt 不变说明服务端无变化，跳过重建。
       if (fresh.updatedAt === prevUpdatedAt) return;
-      // 数据变了但用户正拖着选择文本：同样推迟重建（下一轮 refresh 再试），优先保住选择。
-      const sel = document.getSelection();
-      if (sel && !sel.isCollapsed && $('detail').contains(sel.anchorNode)) return;
+      // 数据变了但用户正拖着选择文本：本轮不合并也不重建（下轮 updatedAt 仍不同会重试），
+      // 优先保住选择。注意勿在守卫前合并 state.detail——否则下轮 prevUpdatedAt 已等于新值，
+      // 被推迟的重建永远补不上，视图静默变旧。
+      if (selectionWithin($('detail'))) return;
+      state.detail = { ...state.detail, ...fresh };
       renderDetail();
     }
   }

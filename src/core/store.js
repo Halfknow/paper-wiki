@@ -1,6 +1,7 @@
 const fs = require('fs');
 const fsp = require('fs/promises');
 const path = require('path');
+const logger = require('./logger').createLogger('store');
 
 // 进程内串行写锁：单 pm2 实例下足够保证 papers.json 不交错
 let writeChain = Promise.resolve();
@@ -74,21 +75,21 @@ async function loadStore(storePath) {
     let recovered = null;
     try {
       await fsp.copyFile(storePath, bak); // 复制而非 rename：保留原文件以便排查
-      console.error('[store] papers.json 损坏（非 JSON 对象），已备份到', bak);
+      logger.error('papers.json 损坏（非 JSON 对象），已备份到', { bak });
     } catch (e) {
-      console.error('[store] 损坏文件备份失败', e && e.message);
+      logger.error('损坏文件备份失败', e && e.message);
     }
     // 尝试从最近备份恢复（避免回空丢数据）
     try {
       recovered = await loadLatestBackup(storePath);
     } catch (e) {
-      console.error('[store] 从备份恢复失败', e && e.message);
+      logger.error('从备份恢复失败', e && e.message);
     }
     if (recovered) {
-      console.error('[store] 已从备份恢复，篇数:', Object.keys(recovered.papers || {}).length);
+      logger.error('已从备份恢复', { papers: Object.keys(recovered.papers || {}).length });
       return recovered;
     }
-    console.error('[store] 无可用备份，回空 store（数据将重新扫描）');
+    logger.error('无可用备份，回空 store（数据将重新扫描）');
     return emptyStore();
   }
   data.papers = data.papers || {};
@@ -143,12 +144,10 @@ async function saveStore(storePath, store) {
     // 历史上有 saveStore(storePath, store) 误写成单参把 storePath 字符串当 store 存进去的 bug，
     // 一旦写入，下次 loadStore 会判定损坏 → 回空 → 全库数据「丢失」。这里在写入前拦截。
     if (!store || typeof store !== 'object' || Array.isArray(store) || typeof store.papers !== 'object') {
-      console.error(
-        '[store] 拒绝写入非法 store（非对象/无 papers 段），已阻止。store 类型:',
-        typeof store,
-        '| 是否数组:',
-        Array.isArray(store),
-      );
+      logger.error('拒绝写入非法 store（非对象/无 papers 段），已阻止', {
+        type: typeof store,
+        isArray: Array.isArray(store),
+      });
       throw new Error('saveStore: 拒绝写入非法 store（非对象或无 papers 段）');
     }
     ensureDataDir(storePath);
@@ -156,7 +155,7 @@ async function saveStore(storePath, store) {
     const content = JSON.stringify(store, null, 2);
     // 二次校验：序列化结果必须是合法 JSON 对象（防止循环引用等产生异常输出）
     if (!content || content[0] !== '{') {
-      console.error('[store] 拒绝写入：序列化结果非 JSON 对象，首字符:', content ? content[0] : '(空)');
+      logger.error('拒绝写入：序列化结果非 JSON 对象', { firstChar: content ? content[0] : '(空)' });
       throw new Error('saveStore: 序列化结果非 JSON 对象');
     }
     await fsp.writeFile(tmp, content, 'utf8');
@@ -186,7 +185,7 @@ async function backupStore(storePath) {
       await fsp.unlink(path.join(backupDir, f)).catch(() => {});
     }
   } catch (e) {
-    console.error('[store] backup failed', e && e.message);
+    logger.error('backup failed', e && e.message);
   }
 }
 
@@ -210,7 +209,7 @@ async function backupStoreObject(backupDir, store) {
       await fsp.unlink(path.join(backupDir, f)).catch(() => {});
     }
   } catch (e) {
-    console.error('[store] backupStoreObject failed', e && e.message);
+    logger.error('backupStoreObject failed', e && e.message);
   }
 }
 

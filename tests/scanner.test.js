@@ -1170,7 +1170,10 @@ test('processOne 非裸ID文件名走 ti: 搜索 + pickBest 命中，写入 arxi
   assert.strictEqual(p.arxivUrl, 'http://arxiv.org/abs/1706.03762v5');
   assert.strictEqual(p.metaSource, 'arxiv');
   assert.strictEqual(p.metaConfidence, 0.92, 'ti: 路径用 pickBest 的置信度');
-  assert.strictEqual(p.filename, 'attention is all you need.pdf', '非裸ID文件名不应被改名');
+  // 全量规范化改名（产品决策）：自有命名的本地文件也统一改成「作者 等 - 年份 - 标题.pdf」
+  assert.strictEqual(p.filename, 'Vaswani 等 - 2017 - Attention Is All You Need.pdf', '非裸ID文件也规范改名');
+  assert.ok(fs.existsSync(path.join(dir, 'Vaswani 等 - 2017 - Attention Is All You Need.pdf')), '磁盘文件已改名');
+  assert.ok(!fs.existsSync(path.join(dir, 'attention is all you need.pdf')), '旧文件名不存在');
   scanner.stop();
   fs.rmSync(dir, { recursive: true, force: true });
 });
@@ -1304,6 +1307,136 @@ test('processOne 重命名撞名：第二篇同名规范名加 (arxivId) 后缀�
   assert.ok(fs.existsSync(path.join(dir, p2.filename)), 'p2 带后缀文件存在');
   assert.strictEqual(p1.filepath, path.join(dir, p1.filename));
   assert.strictEqual(p2.filepath, path.join(dir, p2.filename));
+  scanner.stop();
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('scan 存量规范化改名：已 ready 的自有命名文件统一改成「作者 等 - 年份 - 标题.pdf」，并同步外部改名', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pwscanrename-'));
+  const { sha1OfFile } = require('../src/core/util');
+  // 两篇已入库论文：一篇自有命名（应被规范化），一篇曾被外部手动改名（先同步磁盘事实）
+  fs.writeFileSync(path.join(dir, '1-s2.0-S0010482525010480-main.pdf'), Buffer.from('%PDF-1.4' + String.fromCharCode(10) + '%A'));
+  fs.writeFileSync(path.join(dir, 'user-renamed.pdf'), Buffer.from('%PDF-1.4' + String.fromCharCode(10) + '%B'));
+  const id1 = (await sha1OfFile(path.join(dir, '1-s2.0-S0010482525010480-main.pdf'))).slice(0, 16);
+  const id2 = (await sha1OfFile(path.join(dir, 'user-renamed.pdf'))).slice(0, 16);
+  const mkReady = (id, fn, title, statFn) => ({
+    id, filename: fn, filepath: path.join(dir, fn), fileSize: fs.statSync(path.join(dir, statFn || fn)).size,
+    title, authors: ['Jane Doe', 'John Smith'], year: '2024', arxivId: null,
+    summary: '## TL;DR 已有总结内容足够长超过三十个字符阈值要求', summaryAt: 1,
+    tags: [], topics: [], folders: [], conceptIds: [], status: 'ready', error: null, addedAt: 1, updatedAt: 1,
+  });
+  const store = {
+    version: 2, tags: [], topics: [], folders: [], concepts: [],
+    papers: {
+      [id1]: mkReady(id1, '1-s2.0-S0010482525010480-main.pdf', 'Deep Learning Advances'),
+      // store 里还是旧文件名（外部改名未同步场景），磁盘上已是 user-renamed.pdf
+      [id2]: mkReady(id2, 'old-name-gone.pdf', 'Another Great Paper', 'user-renamed.pdf'),
+    },
+  };
+  const deps = {
+    parser: { extractText: async () => ({ text: 't', charCount: 1, numPages: 1 }) },
+    ai: {
+      summarize: async () => '',
+      extractTagsTopics: async () => ({ tags: [], topics: [] }),
+      buildSummaryMarkdown: () => '',
+      applySettingsOverride: (c) => c,
+    },
+    arxiv: {},
+    rateLimitArxiv: async () => {},
+    config: { ai: {}, arxiv: { enabled: false } },
+    saveStore: async () => {},
+    mergeTags: () => {},
+    mergeTopics: () => {},
+  };
+  const scanner = createScanner({ store, textStore: memTextStore(), papersDir: dir, deps, scanIntervalMs: 0 });
+  await scanner.scan();
+  // 出版社下载名 → 规范名
+  assert.strictEqual(store.papers[id1].filename, 'Doe 等 - 2024 - Deep Learning Advances.pdf', '自有命名被规范化');
+  assert.ok(fs.existsSync(path.join(dir, 'Doe 等 - 2024 - Deep Learning Advances.pdf')), '磁盘文件已改名');
+  // 外部改名：先同步磁盘事实（user-renamed.pdf），再规范化为规范名
+  assert.strictEqual(store.papers[id2].filename, 'Doe 等 - 2024 - Another Great Paper.pdf', '外部改名同步后再规范化');
+  assert.ok(fs.existsSync(path.join(dir, 'Doe 等 - 2024 - Another Great Paper.pdf')), '外部改名文件已规范化');
+  // 幂等：再扫一轮不再改名
+  await scanner.scan();
+  assert.strictEqual(store.papers[id1].filename, 'Doe 等 - 2024 - Deep Learning Advances.pdf', '二轮扫描幂等');
+  scanner.stop();
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('scan 元数据回填：无标题 ready 论文入 metaOnly 队列 → arXiv/AI 补标题 + 规范改名，不动总结标签', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pwmetabackfill-'));
+  const { sha1OfFile } = require('../src/core/util');
+  // 两篇无标题存量：p1 走 arXiv 重试命中；p2 arXiv  misses、走 AI 兜底
+  fs.writeFileSync(path.join(dir, 'DeepSeek-V3.2.pdf'), Buffer.from('%PDF-1.4%A'));
+  fs.writeFileSync(path.join(dir, 'random-download.pdf'), Buffer.from('%PDF-1.4%B'));
+  const id1 = (await sha1OfFile(path.join(dir, 'DeepSeek-V3.2.pdf'))).slice(0, 16);
+  const id2 = (await sha1OfFile(path.join(dir, 'random-download.pdf'))).slice(0, 16);
+  const mkReady = (id, fn) => ({
+    id, filename: fn, filepath: path.join(dir, fn), fileSize: fs.statSync(path.join(dir, fn)).size,
+    title: '', authors: [], year: null, arxivId: null,
+    abstract: '', metaSource: null, metaConfidence: 0,
+    summary: '## TL;DR 已有总结内容足够长超过三十个字符阈值要求', summaryAt: 1,
+    tags: ['existing-tag'], topics: ['已有主题'], folders: [], conceptIds: [],
+    fulltextChars: 100, status: 'ready', error: null, addedAt: 1, updatedAt: 1,
+  });
+  const store = {
+    version: 2, tags: [], topics: [], folders: [], concepts: [],
+    papers: { [id1]: mkReady(id1, 'DeepSeek-V3.2.pdf'), [id2]: mkReady(id2, 'random-download.pdf') },
+  };
+  const deps = {
+    parser: { extractText: async () => { throw new Error('metaOnly 不应重解析'); } },
+    arxiv: {
+      cleanFilenameToTitle: (f) => f.replace(/\.pdf$/i, ''),
+      searchArxiv: async (query) => {
+        if (query.includes('DeepSeek')) {
+          return { entries: [{ title: 'DeepSeek-V3.2 Technical Report', authors: ['DeepSeek Team'], summary: 'abs', id: 'http://arxiv.org/abs/2512.00001v1', primaryCategory: 'cs.CL', published: '2025-12-01T00:00:00Z' }] };
+        }
+        return { entries: [] };
+      },
+      pickBest: (candidate, entries) =>
+        entries && entries.length
+          ? { best: entries[0], confidence: 0.9, source: 'arxiv' }
+          : { best: null, confidence: 0, source: null },
+      extractArxivId: () => '2512.00001',
+    },
+    ai: {
+      summarize: async () => { throw new Error('metaOnly 不应重总结'); },
+      extractTagsTopics: async ({ title }) => ({
+        tags: ['should-not-apply'], topics: ['不应覆盖'],
+        metadata: { title: 'Random Download Paper', authors: ['Jane Doe'], year: '2023' },
+      }),
+      buildSummaryMarkdown: (md) => md,
+      applySettingsOverride: (c) => c,
+    },
+    saveStore: async () => {},
+    mergeTags: () => {},
+    mergeTopics: () => {},
+    config: { ai: { model: 'm' }, arxiv: { enabled: true } },
+    rateLimitArxiv: async () => {},
+  };
+  const textStore = memTextStore({ [id1]: '全文一', [id2]: '全文二' });
+  const scanner = createScanner({ store, textStore, papersDir: dir, deps, scanIntervalMs: 0 });
+  const r = await scanner.scan();
+  assert.strictEqual(r.backfilled, 2, '两篇无标题论文入回填队列');
+  await new Promise((res) => setTimeout(res, 200)); // 等串行 pump 跑完
+  const p1 = store.papers[id1];
+  const p2 = store.papers[id2];
+  // p1：arXiv 命中 → 标题/作者/年份齐全 + 规范改名
+  assert.strictEqual(p1.title, 'DeepSeek-V3.2 Technical Report');
+  assert.strictEqual(p1.filename, 'Team - 2025 - DeepSeek-V3.2 Technical Report.pdf', 'arXiv 路径规范改名');
+  assert.ok(fs.existsSync(path.join(dir, p1.filename)));
+  // p2：AI 兜底 → 只补元数据空字段
+  assert.strictEqual(p2.title, 'Random Download Paper');
+  assert.strictEqual(p2.filename, 'Doe - 2023 - Random Download Paper.pdf', 'AI 兜底路径规范改名');
+  assert.strictEqual(p2.metaSource, 'ai-fallback');
+  // 不动既有内容
+  assert.deepStrictEqual(p1.tags, ['existing-tag'], 'tags 不被回填覆盖');
+  assert.deepStrictEqual(p1.topics, ['已有主题'], 'topics 不被回填覆盖');
+  assert.ok(p1.summary.includes('已有总结'), 'summary 不动');
+  assert.strictEqual(p1.status, 'ready', '状态灯不动');
+  // 一次性标记：二轮扫描不再入队
+  const r2 = await scanner.scan();
+  assert.strictEqual(r2.backfilled, 0, 'metaBackfillAt 防重复入队');
   scanner.stop();
   fs.rmSync(dir, { recursive: true, force: true });
 });

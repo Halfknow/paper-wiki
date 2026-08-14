@@ -3,7 +3,7 @@
 // 自 public/app.js 拆出（v3.15 模块化重构）——声明体原样迁移，仅补 import/export。
 
 import { api, jget } from '../core/api.js';
-import { $ } from '../core/dom.js';
+import { $, selectionWithin } from '../core/dom.js';
 import { escapeHtml, starBadge, statusDot } from '../core/format.js';
 import { gotoPaperRoute, router } from '../core/nav.js';
 import { buildPath } from '../core/router.js';
@@ -14,6 +14,11 @@ import { togglePick } from './bulk.js';
 import { refresh } from './refresh.js';
 
 // ---- 列表 ----
+// 拖选文本后的 click/dblclick 抑制：拖选结束的 mouseup 会紧跟一个 click，若因此触发
+// 打开论文/阅读器，路由重建立刻摧毁选区——「选中了却复制不了」。选区非空且落在本条目内时，
+// 视为选择手势的尾巴，不触发导航。（普通点击：mousedown 已使旧选区塌陷，isCollapsed 为真，不受影响。）
+const hasSelectionWithin = selectionWithin;
+
 /** 全文检索（搜索框 body: 触发）：GET /api/search 命中论文 + 高亮片段，列表切到结果视图。 */
 async function runFulltextSearch(query) {
   state.ft = { query, results: null }; // results=null → loading 态
@@ -81,7 +86,7 @@ function renderFulltextResults(ul) {
       <div class="pt"><span class="dot ${statusDot(p)}"></span>${title}</div>
       <div class="pm"><span>${meta}</span><span class="mini-metric">${p.matches >= 50 ? '50+' : p.matches} 处命中</span></div>
       <div class="ft-snips">${(p.snippets || []).map((sn) => `<div class="ft-snip">${sn}</div>`).join('')}</div>`;
-    li.onclick = () => gotoPaperRoute(p.id);
+    li.onclick = () => { if (hasSelectionWithin(li)) return; gotoPaperRoute(p.id); };
     ul.appendChild(li);
   }
 }
@@ -170,10 +175,18 @@ export function renderList() {
         <div class="chips">${topics}${tags}</div>
         ${progress != null ? `<div class="progress-row"><div class="progress-bar"><i style="width:${progress}%"></i></div><span title="${escapeHtml('读到 ' + progress + '%' + contHint)}">${progress}%</span></div>` : ''}`;
     }
-    li.onclick = () => state.pickMode ? togglePick(p.id) : gotoPaperRoute(p.id);
-    li.ondblclick = () => router.navigate(buildPath('/reader/:id', { id: p.id }), { keepQuery: true });
+    li.onclick = () => { if (hasSelectionWithin(li)) return; state.pickMode ? togglePick(p.id) : gotoPaperRoute(p.id); };
+    li.ondblclick = () => { if (hasSelectionWithin(li)) return; router.navigate(buildPath('/reader/:id', { id: p.id }), { keepQuery: true }); };
     // 拖入收藏夹：draggable 起拖时把 id 集（多选=全部选中、否则=本篇）写入 dataTransfer。
-    li.draggable = true;
+    // 不再常驻 draggable=true——Chromium UA 样式会给 [draggable] 元素上 user-select:none，
+    // 整张卡片的标题/作者/标签全部无法选中复制（「列表文字复制不了」的根因），且作者 CSS
+    // 盖不掉（拖拽手势恒优先于选择）。改为 hover 分派：悬在文本区（标题/作者/chips）→ 不可拖
+    // （拖动手势=文本选择）；悬在留白/圆点/进度条 → 可拖（拖入侧栏收藏夹）。
+    // draggable 必须在 mousedown 之前就位（mousedown 里再设来不及触发原生 DnD），故用 mouseover。
+    li.draggable = false;
+    li.addEventListener('mouseover', (e) => {
+      li.draggable = !e.target.closest('.pt, .pm, .chips, .compact-title-line, .compact-meta, .compact-chips, .ft-snips');
+    });
     li.addEventListener('dragstart', (e) => {
       const ids = state.pickMode && state.selected.size ? [...state.selected] : [p.id];
       e.dataTransfer.effectAllowed = 'copy';
@@ -181,6 +194,7 @@ export function renderList() {
       li.classList.add('dragging');
     });
     li.addEventListener('dragend', () => {
+      li.draggable = false; // 复位（hover 分派的临时态），防拖完卡在可拖态挡住文本选择
       li.classList.remove('dragging');
       document.querySelectorAll('.side-item.drop-target').forEach((el) => el.classList.remove('drop-target'));
     });

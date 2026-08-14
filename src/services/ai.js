@@ -8,6 +8,11 @@
 // 这样用户自定义的总结提示词（可能要求 Markdown/LaTeX 章节）不再与代码的 JSON
 // 硬约束冲突——历史上正是这个冲突导致空总结 + 空标签。
 
+const { createLogger } = require('../core/logger');
+
+// 重试/超时等可诊断事件走 warn（生产默认阈值 warn，info 级会被吞掉）。
+const logger = createLogger('ai');
+
 /** 默认总结提示词：直接输出 Markdown，不包裹 JSON、不包代码块。
  *  产物结构与下方 buildSummaryMarkdown 兼容（接收原始 Markdown 字符串）。 */
 const DEFAULT_SUMMARY_PROMPT = `你是一位 AI/ML 论文研究员。阅读给定论文，输出结构化的 Markdown 总结，包含以下章节：
@@ -757,6 +762,7 @@ async function callChat({ messages, config, fetchImpl = fetch, jsonMode = true, 
       const retryable = res.status === 429 || (res.status >= 500 && res.status < 600);
       lastErr = new Error(`AI HTTP ${res.status}: ${errText.slice(0, 200)}`);
       if (!retryable) throw lastErr;
+      logger.warn('AI 请求可重试错误，退避重试', { model: reqBody.model, status: res.status, attempt, error: errText.slice(0, 120) });
     }
     // 外部取消（chatParams.signal，如后台任务被删除）不走退避重试，立即抛出
     if (cp.signal && cp.signal.aborted) throw lastErr || new Error('aborted');
@@ -817,7 +823,7 @@ async function callChatStream({ messages, config, fetchImpl = fetch, jsonMode = 
         const decoder = new TextDecoder('utf-8');
         let buffer = '';
         let reply = '';
-        let firstToken = true;
+        const ctrl = { abort: false }; // onToken 返回 false（如客户端断开）→ 置位，读流循环据此中断
         for (;;) {
           let chunk;
           try {
@@ -833,19 +839,25 @@ async function callChatStream({ messages, config, fetchImpl = fetch, jsonMode = 
           while ((sep = buffer.indexOf('\n\n')) >= 0) {
             const block = buffer.slice(0, sep);
             buffer = buffer.slice(sep + 2);
-            const tok = parseSseBlock(block, onToken);
-            if (tok) {
-              if (firstToken) firstToken = false;
-              reply += tok;
-            }
+            const tok = parseSseBlock(block, onToken, ctrl);
+            if (ctrl.abort) break;
+            if (tok) reply += tok;
+          }
+          if (ctrl.abort) {
+            // 消费方主动中断（客户端断开）：立即取消上游流，停止 completion 计费，返回已收部分
+            await reader.cancel().catch(() => {});
+            return reply;
           }
         }
-        if (!firstToken && lastErr) break; // 中途读流出错且已有输出 → 不重试，返回已收部分
-        if (reply) return reply; // 正常完成
-        if (lastErr && attempt < maxRetries) {
-          // 无任何输出 + 出错 → 退避重试
-        } else if (lastErr) {
-          break;
+        // 已有输出（正常完成或中途断流）→ 返回已收部分，不重试（重试会让前端收到重复内容）
+        if (reply) return reply;
+        if (lastErr) {
+          // 无任何输出 + 出错 → 退避重试（额度用尽则 break 抛出）
+          if (attempt >= maxRetries) break;
+        } else {
+          // 正常结束但零内容（reasoning-only 模型 / 模型真空输出）：视为成功，返回空串，**不重试**
+          // （否则一次空调用会被白重发 maxRetries 次，烧多倍 token 费用）
+          return '';
         }
         continue;
       }
@@ -861,6 +873,7 @@ async function callChatStream({ messages, config, fetchImpl = fetch, jsonMode = 
       const retryable = res.status === 429 || (res.status >= 500 && res.status < 600);
       lastErr = new Error(`AI HTTP ${res.status}: ${errText.slice(0, 200)}`);
       if (!retryable) throw lastErr;
+      logger.warn('AI 流式请求可重试错误，退避重试', { model: reqBody.model, status: res.status, attempt, error: errText.slice(0, 120) });
     }
     // 外部取消（chatParams.signal，如后台任务被删除）不走退避重试，立即抛出
     if (cp.signal && cp.signal.aborted) throw lastErr || new Error('aborted');
@@ -874,8 +887,10 @@ async function callChatStream({ messages, config, fetchImpl = fetch, jsonMode = 
 /** 解析单个 SSE 块（形如 `data: {...}`），提取 delta.content（正文）+ delta.reasoning_content（思考过程）。
  *  onToken(text, kind) 回调：kind='reasoning'（思考）| 'content'（正文）。返回累积的 content token（供持久化）。
  *  reasoning_content（GLM/DeepSeek-R1 等模型的 think 阶段）若存在，逐 token 回调让前端实时显示思考过程，
- *  不再让用户在 think 阶段干等「思考中」。reasoning 不计入返回的 reply（只存正文）。 */
-function parseSseBlock(block, onToken) {
+ *  不再让用户在 think 阶段干等「思考中」。reasoning 不计入返回的 reply（只存正文）。
+ *  ctrl（可选）：{abort} 输出参数——onToken 返回 false（消费方主动中断）时置 ctrl.abort=true，
+ *  调用方据此中断读流循环并 cancel 上游（客户端断开后不停读会白烧 completion 费用）。 */
+function parseSseBlock(block, onToken, ctrl) {
   const line = block.split('\n').find((l) => l.startsWith('data:'));
   if (!line) return '';
   const payload = line.slice(5).trim();
@@ -888,13 +903,19 @@ function parseSseBlock(block, onToken) {
     // 思考过程（reasoning）：先于 content 到达，实时回调让前端显示
     if (typeof delta.reasoning_content === 'string' && delta.reasoning_content) {
       if (typeof onToken === 'function') {
-        if (onToken(delta.reasoning_content, 'reasoning') === false) return '';
+        if (onToken(delta.reasoning_content, 'reasoning') === false) {
+          if (ctrl) ctrl.abort = true;
+          return '';
+        }
       }
     }
     // 正文（content）
     if (typeof delta.content === 'string' && delta.content) {
       if (typeof onToken === 'function') {
-        if (onToken(delta.content, 'content') === false) return '';
+        if (onToken(delta.content, 'content') === false) {
+          if (ctrl) ctrl.abort = true;
+          return '';
+        }
       }
       contentTok = delta.content;
     }

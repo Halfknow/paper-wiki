@@ -3,7 +3,7 @@
 // 自 public/app.js 拆出（v3.15 模块化重构）——声明体原样迁移，仅补 import/export。
 
 import { _conceptLayout, _conceptSort, _conceptView, generateConceptMap, openConceptFilterPop, renderConcepts, set_conceptLayout, set_conceptSort } from './concepts/concepts.js';
-import { DEL, PATCH, POST, api, sp } from './core/api.js';
+import { POST, sp } from './core/api.js';
 import { $ } from './core/dom.js';
 import { escapeHtml } from './core/format.js';
 import { gotoPaperRoute, router, syncPageQueryToUrl } from './core/nav.js';
@@ -15,7 +15,8 @@ import { patch, reader } from './detail/info-tab.js';
 import { _formulaLayout, _formulaSort, renderFormulas, resetFormulaFacet, set_formulaLayout, set_formulaSort } from './formulas/formulas.js';
 import { closeBulkMenu, setBulkBusy, syncPickUI, toggleBulkMenu, togglePickMode, updateBulkProgress } from './library/bulk.js';
 import { closeStatusMenu, openFilterPop, renderStatusMenu, toggleStatusMenu } from './library/filters.js';
-import { editingFolder, goHome, openFolderModal, pickedColor } from './library/folders.js';
+import { goHome } from './library/folders.js';
+import { openFolderManager } from './library/folder-manager.js';
 import { renderList, triggerSearch, updateSearchModeIndicator } from './library/list.js';
 import { refresh } from './library/refresh.js';
 import { syncAdvancedPanelFromDsl } from './search/advanced.js';
@@ -44,6 +45,7 @@ export function bind() {
     const v = e.target.value;
     const render = pageSearch[currentView()];
     if (render) {
+      syncAdvancedPanelFromDsl(v);        // v3.20：概念/公式页也镜像 DSL 到高级面板
       clearTimeout(t);
       t = setTimeout(() => { render(); syncPageQueryToUrl(); }, 250);
       return;
@@ -55,13 +57,26 @@ export function bind() {
     t = setTimeout(() => triggerSearch(v), 250);
   };
   // 回车 = 立即应用当前 DSL（不等防抖）；Esc = 清空退出
+  // 清空搜索（Esc 与 × 按钮共用）：按当前视图走对应清理 + 回写 URL
+  const clearSearch = () => {
+    clearTimeout(t);
+    closeSuggest();
+    const render = pageSearch[currentView()];
+    $('search').value = '';
+    if (render) { render(); syncPageQueryToUrl(); return; }
+    state.filter.q = '';
+    if (state.ft) { state.ft = null; renderList(); }
+    syncAdvancedPanelFromDsl('');
+    refresh();
+  };
+  $('search-clear').onclick = () => { clearSearch(); $('search').focus(); };
   $('search').addEventListener('keydown', (e) => {
     // 内联补全浮层打开时：↑↓/Enter/Tab/Esc 走补全（仅论文页有补全）
     if (handleSuggestKeydown(e)) { e.preventDefault(); return; }
     const render = pageSearch[currentView()];
     if (render) {
       if (e.key === 'Enter') { e.preventDefault(); clearTimeout(t); render(); syncPageQueryToUrl(); }
-      else if (e.key === 'Escape') { e.preventDefault(); $('search').value = ''; clearTimeout(t); render(); syncPageQueryToUrl(); }
+      else if (e.key === 'Escape') { e.preventDefault(); clearSearch(); }
       return;
     }
     if (e.key === 'Enter') {
@@ -72,11 +87,7 @@ export function bind() {
     } else if (e.key === 'Escape') {
       e.preventDefault();
       if (closeSuggest()) return;          // 先关补全浮层
-      $('search').value = '';
-      state.filter.q = '';
-      if (state.ft) { state.ft = null; renderList(); }
-      syncAdvancedPanelFromDsl('');
-      refresh();
+      clearSearch();
     }
   });
   // 输入框失焦时关补全（延迟，让点击事件先触发）
@@ -435,6 +446,25 @@ export function bind() {
   document.addEventListener('click', (e) => {
     if (!$('bulk-actions').contains(e.target)) closeBulkMenu();
   });
+  // 导出（BibTeX / CSV）：多选菜单两项，共用 downloadExport（v3.20 工具条导出按钮已退役——详情头有复制 BibTeX）。
+  // 走 <a href> 让浏览器原生下载（响应带 Content-Disposition），sp() 注入空间上下文。
+  const downloadExport = (format, ids) => {
+    const qs = ids && ids.length ? '?ids=' + ids.map(encodeURIComponent).join(',') : '';
+    const a = document.createElement('a');
+    a.href = sp('/api/papers.' + format + qs);
+    a.rel = 'noopener';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  };
+  const bulkExport = (format) => {
+    const ids = [...state.selected];
+    if (!ids.length) { toast('请先选择论文', 'error'); return; }
+    downloadExport(format, ids);
+    closeBulkMenu();
+  };
+  if ($('btn-pick-export-bib')) $('btn-pick-export-bib').onclick = () => bulkExport('bib');
+  if ($('btn-pick-export-csv')) $('btn-pick-export-csv').onclick = () => bulkExport('csv');
   // 全选/取消全选当前列表
   $('btn-pick-all').onclick = () => {
     const total = state.papers.length;
@@ -546,36 +576,9 @@ export function bind() {
     refresh();
   };
 
-  // 收藏夹模态
-  $('btn-new-folder').onclick = () => openFolderModal(null);
-  $('folder-modal-cancel').onclick = () => $('folder-modal').classList.remove('active');
-  $('folder-modal-save').onclick = async () => {
-    const name = $('folder-name-input').value.trim();
-    if (!name) { toast('收藏夹名称不能为空', 'error'); return; }
-    if (editingFolder) {
-      const r = await PATCH('/api/folders/' + editingFolder.id, { name, color: pickedColor });
-      if (!r.ok) { toast(r.error || '收藏夹保存失败', 'error'); return; }
-    } else {
-      const r = await POST('/api/folders', { name, color: pickedColor });
-      if (!r.ok) { toast(r.error || '收藏夹创建失败', 'error'); return; }
-    }
-    $('folder-modal').classList.remove('active');
-    toast(editingFolder ? '收藏夹已更新' : '收藏夹已创建');
-    refresh();
-  };
-  $('folder-modal-delete').onclick = async () => {
-    if (!editingFolder) return;
-    if (!(await PWDialog.confirm(`删除收藏夹「${editingFolder.name}」？论文不会被删除。`, { title: '删除收藏夹', danger: true, okText: '删除' }))) return;
-    const r = await DEL('/api/folders/' + editingFolder.id);
-    if (!r.ok) { toast(r.error || '收藏夹删除失败', 'error'); return; }
-    if (state.filter.folder === editingFolder.id) state.filter.folder = '';
-    $('folder-modal').classList.remove('active');
-    toast('收藏夹已删除');
-    refresh();
-  };
-  $('folder-modal').onclick = (e) => {
-    if (e.target.id === 'folder-modal') $('folder-modal').classList.remove('active');
-  };
+  // 收藏夹管理面板（v3.22）：入口在侧栏「收藏夹」标题行 ⚙；新建/改名/换色/排序/删除
+  // 一处收口（旧 folder-modal 与行内铅笔退役）。面板内部事件由 folder-manager.js 自行接线。
+  $('btn-manage-folders').onclick = () => openFolderManager();
 
   // ESC 关闭阅读器/模态
   document.addEventListener('keydown', (e) => {
@@ -593,7 +596,7 @@ export function bind() {
     }
     // 列表键盘导航：仅在不输入、不开阅读器、不开模态、不在设置/概念视图时生效
     if (!$('reader-view').classList.contains('active')
-        && !$('folder-modal').classList.contains('active')
+        && !$('folder-manager').classList.contains('active')
         && !$('import-modal').classList.contains('active')
         && !$('discover-modal').classList.contains('active')
         && document.body.dataset.view === 'library'
@@ -622,7 +625,7 @@ export function bind() {
         if (router.current() && router.current().name === 'reader') window.history.back();
         else if (reader) reader.close();
       }
-      $('folder-modal').classList.remove('active');
+      $('folder-manager').classList.remove('active');
       $('import-modal').classList.remove('active');
       $('discover-modal').classList.remove('active');
       // 设置覆盖层：回到打开它之前的那个页面（同 closeSettingsOverlay）

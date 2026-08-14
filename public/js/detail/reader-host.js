@@ -4,11 +4,15 @@
 
 import { PATCH, api, jget } from '../core/api.js';
 import { $ } from '../core/dom.js';
+import { buildPath } from '../core/router.js';
+import { router } from '../core/nav.js';
 import { flushPendingNotes, state } from '../core/state.js';
 import { toast } from '../core/ui-kit.js';
 import { reader, set_reader, syncLocalAnnotations } from './info-tab.js';
+import { shelfAddAndActivate } from '../reader/shelf.js';
 import { refresh } from '../library/refresh.js';
-import { PaperReader } from '../../reader.js';
+// PaperReader 改为首次打开时动态 import（下方 openReader 内）——reader.js 顶层静态引入
+// pdfjs.js + pdfjs-viewer.js（合计 ~770KB），静态 import 会让首屏无条件背上这份成本。
 
 // 打开前总是拉一次 detailView：summaryView 不含 annotations，且刚保存后的详情缓存也可能是旧的。
 export async function openReader(paper) {
@@ -19,7 +23,11 @@ export async function openReader(paper) {
       if (state.detail && state.detail.id === paper.id) state.detail = { ...state.detail, ...full };
     }
   } catch (e) { /* 拉取失败不阻塞阅读，只是可能无法回显最新批注 */ }
+  // 上架阅读架（v3.21）：已在不重复加、不重排；不 await——本地态在链内同步就绪，
+  // PDF 打开不该等这次网络往返（徽章经订阅自动追平）。
+  shelfAddAndActivate(paper);
   if (!reader) {
+    const { PaperReader } = await import('../../reader.js'); // 惰性加载 pdf.js（模块map缓存，二次打开零成本）
     set_reader(new PaperReader({
       view: $('reader-view'),
       canvasWrap: $('reader-canvas-wrap'),
@@ -34,6 +42,16 @@ export async function openReader(paper) {
       toolDelete: $('reader-tool-delete'),
       colorsEl: $('reader-colors'),
       title: $('reader-title'), saved: $('reader-saved'),
+      // 返回按钮（左上角 ←）：与全局 Esc 同语义——当前在 /reader/:id 路由时 history.back()
+      // （路由 leave 钩子负责关阅读器，URL 同步退回）；否则（异常态）直接关视图。
+      onBack: () => {
+        const r = router.current && router.current();
+        if (r && r.name === 'reader') window.history.back();
+        else if (reader) reader.close();
+      },
+      // 阅读架切论文（v3.21）：走 /reader/:id 路由 replace 导航——同名路由不触发 leave
+      // （阅读器不闪关），enter 重跑本函数整链（URL 深链/刷新语义天然正确；replace 不污染后退栈）。
+      onSwitchPaper: (id) => router.navigate(buildPath('/reader/:id', { id }), { replace: true, keepQuery: true }),
       onClose: () => { flushPendingNotes(); setTimeout(refresh, 200); },
       onSaveProgress: async (id, payload) => {
         // 阅读进度 ≥ 95% 自动判为已读，免去手动改状态；首次进入(reading)也一起带上

@@ -95,6 +95,30 @@ function register(t, ctx) {
     return ok(res, f);
   });
 
+  // PUT /api/folders/order { ids: [...] }（v3.22 收藏夹管理面板的拖拽排序）
+  // 按给定 id 顺序重排：未知 id 忽略、重复取首现；未列出的夹按原相对顺序补在末尾
+  // （前端只发可见顺序，新增未同步的夹不会被误删）。返回与 GET 同形（带 count）。
+  t.put('/api/folders/order', async ({ res, body, store, save }) => {
+    const op = JSON.parse(body || '{}');
+    const ids = Array.isArray(op.ids) ? op.ids.map(String) : [];
+    const byId = new Map((store.folders || []).map((f) => [f.id, f]));
+    const next = [];
+    const seen = new Set();
+    for (const id of ids) {
+      const f = byId.get(id);
+      if (f && !seen.has(id)) {
+        next.push(f);
+        seen.add(id);
+      }
+    }
+    for (const f of store.folders || []) if (!seen.has(f.id)) next.push(f);
+    store.folders = next;
+    await save(store);
+    const counts = {};
+    for (const p of Object.values(store.papers)) for (const f of p.folders || []) counts[f] = (counts[f] || 0) + 1;
+    return ok(res, store.folders.map((f) => ({ ...f, count: counts[f.id] || 0 })));
+  });
+
   // DELETE /api/folders/:id
   t.delete('/api/folders/:id', async ({ res, params, store, save }) => {
     deleteFolder(store, params.id);

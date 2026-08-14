@@ -9,6 +9,10 @@
  *   - 内联补全：检测光标前最近的 field: 前缀
  *
  * 注意：applyMetadataQuery（服务端在 /api/papers 用）前端不需要——筛选都由后端做。
+ *
+ * v3.20 概念/公式专用字段（category/freq/context/source/plottable）：仅前端客户端过滤用，
+ * 后端 /api/concepts /api/formulas 不解析 DSL（数据全量在内存）。这些字段在论文页输入会
+ * 被后端当成普通文本词（lib/search-query.js 不认），语义不通故实际无影响。
  */
 (function () {
   const FIELD_ALIASES = { star: 'starred' };
@@ -120,6 +124,17 @@
         if (f === 'starred' || f === 'star') { if (!node.exclude && /^(1|true|yes|on)$/i.test(node.value)) metadata.fields.starred = true; return; }
         if (f === 'status') { if (!node.exclude) metadata.fields.status = node.value.toLowerCase(); return; }
         if (f === 'read') { if (!node.exclude) metadata.fields.readStatus = node.value.toLowerCase(); return; }
+        // v3.20 概念/公式专用字段（前端客户端过滤，后端不解析）：
+        //   category: 值匹配（多值，支持 -category: 排除）；概念/公式都用
+        //   freq: 枚举（shared=≥2 篇 / hot=≥4 篇）；概念专用
+        //   context:. 有章节出处（. 占位=非空判定）；概念专用
+        //   source: 枚举（ai/vision/mineru/manual）；公式专用
+        //   plottable:1 可绘图（布尔，沿用 starred 语义）；公式专用
+        if (f === 'category') { if (!metadata.fields[f]) metadata.fields[f] = []; metadata.fields[f].push({ value: node.value, exclude: !!node.exclude }); return; }
+        if (f === 'freq') { if (!node.exclude && /^(shared|hot)$/i.test(node.value)) metadata.fields.freq = node.value.toLowerCase(); return; }
+        if (f === 'context') { if (!node.exclude) metadata.fields.hasContext = true; return; }
+        if (f === 'source') { if (!node.exclude) metadata.fields.source = node.value.toLowerCase(); return; }
+        if (f === 'plottable') { if (!node.exclude && /^(1|true|yes|on)$/i.test(node.value)) metadata.fields.plottable = true; return; }
         if (['title', 'abstract', 'summary', 'notes', 'author', 'tag', 'topic'].includes(f)) { if (!metadata.fields[f]) metadata.fields[f] = []; metadata.fields[f].push({ value: node.value, exclude: !!node.exclude }); return; }
         metadata.text.words.push((node.field + ':' + node.value).toLowerCase());
       }
@@ -148,6 +163,16 @@
     if (panel.readStatus) parts.push('read:' + panel.readStatus);
     if (panel.starred) parts.push('star:1');
     if (panel.scope === 'body') { if (panel.bodyText && panel.bodyText.trim()) parts.push('body:' + panel.bodyText.trim()); else parts.push('in:body'); }
+    // v3.20 概念/公式字段（论文页 panel 无这些键则跳过）。
+    // 注意：DSL tokenizer 的 field:value 在空格处断词（含空格的值不能整体作为一个 field 值，
+    // 引号也不行——tokenizer 先在 " 处断开 chunk）。分类值应是单 token（attention/loss 等），
+    // 含空格的值会被拆成多个 token——与 title:"phrase" 同样的既有局限。
+    (panel.categories || []).forEach((c) => pushField('category', c));
+    (panel.excludeCategories || []).forEach((c) => parts.push('-category:' + c));
+    if (panel.freq) parts.push('freq:' + panel.freq);
+    if (panel.hasContext) parts.push('context:.');
+    if (panel.source) parts.push('source:' + panel.source);
+    if (panel.plottable) parts.push('plottable:1');
     if (panel.text && panel.text.trim()) parts.push(panel.text.trim());
     return parts.join(' ');
   }
@@ -155,7 +180,7 @@
   function parseToPanel(input) {
     const { metadata, bodyQuery } = parseSearchQuery(input);
     const f = metadata.fields;
-    const panel = { title: '', abstract: '', summary: '', notes: '', author: '', tags: [], excludeTags: [], topics: [], excludeTopics: [], yearFrom: '', yearTo: '', status: '', readStatus: '', starred: false, hasNotes: false, scope: bodyQuery !== null ? 'body' : 'metadata', bodyText: '', text: '' };
+    const panel = { title: '', abstract: '', summary: '', notes: '', author: '', tags: [], excludeTags: [], topics: [], excludeTopics: [], yearFrom: '', yearTo: '', status: '', readStatus: '', starred: false, hasNotes: false, scope: bodyQuery !== null ? 'body' : 'metadata', bodyText: '', text: '', categories: [], excludeCategories: [], freq: '', hasContext: false, source: '', plottable: false };
     if (f.title) panel.title = f.title.filter((e) => !e.exclude).map((e) => e.value).join(' ');
     if (f.abstract) panel.abstract = f.abstract.filter((e) => !e.exclude).map((e) => e.value).join(' ');
     if (f.summary) panel.summary = f.summary.filter((e) => !e.exclude).map((e) => e.value).join(' ');
@@ -167,6 +192,12 @@
     if (f.status) panel.status = f.status;
     if (f.readStatus) panel.readStatus = f.readStatus;
     if (f.starred === true) panel.starred = true;
+    // v3.20 概念/公式字段
+    if (f.category) { panel.categories = f.category.filter((e) => !e.exclude).map((e) => e.value); panel.excludeCategories = f.category.filter((e) => e.exclude).map((e) => e.value); }
+    if (f.freq) panel.freq = f.freq;
+    if (metadata.fields.hasContext === true) panel.hasContext = true;
+    if (f.source) panel.source = f.source;
+    if (metadata.fields.plottable === true) panel.plottable = true;
     if (bodyQuery) panel.bodyText = bodyQuery;
     if (metadata.text.words.length || metadata.text.phrases.length) panel.text = metadata.text.phrases.map((p) => '"' + p + '"').concat(metadata.text.words).join(' ');
     if (metadata.hasOr) panel.text = String(input || '').trim();

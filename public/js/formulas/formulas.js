@@ -6,7 +6,7 @@ import { DEL, PATCH, jget, sp } from '../core/api.js';
 import { $ } from '../core/dom.js';
 import { escapeHtml } from '../core/format.js';
 import { renderMd } from '../core/markdown.js';
-import { router } from '../core/nav.js';
+import { router, syncPageQueryToUrl } from '../core/nav.js';
 import { buildPath } from '../core/router.js';
 import { state } from '../core/state.js';
 import { toast } from '../core/ui-kit.js';
@@ -64,13 +64,56 @@ function renderKatex(latex, display) {
 
 const VAR_ROLE_LABEL = { input: '输入', param: '参数', output: '输出', const: '常量' };
 
-// 分类分面选中集（v3.17 第二步，侧栏多选；空 = 不限）。内存态，不持久化。
-const _formulaCats = new Set();
+// v3.20：DSL 是单一事实源——搜索框里的 category:/source:/plottable: 决定筛选。
+// _formulaCats / _formulaFilter 从 DSL 派生（renderFormulas 每次刷新），侧栏/高级面板写 DSL。
+let _formulaCats = new Set();       // 从 DSL category: 派生（侧栏多选）
+let _formulaFilter = { source: '', plottable: false }; // 从 DSL source:/plottable: 派生
+
+/** 从搜索框 DSL 解析派生 _formulaCats / _formulaFilter。返回文本词/短语供 renderFormulas 过滤。 */
+function _refreshFormulaFilterFromDsl() {
+  const S = window.PaperWikiSearch;
+  const dsl = (($('search') || {}).value || '').trim();
+  if (!S) {
+    _formulaCats = new Set();
+    _formulaFilter = { source: '', plottable: false };
+    return { words: dsl ? [dsl.toLowerCase()] : [], phrases: [], excludeWords: [], excludePhrases: [] };
+  }
+  const { metadata } = S.parseSearchQuery(dsl);
+  _formulaCats = new Set((metadata.fields.category || []).filter((e) => !e.exclude).map((e) => e.value));
+  _formulaFilter = {
+    source: metadata.fields.source || '',
+    plottable: metadata.fields.plottable === true,
+  };
+  return {
+    words: metadata.text.words,
+    phrases: metadata.text.phrases,
+    excludeWords: metadata.text.excludeWords,
+    excludePhrases: metadata.text.excludePhrases,
+  };
+}
+
+/** 把分类/来源/可绘图合并进搜索框 DSL（保留裸词/文本部分）。
+ *  parts = { categories?, source?, plottable? }，缺省的键不动（undefined=保留现状）。 */
+function _mergeFormulaDsl(parts) {
+  const S = window.PaperWikiSearch;
+  const inp = $('search');
+  if (!inp || !S) return;
+  const cur = S.parseToPanel(inp.value);
+  const merged = {
+    text: cur.text,
+    categories: parts.categories !== undefined ? parts.categories : cur.categories,
+    source: parts.source !== undefined ? parts.source : cur.source,
+    plottable: parts.plottable !== undefined ? parts.plottable : cur.plottable,
+  };
+  inp.value = S.buildDslFromPanel(merged);
+  syncPageQueryToUrl();
+}
 
 /** 渲染公式页侧栏：分类分面（与概念页同构；分类值是模型产出的自由字符串，故从数据里现算）。 */
 export function renderFormulaSidebar() {
   const host = $('side-formulas');
   if (!host) return;
+  _refreshFormulaFilterFromDsl(); // 侧栏 active 态从 DSL 派生
   const counts = {};
   for (const f of state.formulas || []) {
     const k = f.category || '未分类';
@@ -102,15 +145,18 @@ export function renderFormulaSidebar() {
   host.querySelectorAll('.side-item[data-cat]').forEach((el) => {
     el.onclick = () => {
       const k = el.dataset.cat;
-      if (!k) _formulaCats.clear();                              // 「全部公式」= 清空分面
-      else if (_formulaCats.has(k)) _formulaCats.delete(k);
-      else _formulaCats.add(k);
+      // 写 DSL（单一事实源），renderFormulas/renderFormulaSidebar 从 DSL 派生
+      const next = new Set(_formulaCats);
+      if (!k) next.clear();                                        // 「全部公式」= 清空分面
+      else if (next.has(k)) next.delete(k);
+      else next.add(k);
+      _mergeFormulaDsl({ categories: [...next] });
       renderFormulaSidebar();
       renderFormulas();
     };
   });
   const clear = $('side-fcat-clear');
-  if (clear) clear.onclick = () => { _formulaCats.clear(); renderFormulaSidebar(); renderFormulas(); };
+  if (clear) clear.onclick = () => { _mergeFormulaDsl({ categories: [] }); renderFormulaSidebar(); renderFormulas(); };
   const collapse = $('btn-collapse-formulas');
   if (collapse) collapse.onclick = () => setSidebarCollapsed(true);
   // 收起态 rail 的「全部公式」按钮 active 态（无分面选中时高亮）
@@ -120,20 +166,32 @@ export function renderFormulaSidebar() {
 
 /** 「全部公式」= 清空分类分面。收起态 rail 按钮（bind.js 接线）与展开侧栏项共用入口。 */
 export function resetFormulaFacet() {
-  _formulaCats.clear();
+  _mergeFormulaDsl({ categories: [] });
   renderFormulaSidebar();
   renderFormulas();
 }
 
 export function renderFormulas() {
-  // 查询词来自顶栏那个上下文搜索框（v3.17，页内 #formula-q 已退役）
-  const q = (($('search') || {}).value || '').trim().toLowerCase();
+  // 查询词来自顶栏那个上下文搜索框（v3.17，页内 #formula-q 已退役）。
+  // v3.20：解析 DSL——裸词/短语匹配 name/canonicalName/latex/description/category（AND），
+  // category:/source:/plottable: 结构化筛选。
+  const { words, phrases, excludeWords, excludePhrases } = _refreshFormulaFilterFromDsl();
+  const hasText = words.length > 0 || phrases.length > 0;
   const sort = _formulaSort;
   const layout = _formulaLayout;
-  let list = (state.formulas || []).filter(
-    (f) => !q || [f.name, f.canonicalName, f.latex, f.description, f.category].join(' ').toLowerCase().includes(q),
-  );
+  let list = (state.formulas || []).filter((f) => {
+    if (hasText) {
+      const hay = [f.name, f.canonicalName, f.latex, f.description, f.category].join(' ').toLowerCase();
+      for (const w of words) if (!hay.includes(w)) return false;
+      for (const p of phrases) if (!hay.includes(p)) return false;
+      for (const w of excludeWords) if (hay.includes(w)) return false;
+      for (const p of excludePhrases) if (hay.includes(p)) return false;
+    }
+    return true;
+  });
   if (_formulaCats.size) list = list.filter((f) => _formulaCats.has(f.category || '未分类')); // 侧栏分类分面
+  if (_formulaFilter.source) list = list.filter((f) => (f.source || 'ai') === _formulaFilter.source);
+  if (_formulaFilter.plottable) list = list.filter((f) => !!f.plottable);
   const byName = (a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'zh-Hans-CN-u-co-pinyin');
   if (sort === 'freq') {
     list = list.slice().sort((a, b) => (b.paperIds || []).length - (a.paperIds || []).length || byName(a, b));
@@ -154,6 +212,7 @@ export function renderFormulas() {
   g.innerHTML = '';
   _wireFormulaGridOnce(g); // grid 级事件委托（一次性，懒加载追加批次不重复绑）
   if (!list.length) {
+    const q = (($('search') || {}).value || '').trim();
     g.innerHTML =
       '<div class="empty-state">' +
       (q

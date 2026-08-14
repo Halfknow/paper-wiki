@@ -63,6 +63,21 @@ test('migrate 幂等建表', async () => {
   await db.close();
 });
 
+test('migrate：可选迁移（002 tsvector GIN / 006 pg_trgm）在 pg-mem 跳过不记账、不报错', async () => {
+  // pg-mem 不支持 CREATE EXTENSION / GIN，.optional. 迁移失败时应被跳过（不写入 schema_migrations），
+  // 且不阻断 migrate —— 真实 PG 首次成功后记账，下次跳过；查询侧 searchFulltext 自带 ILIKE 降级。
+  const db = memDb();
+  await db.migrate();
+  const applied = await db.query('SELECT name FROM schema_migrations ORDER BY name');
+  const names = applied.rows.map((r) => r.name);
+  // 必须迁移文件存在
+  assert.ok(names.includes('001-init.sql'), '基础迁移已记账');
+  // 002/006 在 pg-mem 一定跳过（不记账）
+  assert.ok(!names.includes('002-fulltext-gin.optional.sql'), '002 在 pg-mem 跳过不记账');
+  assert.ok(!names.includes('006-paper-texts-trigram.optional.sql'), '006 在 pg-mem 跳过不记账');
+  await db.close();
+});
+
 test('registry: 空库返回 null，upsert 后可读', async () => {
   const { db, repo } = await repoMem();
   assert.equal(await repo.loadRegistry(), null);

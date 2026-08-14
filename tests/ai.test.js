@@ -687,6 +687,71 @@ test('callChatStream onToken 返回 false 时该块 content 不计入 reply', as
   assert.strictEqual(reply, 'A', 'onToken 返回 false 的块不累积进 reply');
 });
 
+test('callChatStream 正常结束但零内容（reasoning-only / 空输出）返回空串且不重试', async () => {
+  const { callChatStream } = require('../src/services/ai');
+  const sse = 'data: {"choices":[{"delta":{"reasoning_content":"只想不说"}}]}\n\ndata: [DONE]\n\n';
+  let calls = 0;
+  const reply = await callChatStream({
+    messages: [{ role: 'user', content: 'hi' }],
+    config: CFG,
+    fetchImpl: async () => {
+      calls++;
+      return { ok: true, body: sseStream(sse) };
+    },
+  });
+  assert.strictEqual(reply, '', '零内容视为成功，返回空串');
+  assert.strictEqual(calls, 1, '空 reply 不得触发重发（否则会白烧 maxRetries 倍 token）');
+});
+
+test('callChatStream 中途断流且已有输出 → 返回已收部分（不重试不抛出）', async () => {
+  const { callChatStream } = require('../src/services/ai');
+  // 第一块正常下发，随后底层流出错（pull 时异步 error，模拟连接中断）
+  const flaky = new ReadableStream({
+    start(c) {
+      c.enqueue(new TextEncoder().encode('data: {"choices":[{"delta":{"content":"半句"}}]}\n\n'));
+    },
+    pull(c) {
+      c.error(new Error('connection reset'));
+    },
+  });
+  let calls = 0;
+  const reply = await callChatStream({
+    messages: [{ role: 'user', content: 'hi' }],
+    config: CFG,
+    fetchImpl: async () => {
+      calls++;
+      return { ok: true, body: flaky };
+    },
+  });
+  assert.strictEqual(reply, '半句', '断流时返回已收部分而非丢弃后抛错');
+  assert.strictEqual(calls, 1, '已有输出不重试（防前端收到重复内容）');
+});
+
+test('callChatStream onToken 返回 false（客户端断开）→ cancel 上游 reader 停止计费', async () => {
+  const { callChatStream } = require('../src/services/ai');
+  let cancelled = false;
+  // 持续吐 token 的流：第一块触发中断后，若不停读会一直烧钱
+  const endless = new ReadableStream({
+    start(c) {
+      c.enqueue(new TextEncoder().encode('data: {"choices":[{"delta":{"content":"停"}}]}\n\n'));
+    },
+    pull(c) {
+      c.enqueue(new TextEncoder().encode('data: {"choices":[{"delta":{"content":"续"}}]}\n\n'));
+    },
+    cancel() {
+      cancelled = true;
+    },
+  });
+  const reply = await callChatStream({
+    messages: [{ role: 'user', content: 'hi' }],
+    config: CFG,
+    fetchImpl: async () => ({ ok: true, body: endless }),
+    onToken: () => false, // 模拟客户端已断开
+  });
+  assert.strictEqual(reply, '', '中断块本身不计入 reply');
+  assert.ok(cancelled, '消费方中断后必须 cancel 上游 reader（否则继续烧 completion 费用）');
+});
+
 // ==================== callChat 重试 / chatParams 透传 ====================
 
 test('callChat 5xx 重试耗尽后抛最后一次错误（1+4 次尝试）', async () => {

@@ -11,6 +11,7 @@ const parser = require('./services/parser');
 const arxiv = require('./services/arxiv');
 const ai = require('./services/ai');
 const { cleanFilenameToTitle, createRateLimiter, log } = require('./core/util');
+const logger = require('./core/logger').createLogger('server');
 const { createApiRouter } = require('./api/router');
 
 const MIME = {
@@ -109,7 +110,7 @@ async function main() {
   try {
     await db.migrate();
   } catch (e) {
-    console.error('[fatal] PostgreSQL 不可用（DATABASE_URL/config.databaseUrl）：', e && e.message);
+    logger.error('[fatal] PostgreSQL 不可用（DATABASE_URL/config.databaseUrl）', e);
     process.exit(1);
   }
   const repo = createRepository(db);
@@ -130,7 +131,7 @@ async function main() {
         const store = await manager.getSpaceStore(sp.id);
         if (store) await backupStoreObject(path.join(backupsDir, sp.id), store);
       } catch (e) {
-        log('[backup] failed for space', sp.id, e && e.message);
+        logger.error('备份单空间失败', { space: sp.id, error: e && e.message });
       }
     }
   }
@@ -148,7 +149,18 @@ async function main() {
     mergeFormulas,
   };
   const scanner = createMultiSpaceScanner({ manager, deps });
-  const router = createApiRouter({ manager, scanner, globalConfig: config });
+  const router = createApiRouter({
+    manager,
+    scanner,
+    globalConfig: config,
+    // health 探测：DB 连通性（db.query SELECT 1）+ 磁盘剩余（fs.statfs 两个目录）
+    healthDeps: {
+      query: (text, params) => db.query(text, params),
+      papersDir: papersRoot,
+      backupsDir,
+      minDiskMb: (config.health && config.health.minDiskMb) || 100,
+    },
+  });
 
   const PUBLIC_DIR = path.join(projectRoot, 'public');
   const NM = path.join(projectRoot, 'node_modules');
@@ -209,7 +221,7 @@ async function main() {
       }
       return serveStatic(req, res, fp, { 'Cache-Control': 'no-cache, must-revalidate' });
     } catch (e) {
-      log('server error', e.message);
+      logger.error('请求处理异常', e);
       if (!res.headersSent) {
         const isProd = process.env.NODE_ENV === 'production';
         res.writeHead(500, { 'Content-Type': 'application/json' });
@@ -221,9 +233,12 @@ async function main() {
 
   scanner.start();
   // 每日定时备份（每 6 小时检查一次；backupStoreObject 内部按天去重）
-  const backupTimer = setInterval(() => backupAllSpaces().catch(() => {}), 6 * 60 * 60 * 1000);
+  const backupTimer = setInterval(
+    () => backupAllSpaces().catch((e) => logger.error('定时备份周期异常', e)),
+    6 * 60 * 60 * 1000,
+  );
   backupTimer.unref();
-  backupAllSpaces().catch(() => {}); // 启动即备一次
+  backupAllSpaces().catch((e) => logger.error('启动备份异常', e)); // 启动即备一次
   const port = process.env.PORT || config.port || 8888;
   const host = process.env.HOST || config.host || '127.0.0.1';
   server.listen(port, host, () => {
@@ -241,7 +256,7 @@ async function main() {
       await scanner.drain(5000);
       log('shutdown: drained in-flight pipeline');
     } catch (e) {
-      log('shutdown drain error', e && e.message);
+      logger.error('shutdown drain 异常', e);
     }
     await db.close().catch(() => {});
     server.close(() => process.exit(0));
@@ -254,7 +269,7 @@ async function main() {
 
 if (require.main === module)
   main().catch((e) => {
-    console.error(e);
+    logger.error('启动失败', e);
     process.exit(1);
   });
 

@@ -3,7 +3,7 @@
 // 自 public/app.js 拆出（v3.15 模块化重构）——声明体原样迁移，仅补 import/export。
 
 import { PATCH, api, sp } from '../core/api.js';
-import { $ } from '../core/dom.js';
+import { $, runAfterSelectionRelease, selectionWithin } from '../core/dom.js';
 import { escapeHtml } from '../core/format.js';
 import { renderChatMd, truncateChatTitle } from '../core/markdown.js';
 import { chatState, set_chatState, state } from '../core/state.js';
@@ -209,6 +209,9 @@ export function renderChatTab(body, p) {
     if (attachBtn) attachBtn.onclick = () => fileInput.click();
     if (inputEl) {
       inputEl.addEventListener('paste', (e) => {
+        // 冒泡拦截：pdf.js UIManager 的 document 级 paste 监听（阅读器开过后存在）是无条件
+        // preventDefault 的，不拦会吞掉文本粘贴（reader 抽屉同款防护，见 reader.js bindChat）。
+        e.stopPropagation();
         const items = e.clipboardData && e.clipboardData.items;
         if (!items) return;
         let added = false;
@@ -307,7 +310,8 @@ export function renderChatTab(body, p) {
       const all = liveList ? [...liveList.querySelectorAll('.chat-msg.assistant')] : [];
       return all.length ? all[all.length - 1] : null;
     };
-    /** 把占位切换到 streaming 气泡态（首 token 到达时调用一次）。 */
+    /** 把占位切换到 streaming 气泡态（首 token 到达时调用一次；后续调用必须幂等——
+     *  无条件 innerHTML='' 会每 token 清空气泡，摧毁用户正在进行的文本选择）。 */
     const ensureStreamingBubble = () => {
       const liveNode = lastAssistantNode();
       if (!liveNode) return;
@@ -315,9 +319,13 @@ export function renderChatTab(body, p) {
       if (!bubble) return;
       bubble.classList.remove('thinking-skeleton');
       bubble.classList.add('streaming');
-      // skeleton 的 .thinking 内容替换为空 .streaming 容器
+      // skeleton 的 .thinking 内容替换为空 .streaming 容器（仅在思维骨架→流式切换时执行一次）
       const content = bubble.querySelector('.chat-content');
-      if (content) { content.classList.remove('thinking'); content.classList.add('streaming'); content.innerHTML = ''; }
+      if (content && content.classList.contains('thinking')) {
+        content.classList.remove('thinking');
+        content.classList.add('streaming');
+        content.innerHTML = '';
+      }
     };
     const renderAccumulated = () => {
       const liveNode = lastAssistantNode();
@@ -332,6 +340,10 @@ export function renderChatTab(body, p) {
       ensureStreamingBubble();
       const content = bubble.querySelector('.chat-content');
       if (content) {
+        // 选区保护：用户正在气泡里选中文字时跳过本次 innerHTML 重建（每 token 全量重渲
+        // 会摧毁选区——「流式回答无法选中复制」的根因）。token 持续到来，下个 token 自然补渲；
+        // 流式结束的定型渲染见 onDone 的推迟逻辑。
+        if (selectionWithin(content)) return;
         content.innerHTML = renderChatMd(accumulated, { final: false });  // markdown 增量重渲（流式不折叠代码块）
       }
       scrollChatListToBottom();
@@ -347,6 +359,7 @@ export function renderChatTab(body, p) {
       }
       const rb = el.querySelector('.chat-reasoning-body');
       if (rb) {
+        if (selectionWithin(rb)) return; // 选区保护（同正文）：选中思考内容时不重建
         rb.innerHTML = renderChatMd(accumulatedReasoning, { final: false }); // 思考内容也渲染 markdown
         // 思考体有独立的 max-height+overflow，必须滚它自己，否则超长时新 token 不可见（像卡住）
         rb.scrollTop = rb.scrollHeight;
@@ -385,27 +398,35 @@ export function renderChatTab(body, p) {
           const liveNode = lastAssistantNode();
           if (liveNode && p.chat.length) {
             const lastMsg = p.chat[p.chat.length - 1];
-            const tmp = document.createElement('div');
-            tmp.innerHTML = chatMsgHtml(lastMsg, Number(liveNode.dataset.mi || 0), { regenerable: true });
-            if (tmp.firstElementChild) {
-              liveNode.replaceWith(tmp.firstElementChild);
-              const newNode = tmp.firstElementChild;
-              // reasoning：完成后自动收起 + 显示「思考了 X 秒」（1s 延时，NewAPI 同款）
-              if (accumulatedReasoning.trim()) {
-                const newBody = newNode.querySelector('.chat-body');
-                if (newBody) {
-                  const dur = Math.max(1, Math.round((Date.now() - reasoningStart) / 1000));
-                  const rEl = document.createElement('div');
-                  rEl.className = 'chat-reasoning';
-                  rEl.innerHTML = `<details><summary><span class="rs-label">思考过程</span><span class="rs-duration">思考了 ${dur} 秒</span></summary><div class="chat-reasoning-body"></div></details>`;
-                  rEl.querySelector('.chat-reasoning-body').innerHTML = renderChatMd(accumulatedReasoning, { final: true });
-                  newBody.insertBefore(rEl, newBody.firstChild);
+            const finalizeBubble = () => {
+              if (!liveNode.isConnected) return; // 已被切论文/切 tab 重建，放弃
+              const tmp = document.createElement('div');
+              tmp.innerHTML = chatMsgHtml(lastMsg, Number(liveNode.dataset.mi || 0), { regenerable: true });
+              if (tmp.firstElementChild) {
+                liveNode.replaceWith(tmp.firstElementChild);
+                const newNode = tmp.firstElementChild;
+                // reasoning：完成后自动收起 + 显示「思考了 X 秒」（1s 延时，NewAPI 同款）
+                if (accumulatedReasoning.trim()) {
+                  const newBody = newNode.querySelector('.chat-body');
+                  if (newBody) {
+                    const dur = Math.max(1, Math.round((Date.now() - reasoningStart) / 1000));
+                    const rEl = document.createElement('div');
+                    rEl.className = 'chat-reasoning';
+                    rEl.innerHTML = `<details><summary><span class="rs-label">思考过程</span><span class="rs-duration">思考了 ${dur} 秒</span></summary><div class="chat-reasoning-body"></div></details>`;
+                    rEl.querySelector('.chat-reasoning-body').innerHTML = renderChatMd(accumulatedReasoning, { final: true });
+                    newBody.insertBefore(rEl, newBody.firstChild);
+                  }
                 }
               }
-            }
+            };
+            // 用户正在气泡里选中文字：replaceWith 会摧毁选区——推迟到选区释放再定型
+            // （冻结期间内容完整可读；松手后补渲出操作按钮/时间戳）。
+            if (selectionWithin(liveNode)) runAfterSelectionRelease(liveNode, finalizeBubble);
+            else finalizeBubble();
           }
         }
-        try { if (input) input.focus(); } catch {}
+        // 选区保护：用户正在聊天区选中文字时不抢焦点（focus() 会塌陷文档选区）
+        try { if (input && !selectionWithin($('chat-list'))) input.focus(); } catch {}
       },
       onFail: (err) => {
         const stale = !chatState || chatState.id !== p.id || chatState.reqId !== myReqId;
@@ -428,7 +449,7 @@ export function renderChatTab(body, p) {
         } else {
           toast(err || 'AI 回答失败', 'error');
         }
-        try { input.focus(); } catch {}
+        try { if (input && !selectionWithin($('chat-list'))) input.focus(); } catch {}
       },
     });
     chatState.closeStream = myClose;

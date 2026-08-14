@@ -98,8 +98,11 @@ function buildPaperFilename({ authors, year, title, arxivId } = {}) {
   return base + '.pdf';
 }
 
+// 委托 logger（保持 38 处现有调用零改动；行为 = info 级）。
+// 直接 console.log 的历史写法已被 logger 取代，详见 src/core/logger.js。
+const logger = require('./logger').root;
 function log(...args) {
-  console.log(new Date().toISOString(), ...args);
+  logger.info(args.join(' '));
 }
 
 /** 解析 arXiv 网址或 ID，返回 { arxivId, pdfUrl, raw } 或 null（无法识别）。

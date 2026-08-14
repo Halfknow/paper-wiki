@@ -10,6 +10,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const vm = require('vm');
 const { pathToFileURL } = require('url');
 const { JSDOM } = require('jsdom');
 
@@ -206,6 +207,15 @@ async function bootUi({ listItems, details, routes, chatReply, initialPath } = {
   globalThis.marked = require('marked').marked;
   globalThis.DOMPurify = require('dompurify')(w);
   globalThis.katex = require('katex');
+  // search-dsl.js（classic script，挂 window.PaperWikiSearch）：ui.js 剥离所有 <script> 标签，
+  // 这里手动在 jsdom 窗口里执行一遍，让概念/公式页的 DSL 筛选（category:/freq:/source: 等）在测试里生效。
+  // 与 tests/search-dsl.test.js 同样用 vm.runInNewContext，但把 window 设为 jsdom 的 window。
+  const searchDslSrc = fs.readFileSync(path.join(__dirname, '..', '..', 'public', 'search-dsl.js'), 'utf8');
+  try {
+    vm.runInNewContext(searchDslSrc, { window: w });
+  } catch (e) {
+    /* 容错：解析失败不阻塞 boot */
+  }
   // app 的 setInterval（10s 轮询）：unref 不挂测试进程 + 捕获回调供手动触发
   const intervalFns = [];
   const origSetInterval = globalThis.setInterval;

@@ -1,35 +1,16 @@
-// 收藏夹模态与首页
+// 收藏夹与首页导航
 //
 // 自 public/app.js 拆出（v3.15 模块化重构）——声明体原样迁移，仅补 import/export。
+// v3.22：收藏夹模态（openFolderModal/editingFolder/pickedColor）退役，管理能力整体迁至
+// folder-manager.js（侧栏「收藏夹」标题行 ⚙ 的管理面板）。
 
-import { $, PALETTE } from '../core/dom.js';
+import { $ } from '../core/dom.js';
 import { router } from '../core/nav.js';
 import { filterToQuery } from '../core/routes.js';
 import { state } from '../core/state.js';
 import { reader } from '../detail/info-tab.js';
 import { syncAdvancedPanelFromDsl } from '../search/advanced.js';
 import { showView } from '../views/view-switch.js';
-
-// ---- 收藏夹模态 ----
-export let editingFolder = null;
-
-export let pickedColor = PALETTE[0];
-
-export function openFolderModal(folder) {
-  editingFolder = folder || null;
-  $('folder-modal-title').textContent = folder ? '编辑收藏夹' : '新建收藏夹';
-  $('folder-name-input').value = folder ? folder.name : '';
-  pickedColor = folder ? folder.color : PALETTE[0];
-  const cp = $('folder-color-picks');
-  cp.innerHTML = PALETTE.map((c) => `<span class="${c === pickedColor ? 'sel' : ''}" data-c="${c}" style="background:${c}"></span>`).join('');
-  cp.querySelectorAll('span').forEach((s) => s.onclick = () => {
-    pickedColor = s.dataset.c;
-    cp.querySelectorAll('span').forEach((x) => x.classList.toggle('sel', x === s));
-  });
-  $('folder-modal-delete').style.display = folder ? '' : 'none';
-  $('folder-modal').classList.add('active');
-  setTimeout(() => $('folder-name-input').focus(), 30);
-}
 
 // ---- 视图切换（概念/库/设置） ----
 export function showLibrary() { showView('library'); }

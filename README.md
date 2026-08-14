@@ -12,7 +12,7 @@
 - 🏷️ **规范命名**：发现/网址导入的论文按「作者 等 - 年份 - 标题.pdf」落盘（净化非法字符），元数据空缺时按文件名里的 arXiv ID 自动补全并改名
 - 🗑️ **删除论文**：详情页「删除」按钮，连同本地 PDF 与全文一并移除（二次确认）
 - 🎨 **Indigo 主题**：淡蓝灰底 + Indigo 强调色；chip 高区分（主题色轮换 / 标签中性灰 / 指标青 / 状态语义色）
-- 🗂️ **虚拟收藏夹**：在页面里建文件夹（如「精读 / 待复现 / 综述」），一篇论文可属多个收藏夹，与磁盘目录解耦
+- 🗂️ **虚拟收藏夹**：在页面里建文件夹（如「精读 / 待复现 / 综述」），一篇论文可属多个收藏夹，与磁盘目录解耦；侧栏「收藏夹」标题行的 ⚙ 打开管理面板——新建 / 改名换色（行内编辑）/ 拖拽排序 / 删除一处收口
 - 🏷️ **双维度筛选**：
   - **标签 tag**（细粒度英文技术词，AI 自动生成，全局字典去重，可合并/重命名/删除）
   - **主题 topic**（AI 给的 1–3 个中文大方向，如「推理 / 数据选择」，作为一级筛选维度）
@@ -24,6 +24,7 @@
   - 🔍 **缩放**：按钮、Ctrl/Cmd + 滚轮、**触控双指缩放**、适应宽度
   - 🖍️ **批注**：高亮（选中文字着色）、便签（点击添加文字备注）、手写（自由绘制）；7 色现代浅透配色；批注存进 `paper.annotations`（外置 JSON，不污染原 PDF），重开自动回显
   - 🗑️ **删除批注**：编辑模式下点选批注后按 Delete
+  - 🗂️ **阅读架**（v3.21）：打开过的论文自动上架，左下角 FAB 展开抽屉即可在多篇论文间切换——拖拽调整顺序、一键移除、搜索框直接从库中加新论文，全程不离开阅读器；`[` / `]` 快捷切换上/下一篇
 - 🧠 **AI 概念清单**：所有论文涉及的关键概念由 AI 抽取后维护在一份清单里（去重归并），页面有专门入口查看/搜索/编辑，可导出 Markdown
   - 选中多篇论文 → 「抽取并追加概念」，AI 只返回**新**概念追加到清单后
 - ⚙️ **设置中心**：左下角「⚙️ 设置」入口，全屏视图 + 分组导航（概览 / AI 接口 / 总结·标签主题提示词 / 文件扫描 / arXiv 元数据 / 主题发现 / 主题与标签 / 系统信息）+ 设置内搜索。**把 config.json 的可调项全部纳入界面并运行时热生效**（无需重启 pm2）：AI 接口（Base / Key 掩码 / 模型 / 超时 + 测试连接）、文件扫描间隔（即时重置定时器）、arXiv 补全开关与阈值、主题发现的召回规模/来源/复合排序权重。每项标注「生效值 / config 默认 / 是否已覆盖」、可一键恢复默认；「概览」首页汇总当前生效配置与服务状态；提示词总结/标签主题分离管理（Markdown vs JSON，互不冲突）；主题/标签可重命名（合并）/删除；「系统信息」展示服务级只读项 + 脱敏 config.json
@@ -165,7 +166,8 @@ logs/          运行日志（gitignore）
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET | `/api/health` | 探活：`{status, uptime, papers}`（无需鉴权） |
+| GET | `/api/health` | 探活：`{status, uptime, papers, checks:{db,disk}}`（无需鉴权）。`status` 为 `ok`\|`degraded`，DB 连通性探 `SELECT 1`、磁盘探 papers/backups 目录剩余空间，子探测失败仅标红不返回 5xx |
+| GET | `/api/health/ai` | AI 上游可达性探测（慢探测，与主 health 隔离）：`{status, source, latencyMs}`。`source:'upstream'` 表示打到上游，`'config'` 表示回退静态候选（degraded） |
 | GET | `/api/papers` | 列表，支持 `q/tag/topic/folder/status/readStatus/starred/sort` |
 | GET | `/api/papers/:id` | 详情（含 summary/notes/annotations） |
 | PATCH | `/api/papers/:id` | 更新 notes/starred/readStatus/tags/topics/folders/readProgress/annotations |
@@ -179,6 +181,7 @@ logs/          运行日志（gitignore）
 | GET/PATCH | `/api/tags` | 标签字典（`{merge,into}` 重命名 / `{delete}` 删除） |
 | GET/PATCH | `/api/topics` | 主题字典 + 计数（`{merge,into}` / `{delete}`，对齐标签） |
 | GET/POST/PATCH/DELETE | `/api/folders[/:id]` | 收藏夹 CRUD |
+| PUT | `/api/folders/order` | 收藏夹排序（`{ids}` 按给定顺序重排） |
 | GET | `/api/concepts` | 概念清单（`?q=`/`?paper=`） |
 | GET | `/api/concepts.md` | 概念清单 Markdown 文档 |
 | PATCH/DELETE | `/api/concepts/:id` | 编辑/删除概念 |

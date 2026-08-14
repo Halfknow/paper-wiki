@@ -1,5 +1,8 @@
 const { extractArxivId } = require('./arxiv');
 const { normalizeTitle, titleSimilarity, sleep } = require('../core/util');
+const { createLogger } = require('../core/logger');
+
+const logger = createLogger('discover');
 
 const UA = 'PaperWiki/1.0 (local research tool)';
 const SEMANTIC_SCHOLAR_BATCH = 'https://api.semanticscholar.org/graph/v1/paper/batch';
@@ -50,7 +53,8 @@ async function buildDiscoveryQuery(topic, opts = {}) {
     let res;
     try {
       res = await runClaude(buildClaudePrompt(t), { timeoutMs });
-    } catch {
+    } catch (e) {
+      logger.warn('claude 检索计划生成异常（回退兜底链）', e && e.message);
       res = { ok: false, reason: 'error' }; // runClaude 设计上不抛，这里兜底
     }
     if (res && res.ok) {
@@ -68,7 +72,8 @@ async function buildDiscoveryQuery(topic, opts = {}) {
     let raw;
     try {
       raw = await generateViaGateway(t);
-    } catch {
+    } catch (e) {
+      logger.warn('网关检索计划生成异常（回退原始主题）', e && e.message);
       raw = null;
     }
     const norm = normalizePlan(raw, t);
@@ -92,7 +97,8 @@ async function planViaGateway(topic, opts = {}) {
   let content;
   try {
     content = await ai.callChat({ messages, config, fetchImpl });
-  } catch {
+  } catch (e) {
+    logger.warn('planViaGateway 调用 AI 网关失败', e && e.message);
     return null;
   }
   return parseClaudeOutput(content);
@@ -268,9 +274,15 @@ async function enrichWithCitations(entries, opts = {}) {
           break;
         }
         const retryable = res.status === 429 || (res.status >= 500 && res.status < 600);
-        if (!retryable || attempt >= maxRetries) break;
-      } catch {
-        if (attempt >= maxRetries) break;
+        if (!retryable || attempt >= maxRetries) {
+          logger.warn('S2 引用量查询失败（本批放弃）', { status: res.status, offset: off });
+          break;
+        }
+      } catch (e) {
+        if (attempt >= maxRetries) {
+          logger.warn('S2 引用量查询网络错误（本批放弃）', e && e.message);
+          break;
+        }
       }
       await sleep(retryDelayMs * Math.pow(2, attempt));
     }
@@ -318,7 +330,8 @@ async function enrichWithOpenAlex(entries, opts = {}) {
     try {
       const res = await fetchImpl(url, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(timeoutMs) });
       if (res.ok) data = await res.json();
-    } catch {
+    } catch (e) {
+      logger.warn('OpenAlex 引用量批次查询失败（跳过本批）', e && e.message);
       continue;
     }
     const rows = data && Array.isArray(data.results) ? data.results : [];
@@ -413,7 +426,8 @@ async function discoverPapers(opts = {}) {
           minIntervalMs,
         });
         entries = (r && r.entries) || [];
-      } catch {
+      } catch (e) {
+        logger.warn('arXiv 轴向召回失败', { query: q, axis: axis.sortBy, error: e && e.message });
         entries = [];
       }
       let added = 0;
@@ -450,7 +464,8 @@ async function discoverPapers(opts = {}) {
     });
     try {
       cites = await enrichWithCitations(pool, { fetchImpl, apiKey: s2ApiKey, maxRetries: s2MaxRetries });
-    } catch {
+    } catch (e) {
+      logger.warn('S2 引用量富集整体失败（按相关+新近排）', e && e.message);
       cites = pool.map(() => ({}));
     }
     const missingIdx = cites.map((c, i) => (typeof c.citationCount === 'number' ? -1 : i)).filter((i) => i >= 0);
@@ -469,8 +484,9 @@ async function discoverPapers(opts = {}) {
         oa.forEach((c, k) => {
           if (typeof c.citationCount === 'number') cites[missingIdx[k]] = c;
         });
-      } catch {
+      } catch (e) {
         /* OpenAlex 兜底失败：保持缺失 */
+        logger.warn('OpenAlex 兜底富集失败', e && e.message);
       }
     }
     const resolved = cites.filter((c) => typeof c.citationCount === 'number').length;

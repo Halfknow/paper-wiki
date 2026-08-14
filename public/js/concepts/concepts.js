@@ -8,7 +8,7 @@ import { escapeHtml } from '../core/format.js';
 import { state } from '../core/state.js';
 import { toast } from '../core/ui-kit.js';
 import { gotoPaper, renderConceptAlphaBar } from '../formulas/formulas.js';
-import { router } from '../core/nav.js';
+import { router, syncPageQueryToUrl } from '../core/nav.js';
 import { setSidebarCollapsed } from '../views/layout.js';
 import { showView } from '../views/view-switch.js';
 
@@ -282,23 +282,66 @@ export let _conceptLayout = localStorage.getItem('pw-concept-layout') || 'masonr
 // 概念页视图：list（概念清单，默认）/ maps（概念地图制品）
 export let _conceptView = localStorage.getItem('pw-concept-view') || 'list';
 
-// ---- 概念筛选（v3.16）：分类多选 + 共享频次 + 章节出处 ----
-// 筛选状态（内存态，不持久化；清空即取消筛选）。
-const _conceptFilter = {
-  categories: [],   // 选中的分类（多选，空=不限）
-  freq: 'all',      // 'all' 全部 | 'shared' 多篇共享（≥2 篇）| 'hot' 高频（≥4 篇）
-  hasContext: false, // 有章节出处（context 非空）
+// ---- 概念筛选（v3.16 → v3.20 改 DSL 驱动）----
+// v3.20 起 DSL 是单一事实源：搜索框里的 category:/freq:/context: 决定筛选。
+// 漏斗、侧栏分类、高级面板都改写搜索框 DSL；_conceptFilter 降级为 renderConcepts
+// 解析 DSL 后的派生缓存（供 _updateConceptFilterBadge 读计数、漏斗/侧栏读当前态回填）。
+let _conceptFilter = {
+  categories: [],   // 从 DSL category: 派生（多选，空=不限）
+  freq: '',         // 从 DSL freq: 派生（'' 全部 | 'shared' | 'hot'）
+  hasContext: false, // 从 DSL context:. 派生
 };
+
+/** 从搜索框 DSL 解析派生 _conceptFilter（renderConcepts 每次调用前刷新）。 */
+function _refreshConceptFilterFromDsl() {
+  const S = window.PaperWikiSearch;
+  const dsl = (($('search') || {}).value || '').trim();
+  if (!S) {
+    // search-dsl.js 未加载（极端兜底）：把整串当关键词，无结构化筛选
+    _conceptFilter = { categories: [], freq: '', hasContext: false };
+    return { words: dsl ? [dsl.toLowerCase()] : [], phrases: [], excludeWords: [], excludePhrases: [] };
+  }
+  const { metadata } = S.parseSearchQuery(dsl);
+  _conceptFilter = {
+    categories: (metadata.fields.category || []).filter((e) => !e.exclude).map((e) => e.value),
+    freq: metadata.fields.freq || '',
+    hasContext: metadata.fields.hasContext === true,
+  };
+  return {
+    words: metadata.text.words,
+    phrases: metadata.text.phrases,
+    excludeWords: metadata.text.excludeWords,
+    excludePhrases: metadata.text.excludePhrases,
+  };
+}
+
+/** 把分类/频次/出处合并进搜索框 DSL（保留裸词/文本部分）。
+ *  parts = { categories?, freq?, hasContext? }，缺省的键不动（undefined=保留现状）。 */
+function _mergeConceptDsl(parts) {
+  const S = window.PaperWikiSearch;
+  const inp = $('search');
+  if (!inp || !S) return;
+  const cur = S.parseToPanel(inp.value);
+  // 合并：显式传入的键覆盖，未传的保留
+  const merged = {
+    text: cur.text,
+    categories: parts.categories !== undefined ? parts.categories : cur.categories,
+    freq: parts.freq !== undefined ? parts.freq : cur.freq,
+    hasContext: parts.hasContext !== undefined ? parts.hasContext : cur.hasContext,
+  };
+  inp.value = S.buildDslFromPanel(merged);
+  syncPageQueryToUrl();
+}
 
 /** 是否有激活的筛选条件（非默认态）。 */
 function _conceptFilterActive() {
-  return _conceptFilter.categories.length > 0 || _conceptFilter.freq !== 'all' || _conceptFilter.hasContext;
+  return _conceptFilter.categories.length > 0 || _conceptFilter.freq !== '' || _conceptFilter.hasContext;
 }
 
 /** 筛选条件个数（用于徽标计数）。 */
 function _conceptFilterCount() {
   let n = _conceptFilter.categories.length;
-  if (_conceptFilter.freq !== 'all') n++;
+  if (_conceptFilter.freq !== '') n++;
   if (_conceptFilter.hasContext) n++;
   return n;
 }
@@ -393,6 +436,9 @@ function switchConceptView(view) {
 export function renderConceptSidebar() {
   const host = $('side-concepts');
   if (!host) return;
+  // 先刷新 _conceptFilter（从 DSL 派生），保证侧栏 active 态与搜索框 DSL 一致
+  _refreshConceptFilterFromDsl();
+  _updateConceptFilterBadge();
   const counts = {};
   for (const c of state.concepts || []) {
     const k = c.category || 'other';
@@ -441,16 +487,15 @@ export function renderConceptSidebar() {
       const k = el.dataset.cat;
       const next = new Set(_conceptFilter.categories);
       if (next.has(k)) next.delete(k); else next.add(k);
-      _conceptFilter.categories = [...next];
-      _updateConceptFilterBadge();
+      // 写 DSL（单一事实源），renderConcepts/renderConceptSidebar 从 DSL 派生
+      _mergeConceptDsl({ categories: [...next] });
       renderConceptSidebar();
       renderConcepts();
     };
   });
   const clear = $('side-cat-clear');
   if (clear) clear.onclick = () => {
-    _conceptFilter.categories = [];
-    _updateConceptFilterBadge();
+    _mergeConceptDsl({ categories: [] });
     renderConceptSidebar();
     renderConcepts();
   };
@@ -468,22 +513,27 @@ export function renderConceptSidebar() {
 }
 
 /** 打开概念筛选面板（漏斗按钮触发）：频次单选 + 出处复选（分类分面已移到侧栏）。
- *  复用 filter-pop 模式（遮罩 + 面板，点外部/Esc 关闭）。确定后 renderConcepts。 */
+ *  复用 filter-pop 模式（遮罩 + 面板，点外部/Esc 关闭）。
+ *  v3.20：确定后写搜索框 DSL（freq:/context:），renderConcepts 从 DSL 派生态。 */
 export function openConceptFilterPop() {
   closeConceptFilterPop();
   const btn = $('concept-filter-btn');
   if (!btn) return;
+  _refreshConceptFilterFromDsl();
+  // 本地暂存（面板内交互态，确定时才提交到 DSL）
+  let pickFreq = _conceptFilter.freq; // '' | 'shared' | 'hot'
+  let pickCtx = _conceptFilter.hasContext;
   const mask = document.createElement('div');
   mask.className = 'filter-pop-mask';
   const pop = document.createElement('div');
   pop.className = 'filter-pop concept-filter-pop';
   pop.setAttribute('role', 'dialog');
   pop.setAttribute('aria-label', '概念筛选');
-  const freqOpt = (k, label) => `<button class="cf-freq-opt${_conceptFilter.freq === k ? ' on' : ''}" data-freq="${k}" type="button">${label}</button>`;
+  const freqOpt = (k, label) => `<button class="cf-freq-opt${(k || 'all') === (pickFreq || 'all') ? ' on' : ''}" data-freq="${k}" type="button">${label}</button>`;
   pop.innerHTML = `
-    <div class="cf-section"><div class="cf-label">共享频次</div><div class="cf-freq-opts">${freqOpt('all', '全部')}${freqOpt('shared', '多篇共享 ≥2')}${freqOpt('hot', '高频 ≥4')}</div></div>
+    <div class="cf-section"><div class="cf-label">共享频次</div><div class="cf-freq-opts">${freqOpt('', '全部')}${freqOpt('shared', '多篇共享 ≥2')}${freqOpt('hot', '高频 ≥4')}</div></div>
     <div class="cf-section cf-row">
-      <label class="cf-check"><input type="checkbox" id="cf-ctx" ${_conceptFilter.hasContext ? 'checked' : ''} /><span>有章节出处</span></label>
+      <label class="cf-check"><input type="checkbox" id="cf-ctx" ${pickCtx ? 'checked' : ''} /><span>有章节出处</span></label>
     </div>
     <div class="cf-foot">
       <button class="btn ghost sm" id="cf-clear" type="button">清除</button>
@@ -498,26 +548,26 @@ export function openConceptFilterPop() {
   const r = btn.getBoundingClientRect();
   pop.style.top = (r.bottom + window.scrollY + 4) + 'px';
   pop.style.left = Math.max(8, r.left + window.scrollX - 240) + 'px'; // 右对齐按钮，防溢出
-  // 频次单选
+  // 频次单选（本地暂存，确定时才提交）
   pop.querySelectorAll('.cf-freq-opt').forEach((opt) => {
     opt.onclick = () => {
-      _conceptFilter.freq = opt.dataset.freq;
+      pickFreq = opt.dataset.freq;
       pop.querySelectorAll('.cf-freq-opt').forEach((o) => o.classList.toggle('on', o === opt));
     };
   });
   // 清除（只清本面板管的两项——分类分面归侧栏，不在这里连带清掉）
   pop.querySelector('#cf-clear').onclick = () => {
-    _conceptFilter.freq = 'all';
-    _conceptFilter.hasContext = false;
-    _updateConceptFilterBadge();
+    _mergeConceptDsl({ freq: '', hasContext: false });
     closeConceptFilterPop();
+    renderConceptSidebar();
     renderConcepts();
   };
-  // 确定
+  // 确定：提交到 DSL
   pop.querySelector('#cf-ok').onclick = () => {
-    _conceptFilter.hasContext = !!pop.querySelector('#cf-ctx').checked;
-    _updateConceptFilterBadge();
+    pickCtx = !!pop.querySelector('#cf-ctx').checked;
+    _mergeConceptDsl({ freq: pickFreq, hasContext: pickCtx });
     closeConceptFilterPop();
+    renderConceptSidebar();
     renderConcepts();
   };
   btn.setAttribute('aria-expanded', 'true');
@@ -538,12 +588,23 @@ function onConceptFilterPopKey(e) {
 }
 
 export function renderConcepts() {
-  // 查询词来自顶栏那个上下文搜索框（v3.17，页内 #concept-q 已退役）
-  const q = (($('search') || {}).value || '').trim().toLowerCase();
+  // 查询词来自顶栏那个上下文搜索框（v3.17，页内 #concept-q 已退役）。
+  // v3.20：解析 DSL——裸词/短语匹配 term+definition（AND），category:/freq:/context: 结构化筛选。
+  const { words, phrases, excludeWords, excludePhrases } = _refreshConceptFilterFromDsl();
+  const hasText = words.length > 0 || phrases.length > 0;
   const sort = _conceptSort;
   const layout = _conceptLayout;
-  // 筛选：搜索词（term/definition 子串）+ 分类 + 频次 + 出处
-  let list = state.concepts.filter((c) => !q || (c.term + ' ' + (c.definition || '')).toLowerCase().includes(q));
+  // 筛选：裸词/短语（term+definition 子串，AND）+ 分类 + 频次 + 出处
+  let list = state.concepts.filter((c) => {
+    const hay = (c.term + ' ' + (c.definition || '')).toLowerCase();
+    if (hasText) {
+      for (const w of words) if (!hay.includes(w)) return false;
+      for (const p of phrases) if (!hay.includes(p)) return false;
+    }
+    for (const w of excludeWords) if (hay.includes(w)) return false;
+    for (const p of excludePhrases) if (hay.includes(p)) return false;
+    return true;
+  });
   if (_conceptFilter.categories.length) {
     list = list.filter((c) => _conceptFilter.categories.includes(c.category || 'other'));
   }
@@ -568,6 +629,8 @@ export function renderConcepts() {
   // 显示方式切换按钮 active 态 + 容器 class 切换（瀑布流 / 清单）
   document.querySelectorAll('#concept-layout button').forEach((b) => b.classList.toggle('active', b.dataset.layout === layout));
   // 字母索引条（仅字母排序 + 无搜索词时显示）
+  // q 用于显示：有查询词（裸词/短语/结构化筛选）时给空态/索引条带提示
+  const q = (($('search') || {}).value || '').trim();
   renderConceptAlphaBar(sort, q, list);
   // 卡片渲染（懒加载：首批 _CONCEPT_FIRST_BATCH，滚到底由 IntersectionObserver 追加每批）
   const g = $('concepts-grid');

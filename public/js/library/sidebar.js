@@ -9,7 +9,6 @@ import { gotoLibraryRoute, router } from '../core/nav.js';
 import { state } from '../core/state.js';
 import { toast } from '../core/ui-kit.js';
 import { patch } from '../detail/info-tab.js';
-import { openFolderModal } from './folders.js';
 import { refresh } from './refresh.js';
 
 // ---- 侧栏 ----
@@ -46,15 +45,11 @@ export function renderSidebar() {
     const el = document.createElement('div');
     el.className = 'side-item' + (state.filter.folder === fo.id ? ' active' : '');
     el.dataset.folderId = fo.id;
+    // v3.22：行内 hover 铅笔退役——收藏夹的新建/改名/换色/排序/删除统一走标题行 ⚙ 的管理面板
     el.innerHTML = `<span class="swatch" style="background:${escapeHtml(fo.color)}"></span>
       <span>${escapeHtml(fo.name)}</span>
-      <span class="count">${fo.count || ''}</span>
-      <span class="ico folder-edit" data-edit="${fo.id}" title="编辑收藏夹" aria-label="编辑收藏夹"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></span>`;
-    el.onclick = (e) => {
-      // 点编辑入口（铅笔图标）：e.target 可能是 svg/path，需 closest 向上找 data-edit
-      if (e.target.closest('[data-edit]')) { openFolderModal(fo); return; }
-      setView({ folder: fo.id, mode: '', starred: false, readStatus: '', status: '' });
-    };
+      <span class="count">${fo.count || ''}</span>`;
+    el.onclick = () => setView({ folder: fo.id, mode: '', starred: false, readStatus: '', status: '' });
     setupFolderDropTarget(el, fo);
     fl.appendChild(el);
     // rail 收藏夹按钮：外层 .rail-btn（与视图按钮同款药丸），内含 .swatch 方形色块（与展开态一致）

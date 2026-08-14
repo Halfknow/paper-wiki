@@ -120,3 +120,86 @@ test('回归 Esc 分层：@ 浮层开着按 Esc 只关浮层，不波及底层�
   await sleep(30);
   assert.ok(!$('import-modal').classList.contains('active'), '第二次 Esc 关闭模态');
 });
+
+test('回归 列表文本可选：条目默认不可拖，hover 文本区保持不可拖、悬留白区才可拖（拖入收藏夹）', async () => {
+  // draggable=true 会触发 Chromium UA 样式 user-select:none → 整卡文字无法选中复制。
+  // 修复后：draggable 由 mouseover 分派——文本区 false（手势=选择），留白区 true（拖入收藏夹）。
+  const li = ui.document.querySelector('.paper-item');
+  assert.ok(li, '列表条目存在');
+  assert.strictEqual(li.draggable, false, '默认 draggable=false（文本可选）');
+  li.querySelector('.pt').dispatchEvent(new ui.window.MouseEvent('mouseover', { bubbles: true }));
+  assert.strictEqual(li.draggable, false, '悬在标题区：不可拖（手势=文本选择）');
+  li.dispatchEvent(new ui.window.MouseEvent('mouseover', { bubbles: true }));
+  assert.strictEqual(li.draggable, true, '悬在留白区：可拖（拖入收藏夹）');
+});
+
+test('回归 refresh 选区守卫：列表有活动选区时轮询不重建（选中文字可复制）', async () => {
+  const poll = ui.intervalFns[ui.intervalFns.length - 1]; // app 的 10s 轮询回调
+  assert.ok(poll, '捕获到轮询回调');
+  const liBefore = ui.document.querySelector('.paper-item');
+  assert.ok(liBefore, '列表条目存在');
+  // 在列表标题里制造一个活动选区
+  const range = ui.document.createRange();
+  range.selectNodeContents(liBefore.querySelector('.pt'));
+  const sel = ui.window.getSelection();
+  sel.removeAllRanges();
+  sel.addRange(range);
+  assert.ok(!sel.isCollapsed, '选区已建立');
+  poll();
+  await sleep(150);
+  assert.strictEqual(ui.document.querySelector('.paper-item'), liBefore, '有选区：列表未重建');
+  // 释放选区 → 下一轮恢复重建
+  sel.removeAllRanges();
+  poll();
+  await sleep(150);
+  assert.notStrictEqual(ui.document.querySelector('.paper-item'), liBefore, '选区释放后恢复重建');
+});
+
+test('回归 refresh 推迟补渲：详情有选区时推迟重建，选区释放后下一轮补上', async () => {
+  resetDetail();
+  await openTab('summary');
+  const poll = ui.intervalFns[ui.intervalFns.length - 1];
+  const h2Before = ui.document.querySelector('#detail .title-row h2');
+  assert.ok(h2Before, '详情标题存在');
+  // 在详情里建立选区 + 模拟服务端数据变更
+  const range = ui.document.createRange();
+  range.selectNodeContents(h2Before);
+  const sel = ui.window.getSelection();
+  sel.removeAllRanges();
+  sel.addRange(range);
+  LIST[0].updatedAt = 555;
+  poll();
+  await sleep(150);
+  assert.strictEqual(ui.document.querySelector('#detail .title-row h2'), h2Before, '有选区：推迟重建');
+  // 释放选区 → 下一轮必须补渲（修复「推迟后 state 已合并、永不补渲」）
+  sel.removeAllRanges();
+  poll();
+  let h2After = h2Before;
+  for (let i = 0; i < 60 && h2After === h2Before; i++) {
+    await sleep(20);
+    h2After = ui.document.querySelector('#detail .title-row h2');
+  }
+  assert.notStrictEqual(h2After, h2Before, '选区释放：下一轮补渲');
+  LIST[0].updatedAt = 1; // 还原
+});
+
+test('回归 拖选后 click 抑制：条目内有选区时点击不跳转（选区不被路由重建摧毁）', async () => {
+  const li = ui.document.querySelector('.paper-item');
+  assert.ok(li, '列表条目存在');
+  const pathBefore = ui.window.location.pathname;
+  // 模拟拖选结束瞬间：条目内选区非空 + click 跟进
+  const range = ui.document.createRange();
+  range.selectNodeContents(li.querySelector('.pt'));
+  const sel = ui.window.getSelection();
+  sel.removeAllRanges();
+  sel.addRange(range);
+  li.click();
+  await sleep(60);
+  assert.strictEqual(ui.window.location.pathname, pathBefore, '有选区：click 被抑制，未跳转');
+  assert.ok(!sel.isCollapsed, '选区仍在（可复制）');
+  // 普通点击（选区已塌陷）照常跳转
+  sel.removeAllRanges();
+  li.click();
+  await sleep(120);
+  assert.ok(ui.window.location.pathname.startsWith('/paper/'), '无选区：click 正常打开论文');
+});

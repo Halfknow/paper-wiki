@@ -29,12 +29,15 @@ const ROUTE_MODULES = [
   require('./routes/concepts'),
   require('./routes/concept-maps'),
   require('./routes/formulas'),
+  require('./routes/reader-shelf'),
 ];
 
 function createApiRouter(ctx) {
   const { manager, scanner, globalConfig } = ctx;
   const config = globalConfig; // 别名：保持各 routes 模块内既有代码可读（config 即全局 config）
   const isProd = process.env.NODE_ENV === 'production';
+  // health 探测所需的运行时句柄（db.pool / 磁盘路径），由 server.js 注入
+  const healthDeps = ctx.healthDeps || {};
 
   function send(res, code, body) {
     res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8' });
@@ -144,6 +147,7 @@ function createApiRouter(ctx) {
     conceptMapMeta,
     startConceptMapJob,
     conceptMapJobs,
+    healthDeps,
   };
   const table = createRouteTable();
   for (const mod of ROUTE_MODULES) mod.register(table, routerCtx);

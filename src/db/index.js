@@ -4,6 +4,7 @@ const crypto = require('crypto');
 const { migrateStore, emptyStore } = require('../core/store');
 const { normalizeFormulas } = require('../core/formulas');
 const { hasCjk } = require('../core/search');
+const logger = require('../core/logger').createLogger('db');
 
 /**
  * PostgreSQL 持久化层：createDb（连接池 + 编号 migration）+ createRepository（registry/store/texts）。
@@ -66,7 +67,8 @@ function createDb({ connectionString, createPool } = {}) {
         // .optional. 迁移（如 tsvector GIN 索引）：pg-mem 等不支持的后端跳过不记账（下次仍会尝试），
         // 功能侧自带降级路径（searchFulltext → ILIKE），不影响正确性
         if (/\.optional\./.test(f)) {
-          console.error(`[db] 可选 migration 跳过（当前后端不支持）: ${f}: ${e.message}`);
+          // optional 跳过是预期行为（pg-mem 等不支持），用 warn 而非 error
+          logger.warn(`可选 migration 跳过（当前后端不支持）: ${f}`, { error: e.message });
           continue;
         }
         throw new Error(`migration ${f} 失败: ${e.message}`);

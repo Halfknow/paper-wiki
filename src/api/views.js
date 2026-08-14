@@ -270,6 +270,10 @@ function deletePapersCleanup(store, ids, papersDir) {
   }
   // 清理公式 occurrences（occurrence 清空的条目整条移除，与概念同语义）
   for (const id of removed) removePaperFromFormulas(store, id);
+  // 阅读架联动剔除（v3.21）：否则架子上残留死 id；GET 规整是兜底，删除时就地清掉是正道
+  if (store.settings && Array.isArray(store.settings.readerShelf) && removed.length) {
+    store.settings.readerShelf = store.settings.readerShelf.filter((x) => !removed.includes(x));
+  }
   // 重新聚合标签/主题字典（从论文重建）→ 自动清除计数归零的项
   const tagSet = new Set();
   const topicSet = new Set();

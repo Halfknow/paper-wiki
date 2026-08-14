@@ -20,8 +20,8 @@ src/                   后端源码（v3.2 分层：core 纯逻辑 / db 持久�
   server.js            HTTP 入口/装配：createDb→migrate（fail-fast）→ repo → manager → scanner
                         + 静态/PDF/vendor 路由 + 每日 JSON 快照备份 + 优雅关停
   api/                 REST 路由（v3.15 路由表化：原先 createApiRouter 里约 1800 行的 if 链已拆散）
-    router.js  ★       装配层（167 行）：构造 ctx（ok/fail/resolveSpace/概念地图后台任务）→
-                        注册 14 个领域模块共 74 条路由 → 匹配分发。仍导出 summaryView/detailView
+    router.js  ★       装配层：构造 ctx（ok/fail/resolveSpace/概念地图后台任务）→
+                        注册 15 个领域模块共 77 条路由 → 匹配分发。仍导出 summaryView/detailView
     route-table.js ★   声明式路由表（纯函数）：.get/.post/... + match(method, pathname)。
                         参数段字符集 [\w.-]+ 与旧正则逐字一致、不 decodeURIComponent、
                         静态段优先于参数段、重复注册抛错。单测 tests/api-route-table.test.js
@@ -31,7 +31,7 @@ src/                   后端源码（v3.2 分层：core 纯逻辑 / db 持久�
                         async ({ req, res, body, q, params, spaceId, space, store, save }) => {}
                         spaces（{space:false}，不解析空间）/ system / search / papers / chat /
                         ingest / discover / taxonomy / settings / settings-ai / translate /
-                        concepts / concept-maps / formulas
+                        concepts / concept-maps / formulas / reader-shelf（GET/PUT 阅读架，v3.21）
                         空间上下文由 dispatcher 统一解析，各 handler 不再自己 resolveSpace(q)
   core/                纯逻辑，零 IO 依赖（可独立单测）
     store.js   ★       数据模型 v2 纯逻辑（emptyStore/migrateStore/normalizePaper/merge*）+
@@ -78,8 +78,12 @@ public/                零构建前端（原生 ESM，浏览器直接加载；�
       api.js           sp（?space= 注入）/ jget / POST / PUT / PATCH / DEL / safeGet
       state.js         全局单例 state + notesState/chatState（含跨模块写入口 set_*）
       dom.js  format.js  markdown.js  stream.js  ui-kit.js
-    library/           refresh sidebar list filters bulk folders
+    library/           refresh sidebar list filters bulk folders folder-manager
+                        （folder-manager = 收藏夹管理面板 v3.22：新建/行内改名换色/拖拽排序/删除，
+                        入口在侧栏「收藏夹」标题行 ⚙；旧 folder-modal 与行内铅笔已退役）
     detail/            detail notes-panel tab-body chat-view chat-tab info-tab reader-host
+    reader/            shelf（阅读架状态单例：有序论文栈 + GET/PUT 持久化 + subscribeShelf 订阅）
+                        shelf-drawer（左下 FAB + 左侧抽屉 UI；与 pdf.js 解耦，jsdom 可直测）
     concepts/  formulas/
     settings/          settings channels prompts collect taxonomy
     spaces/            spaces dir-wizard
@@ -87,19 +91,22 @@ public/                零构建前端（原生 ESM，浏览器直接加载；�
     views/             view-switch（内容视图与侧栏 .side-ctx 显隐 + 设置覆盖层 + 顶栏 chrome
                         上下文态：导航 active / 搜索 scope）· layout
     bind.js            全局事件接线（唯一仍偏大的模块）
-  reader.js  ★         pdf.js PDFViewer 阅读器（双页/批注/缩放/续读/AI 抽屉）。本轮未拆
+  reader.js  ★         pdf.js PDFViewer 阅读器（双页/批注/缩放/续读/AI 抽屉 + 阅读架抽屉
+                        与 [/] 切换）。本轮未拆
   search-dsl.js ★      高级搜索 DSL 解析（classic script，非 ESM）
   styles.css ★         Indigo 主题
 scripts/               运维脚本：scan-once（CLI 扫描）/ migrate-json-to-pg（旧数据迁移，幂等）/
                         backfill-metadata（arXiv 元数据回填，dry-run 默认）/
                         e2e-bootstrap（e2e 种子）/ backup-pg.sh（pg_dump）/
                         verify-boot-view.mjs（真实 Chromium 核验深链首帧视图，见陷阱 0）
-tests/                 node --test 单测（全量 670 例，pg-mem 无需真实 PG）：
+tests/                 node --test 单测（全量 ~690 例，pg-mem 无需真实 PG）：
                         · 纯函数层（毫秒级，不进慢文件守卫）：api-route-table / frontend-router /
-                          spa-fallback / search-query / util / store …
+                          spa-fallback / search-query / util / store / api-shelf（v3.21 阅读架端点）…
                         · jsdom UI 层：chat-ui / notes-panel / regression-ui / search-ui / formulas-ui /
                           conceptmaps-ui / settings-channels-ui / dialog-ui / routing-ui /
-                          topbar-nav（v3.17 顶栏导航与上下文搜索），
+                          topbar-nav（v3.17 顶栏导航与上下文搜索）/ reader-shelf-ui
+                          （v3.21 阅读架抽屉，直驱 shelf+shelf-drawer 模块，无需 bootUi/pdf.js）/
+                          folder-manager-ui（v3.22 收藏夹管理面板，直驱模块 + 假后端 refresh 全链），
                           共享 helpers/ui.js 的 bootUi（加载真实 index.html + app.js + 假后端）
                         · helpers/slow.js 慢文件守卫——npm test 默认跳过 >5s 文件，test:full 全量
                         · helpers/boot-loader.mjs：ESM resolve 钩子，让 `?boot=N` 沿依赖图传播，
@@ -151,7 +158,7 @@ backups/ logs/         运行时产物（gitignore）：JSON 快照与归档 / �
   },
   "tags":     [...],                       // 全局标签字典
   "topics":   [...],                       // 全局主题字典
-  "folders":  [ { "id", "name", "color", "createdAt" } ],
+  "folders":  [ { "id", "name", "color", "createdAt" } ],  // 虚拟收藏夹；v3.22 起数组顺序 = 用户手动维护的顺序（PUT /api/folders/order）
   "concepts": [ { "id", "term", "definition", "category", "paperIds", "source", "createdAt", "updatedAt" } ],
   "formulas": [ { "id", "canonicalName", "name", "latex", "description", "category", "variables[]", "plottable", "plotHint", "occurrences[]", "paperIds", "source", "createdAt", "updatedAt" } ],  // v3.9 公式清单
   "settings": {                       // 在线编辑的设置（见陷阱 2/3/19/20）—— 运行时覆盖 config，仅存被改过的字段
@@ -171,6 +178,7 @@ backups/ logs/         运行时产物（gitignore）：JSON 快照与归档 / �
     "conceptMapPrompt": "...",          // 概念地图生成提示词（v3.14 三级回退，设置页可编辑）
     "conceptMaps": [ { "id", "name", "html", "prompt", "status", "error", "createdAt", "updatedAt" } ],  // v3.10 概念地图制品；
                                      // v3.14 起 status=generating|ready|error（后台任务，见数据流「概念地图」）
+    "readerShelf": ["<paperId>", "..."],   // v3.21 阅读架：阅读器内多篇论文的有序栈（顺序=用户手动拖拽维护），上限 50；见数据流「阅读架」
     "updatedAt": 0
   }
 }
@@ -249,7 +257,8 @@ processOne(id):                     ← 串行，避免限速
          → 有内容写 summary（buildSummaryMarkdown 归一化）；空 → 存可重试占位（陷阱 13）
      3b. ai.extractTagsTopics(prompt = tagsPrompt 三级, jsonMode:true) → {tags,topics,metadata}
          → 写 tags（小写英文）/topics（中文，≤3）/metadata 兜底（仅标题缺失时）；独立 try/catch
-  4. 规范命名   裸 ID 文件名 → buildPaperFilename「作者 等 - 年份 - 标题.pdf」并 rename（id 不变）
+  4. 规范命名   有标题即 → buildPaperFilename「作者 等 - 年份 - 标题.pdf」并 rename（id 不变）；
+               存量文件由 scan() 的规范化 pass 兜底（见陷阱 17）
   5. 概念抽取   ai.extractConcepts(prompt = conceptPrompt 三级, jsonMode:true) → mergeConcepts（按 normalizeTerm 去重，
                命中只补空 definition/category，v3.10 起含 category 字段）
   6. 公式抽取   extractFormulasViaEngine（dispatcher，effConfig.formulas.engine=ai|mineru；见陷阱 37）
@@ -284,6 +293,8 @@ arXiv 导入 (POST /api/import { url, meta? }):
 
 
 **批注持久化**（reader.js ↔ api.js ↔ annotations.js）：前端 `annotationStorage.onSetModified` → 防抖 serialize（`doc.annotationStorage.serializable.map`）→ PATCH `{annotations:{items}}` → api.js 经 `annotations.normalizeAnnotations` 归一化后存 store。回显：open 时拿 detailView.annotations → loadAnnotations 按 pageIndex 分组 → pagerendered 后 `getPageView(i).annotationEditorLayer.annotationEditorLayer.deserialize(item)`。
+
+**阅读架**（v3.21，多论文阅读抽屉）：`store.settings.readerShelf`（per-space 有序 id 数组，上限 50）。端点 `GET /api/reader-shelf`（富化条目：标题/年份/进度）/ `PUT`（整体替换；规整=去重保首现+滤死 id+截断）；删除论文时 `deletePapersCleanup` 联动剔除。前端 `public/js/reader/shelf.js`（状态单例：per-space 惰性加载 + `subscribeShelf` 订阅 + **串行 PUT 链**防乱序）与 `shelf-drawer.js`（FAB/抽屉 UI，**与 pdf.js 解耦**——常驻 reader-host 与惰性 reader.js 共享同一实例，jsdom 直测）。`openReader()` 打开论文即上架：已在不重复加、**不重排**（顺序仅抽屉内拖拽维护）；切论文走 `/reader/:id` **replace** 导航（同名路由不触发 leave，enter 重跑 openReader 整链）；`[`/`]` 环绕切换；移除当前篇自动切邻居，架子空则关阅读器。
 
 ## 关键约定 / 陷阱（改代码前必读）
 
@@ -346,6 +357,11 @@ arXiv 导入 (POST /api/import { url, meta? }):
    - **`/paper/:id` 与 `/paper/:id/:tab` 语义不同**：前者是「选中论文」，**总是重拉详情**
      （`fresh: true`）；后者是「切 tab」，同一篇**不重拉**——否则会打断进行中的聊天流式输出
      和笔记内联编辑。改这两条 enter 时务必保持这个区分。
+   - **同名路由（不同参数）的导航不触发 leave、只重跑 enter**（v3.21 阅读架切换依赖此语义）：
+     `/reader/A` → `/reader/B` 走 `router.navigate(..., {replace:true})` 时 reader 的 leave 钩子
+     **不执行**（`resolve()` 只在 `prev.route !== hit.route` 时调 leave）——阅读器保持打开不闪关，
+     enter 链重跑完成换论文。给路由加「leave 做清理」逻辑时要意识到同路由参数切换不会走它；
+     反过来，「只想换参数不想关视图」的切换就该走这条路（replace 还能避免污染后退栈）。
    - **`/paper` 用单数**：`/papers/` 前缀已被 `src/server.js` 占用于 PDF 原文静态服务（带 Range），
      不可冲突。
    - **筛选状态回写 URL 只在 `library/refresh.js` 的 `refresh()` 里一处收口**（`syncFilterToUrl()`）。
@@ -407,6 +423,15 @@ arXiv 导入 (POST /api/import { url, meta? }):
 16. **发现排序是复合分，不是单引用量**：旧实现「取最新 N 篇再按引用量排」自相矛盾（最新论文≈0 引用）。现按 `relevance + submittedDate` 两轴召回进池，再 `相关×0.45 + 权威×0.35 + 新近×0.20` 排序。引用量经 S2 + OpenAlex 兜底，`citationsAvailable=false` 时前端要提示「按相关+新近排」。
 
 17. **改名/删除以内容 sha1 为 id**：paper id = `sha1(文件内容)前16位`，与文件名无关。所以 `processOne` 改名、`DELETE` 删文件都不影响 id / `data/text/<id>.txt` / 概念 / 批注。改名撞名时加 ` (arxivId)` 后缀；删文件限定 `papersDir` 内防越界。
+    **规范改名是全量的**（v3.20 起，不再仅限裸 arXiv ID 名）：统一收口在 `normalizePaperFilename()`
+    （有标题才改），processOne 第 4 步与 **scan() 的存量 pass** 共用——后者每轮扫描对库内 ready 论文做
+    轻量检查（已规范零开销），并把「外部手动改名」的 filename/filepath 先同步为磁盘事实再规范化
+    （`diffPapers` 对同尺寸纯改名不判 changed，不同步会 PDF 404）。用户手动改自定义名会在下轮扫描被
+    规范名覆盖（无豁免）。
+    **无标题存量的元数据回填**：ready 但无标题的论文（早期 arXiv 补全失败遗留）由 scan() 以
+    `metaOnly` 任务入串行队列（`metaBackfillAt` 一次性标记防重复入队）：arXiv 重试 → AI 从已存全文
+    提取 title/authors/year（只补空字段，不动总结/标签）→ 规范改名。队列项 `{spaceId,id,metaOnly}`，
+    processOne(id, {metaOnly}) 早分支走 `processMetaOnly`（不重解析/不重总结）。
 
 18. **总结与标签/主题必须分两次调用，不能合并**（v2.4 根因修复）：历史上二者在同一次 `response_format:json_object` 调用里返回，用户自定义总结提示词（要 Markdown 章节/LaTeX）与 JSON 硬约束冲突 → 模型返回空 `{}` → 空总结 + 空标签。现 `summarize`（jsonMode:false，自由 Markdown）与 `extractTagsTopics`（jsonMode:true，JSON）分开，各自 try/catch。**改 AI 逻辑勿合并回单次调用**。`callChat` 的 `jsonMode` 参数默认 `true`（向后兼容 extractConcepts/extractTagsTopics），`summarize` 显式传 `false`。
 
@@ -471,6 +496,12 @@ arXiv 导入 (POST /api/import { url, meta? }):
    （isEditorHandlingKeyboard 为真）时，抽屉里 textarea 的这些键全被抢走。
    修复：bindChat 里在抽屉冒泡阶段统一 e.stopPropagation()（textarea 默认行为不受影响；
    我方 Esc 分层在 document capture 先行，也不受影响）。改键盘相关代码勿删此拦截。
+   **同族问题（copy/cut/paste）**：UIManager 在非 NONE 模式（注意 cursor 底层借用 FREETEXT，
+   即陷阱 11——所以阅读器打开期间恒为非 NONE）经 setEditingState(true) 在 **document 级**挂
+   copy/cut/paste 监听且**无条件 preventDefault**——阅读器开过一次后全应用输入框无法粘贴
+   （关闭也不消失：viewer 保活复用、无人调 setDocument(null)，监听泄漏）。修复双管齐下：
+   _teardown 里 `uiManager.removeEditListeners()`（关阅读器即卸）；抽屉防护盾扩展到
+   copy/cut/paste（打开期间抽屉内粘贴复制不受影响）。
 
 30. **AI 笔记架构（v3.6）**：卡片存 `papers.note_cards`（jsonb），旧 `notes` TEXT 由 NotesPanel.load 首开时
     自动按 `^## ` 拆卡 PATCH 迁移（幂等）。写入边界一律 `normalizeNoteCards`（router PATCH 归一化 +
@@ -488,10 +519,23 @@ arXiv 导入 (POST /api/import { url, meta? }):
     （wirePdfClickClose）：豁免划词选区/选区浮窗/翻译面板；pin 按钮（rcd-pin-btn，
     localStorage 持久化）钉住后不关。改键盘交互必须保持分层，勿一键全关。
 
-32. **renderDetail 轮询重建守卫**：10s 轮询对 summary/info tab 只在 `fresh.updatedAt !==
-    state.detail.updatedAt` 时重建，且有活动文本选择（detail 内 getSelection 非空）时推迟——
-    否则选区每 10s 被 innerHTML 摧毁（「标题/总结无法复制」的根因）。chat/notes tab 沿用旧守卫
-    （busy/草稿/卡编辑态跳过）。新增周期性重渲染逻辑必须过同样的守卫。
+32. **轮询重建的选区守卫（refresh.js `selectionWithin` 单收口）**：10s 轮询对 summary/info tab 只在
+    `fresh.updatedAt !== state.detail.updatedAt` 时重建；容器内有活动文本选择（getSelection 非空且
+    anchorNode 在容器内）时**本轮不合并 state 也不重建**，下一轮重试——否则选区每 10s 被 innerHTML 摧毁
+    （「无法选中复制」的根因）。守卫覆盖 `#detail`、`.list-pane`（列表+工具条）、`#sidebar` 三处；
+    **勿在守卫前合并 state.detail**（否则下轮 updatedAt 已相等，被推迟的重建永远补不上）。chat/notes tab
+    沿用旧守卫（busy/草稿/卡编辑态跳过）。新增周期性重渲染逻辑必须过同样的守卫。
+    配套：**列表卡片不再常驻 `draggable=true`**——Chromium UA 样式给 `[draggable]` 上 `user-select:none`，
+    整卡文字不可选，作者 CSS 盖不掉（拖拽手势恒优先）。list.js 改为 `mouseover` 分派：悬文本区
+    （.pt/.pm/.chips/compact 各行）draggable=false（手势=选择），悬留白/圆点/进度条才 true（拖入收藏夹）。
+    draggable 必须 mousedown 前就位（mousedown 里再设来不及触发原生 DnD）。
+    **拖选后的 click/dblclick 要抑制**：拖选结束的 mouseup 紧跟 click，若触发跳转/打开阅读器，
+    路由重建立刻摧毁选区——list.js 条目内有活动选区时不导航。
+    **聊天流式渲染同理**（chat-tab.js / reader.js 抽屉）：token 级 `innerHTML = renderChatMd(...)`
+    全量重渲会摧毁气泡内选区（「流式回答无法选中复制」）——渲染前过 `selectionWithin` 守卫（下个
+    token 自然补渲）；`onDone` 的定型 `replaceWith` 经 `runAfterSelectionRelease` 推迟到选区释放；
+    `input.focus()` 在聊天区有选区时跳过（focus 会塌陷文档选区）；`ensureStreamingBubble` 必须幂等
+    （无条件 `innerHTML=''` 同样是选区杀手）。两个 helper 在 `core/dom.js`，新代码统一引用。
 
 33. **CommonMark CJK 缺陷 + fixCjkStrong**：`**“引用”**`、`**$公式$**` 前接汉字时按侧翼规则
     定界符非法 → marked 原样输出 `**`。renderMd 在 DOMPurify 之后、KaTeX 之前跑 fixCjkStrong
