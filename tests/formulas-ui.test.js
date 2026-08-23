@@ -247,7 +247,7 @@ test('卡片渲染（v3.52）：符号表移入预览浮窗，卡上出现论文
   assert.strictEqual(att.querySelector('.fc-vars'), null, '卡上不再有符号表折叠区');
   const chips = att.querySelectorAll('.fc-papers .paper-chip');
   assert.ok(chips.length >= 1, '卡上有出现于论文标签');
-  assert.strictEqual(att.querySelector('.fc-hint') !== null, true, '有「点卡片看全貌」提示');
+  assert.strictEqual(att.querySelector('.fc-hint'), null, 'v3.57：卡底「点击查看全貌」提示行已退役（点击是本能，无需提示）');
 });
 
 test('预览浮窗（v3.52）：点卡片打开，符号表/出处明细/完整解读都在浮窗里', async () => {

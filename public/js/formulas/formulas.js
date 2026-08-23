@@ -564,8 +564,7 @@ function _buildFormulaCard(f, layout) {
       ${plotHtml ? `<div class="fc-plot">${plotHtml}</div>` : ''}
       ${f.description ? `<div class="fc-desc">${renderMd(f.description)}</div>` : '<div class="fc-desc muted">（无解读）</div>'}
       ${paperChipsHtml}
-      ${relHtml}
-      <div class="fc-hint">点击卡片查看全貌（符号表 / 出处明细 / 完整解读）</div>`;
+      ${relHtml}`;
   }
   return card;
 }

@@ -25,6 +25,25 @@
   --surface-hover:#ffffff;
   --border-hover:#94a3b8;
   --radius:8px; --radius-sm:6px;
+
+  /* ---- 控件令牌（v3.56，规格量自 claude.ai 的 cds 设计系统）----
+     控件只有两个尺寸（32 / 28），一个圆角阶（8 / 7），一种描边表达方式：
+     **内阴影环**而不是 border——环不占盒模型，聚焦时换环色不会让控件跳半像素，
+     而且和相邻的 1px 分隔线不会叠成 2px。
+     主按钮是墨色而非品牌色：设置/工具类界面里，Indigo 实心按钮会把「确定」喊得
+     比它承担的后果更重；品牌色收敛到聚焦环与选中态。 */
+  --ink:15 23 42;                            /* 墨色（= --text 的 rgb 分量） */
+  --ctl-h:32px; --ctl-h-sm:28px;
+  --ctl-r:8px;  --ctl-r-sm:7px;
+  --ring:rgb(var(--ink) / .13);              /* 控件内描边环 */
+  --ring-hover:rgb(var(--ink) / .22);
+  --fill-field:rgba(255,255,255,.55);        /* 输入类底 */
+  --fill-ghost-hover:rgb(var(--ink) / .05);  /* 无底按钮的 hover */
+  --fill-secondary:rgb(var(--ink) / .04);    /* 次级按钮底 */
+  --fill-secondary-hover:rgb(var(--ink) / .08);
+  --fill-primary:#16181d;                    /* 主按钮底（近黑） */
+  --fill-primary-hover:#2b2f38;
+  --on-primary:#fff;
 }
 
 * { box-sizing:border-box; }
@@ -710,26 +729,50 @@ html[data-boot-path^="/settings"] #settings-view.view-hidden { display:flex !imp
 .stat-pill.good { color:var(--green); background:var(--green-soft); border-color:#bbf7d0; }
 .stat-pill.bad { color:var(--red); background:var(--red-soft); border-color:#fecaca; }
 
+/* ---- 按钮（v3.56，全站统一到 claude.ai 的三层语义）----
+   .btn        主要动作：墨色实心 + 白字（每屏最多一个）
+   .btn.ghost  次要动作：极浅底 + 1px 内环（最常用，「取消/编辑/更多」都是它）
+   .btn.subtle 三级动作：完全无底，hover 才浮出浅底（工具条里的图标钮）
+   .danger 叠加在任一层上表达破坏性。
+   尺寸只有两档：默认 32px / .sm 28px；圆角随尺寸 8 / 7。 */
 .btn {
-  display:inline-flex; align-items:center; justify-content:center; gap:5px;
-  background:var(--accent); color:#fff; border:0; padding:7px 12px; min-height:34px;
-  border-radius:var(--radius-sm); font-weight:650; line-height:1;
-  box-shadow:none;
+  display:inline-flex; align-items:center; justify-content:center; gap:6px;
+  min-height:var(--ctl-h); padding:0 12px; border:0;
+  background:var(--fill-primary); color:var(--on-primary);
+  border-radius:var(--ctl-r); font-size:14px; font-weight:500; line-height:1.2;
+  white-space:nowrap; box-shadow:none;
+  transition:background .13s ease, box-shadow .13s ease, color .13s ease;
 }
 .btn svg { flex:0 0 auto; }
-.btn:hover { background:var(--accent-strong); }
-.btn.ghost { background:var(--surface-veil); color:var(--text); border:1px solid var(--border2); box-shadow:none; }
-.btn.ghost:hover { background:var(--surface-hover); border-color:var(--border-hover); }
-.btn.ghost.active, .btn.active { background:var(--accent-soft); color:var(--accent-strong); border-color:#c7d2fe; }
-.btn.subtle { background:var(--surface-veil-soft); color:var(--text); border:1px solid var(--border); font-weight:550; box-shadow:none; }
-.btn.subtle:hover { background:var(--surface-hover); border-color:var(--border-hover); }
+.btn:hover { background:var(--fill-primary-hover); }
+.btn:active { transform:translateY(.5px); }
+.btn:focus-visible { outline:none; box-shadow:0 0 0 2px var(--panel), 0 0 0 4px var(--accent); }
+
+.btn.ghost {
+  background:var(--fill-secondary); color:var(--text); font-weight:400;
+  border:0; box-shadow:inset 0 0 0 1px var(--ring);
+}
+.btn.ghost:hover { background:var(--fill-secondary-hover); box-shadow:inset 0 0 0 1px var(--ring-hover); color:var(--text); }
+.btn.ghost.active, .btn.active { background:var(--accent-soft); color:var(--accent-strong); box-shadow:inset 0 0 0 1px rgba(79,70,229,.28); }
+
+.btn.subtle { background:transparent; color:var(--muted); font-weight:400; border:0; box-shadow:none; }
+.btn.subtle:hover { background:var(--fill-ghost-hover); color:var(--text); box-shadow:none; }
+
 .btn.danger { background:var(--red); color:#fff; }
-.btn.ghost.danger { background:var(--panel); color:var(--red); border-color:#fecaca; }
-.btn.ghost.danger:hover { background:var(--red-soft); }
-.btn:disabled { opacity:.62; cursor:default; }
+.btn.danger:hover { background:#b91c1c; }
+/* 破坏性的次级/三级动作：静默时只是普通按钮，hover 才亮红——不让「恢复默认」平时就在报警 */
+.btn.ghost.danger, .btn.subtle.danger { background:transparent; color:var(--muted); box-shadow:inset 0 0 0 1px var(--ring); }
+.btn.subtle.danger { box-shadow:none; }
+.btn.ghost.danger:hover, .btn.subtle.danger:hover { background:var(--red-soft); color:var(--red); box-shadow:inset 0 0 0 1px rgba(220,38,38,.24); }
+.btn.subtle.danger:hover { box-shadow:none; }
+
+.btn:disabled { opacity:.45; cursor:default; }
+.btn:disabled:hover { background:var(--fill-primary); }
+.btn.ghost:disabled:hover { background:var(--fill-secondary); box-shadow:inset 0 0 0 1px var(--ring); }
 .btn.is-busy { position:relative; }
-.btn.sm { padding:4px 9px; font-size:12px; }
-.btn.icon { padding:6px 8px; line-height:1; }
+.btn.sm { min-height:var(--ctl-h-sm); padding:0 10px; font-size:13px; border-radius:var(--ctl-r-sm); }
+.btn.icon { padding:0; width:var(--ctl-h); }
+.btn.sm.icon { width:var(--ctl-h-sm); }
 .toast-root {
   position:fixed; right:18px; top:66px; z-index:300;
   display:flex; flex-direction:column; gap:8px; pointer-events:none;
@@ -3344,7 +3387,10 @@ html[data-theme='dark'] .fe-switch-track { background:#39465e; }
    处理：raw 列套横向滚动层；解读/定义默认截断 + 淡出（公式卡点击展开）；出现于 chips
    退役（计数在篇数徽标、明细在出处明细展开区）；卡片 overflow:hidden 作最后防线。 */
 .formula-card, .concept-card { overflow:hidden; }
-.formula-card .fc-desc { position:relative; max-height:6.5em; } /* 4 行 × 1.6 */
+/* v3.57：截断必须配 overflow:hidden——只有 max-height 时超出内容会画出盒子外、
+   直接压到下方的论文/概念标签上（用户实报「文字和下方标签重叠」的根因；
+   v3.52 折叠区移进浮窗后 desc 正下方就是 chips，溢出必压）。 */
+.formula-card .fc-desc { position:relative; max-height:6.5em; overflow:hidden; } /* 4 行 × 1.6 */
 .formula-card .fc-desc.expanded { max-height:none; }
 .formula-card .fc-desc.clampable { cursor:pointer; }
 /* 截断淡出只盖住最后一行半（v3.51 收窄：2.4em 盖过三行，残影贴着下一分区读起来像
@@ -3355,7 +3401,7 @@ html[data-theme='dark'] .fe-switch-track { background:#39465e; }
   background:linear-gradient(transparent, var(--panel)); pointer-events:none;
 }
 .formula-card .fc-desc.clampable:not(.expanded) { margin-bottom:8px; }
-.concept-card .cd { position:relative; max-height:4.8em; } /* 3 行 × 1.55 */
+.concept-card .cd { position:relative; max-height:4.8em; overflow:hidden; } /* 3 行 × 1.55 */
 .concept-card .cd.clampable { margin-bottom:8px; }
 .fc-occ-table td.fc-occ-raw { min-width:0; }
 .fc-raw-scroll { max-width:100%; overflow-x:auto; overflow-y:hidden; padding-bottom:2px; }
@@ -3685,12 +3731,15 @@ iframe.pdf { width:100%; height:calc(100vh - 200px); border:1px solid var(--bord
 }
 .settings-overlay.view-hidden { display:none; }
 @keyframes settingsOverlayIn { from { opacity:0; } to { opacity:1; } }
-/* 尺寸对齐 claude.ai 的设置模态（960×720）：中文标签更长，导航列给到 212px。
-   固定宽高而非铺满，是「设置是盖在工作面上的一张卡」这个语义的一部分。 */
+/* 比例参考 claude.ai 的设置模态（960×720），但高度改为**随视口生长**：
+   小屏保持紧凑，大屏（27" 以上常见 1200–1400px 可视高）长到 1040px，让提示词正文、
+   渠道卡片、标签列表这些天然很长的内容少滚一半。宽度同理，但收得更保守——
+   设置行是「标签 ↔ 控件」的对读，行太宽反而难读。 */
 .settings-shell {
   position:relative;
   display:grid; grid-template-columns:212px 1fr;
-  width:100%; max-width:1000px; height:100%; max-height:min(88vh, 748px); min-height:0;
+  width:100%; max-width:min(94vw, 1080px);
+  height:100%; max-height:min(92vh, 1040px); min-height:0;
   background:var(--s-paper); overflow:hidden;
   border-radius:12px; box-shadow:0 16px 48px rgba(15,23,42,.18), 0 0 0 1px rgb(var(--s-ink) / .06);
   animation:settingsShellIn .14s ease-out;
@@ -3711,16 +3760,17 @@ iframe.pdf { width:100%; height:calc(100vh - 200px); border:1px solid var(--bord
 }
 /* 导航项 = 32px 中性圆角块。字重 500 而非 600/700：分组的层级由「分组标题 vs 条目」
    区分，条目之间不需要再靠字重打架。 */
+/* 导航项 32px：未选中是次要色 + 常规字重，选中才升到主文色 + 500——
+   只有一处在「说话」，扫一眼就知道自己在哪。 */
 .settings-nav-item {
   display:flex; align-items:center; gap:9px;
   height:32px; padding:0 10px; border-radius:8px; cursor:pointer;
-  color:var(--s-t1); font-size:14px; font-weight:500; line-height:1;
-  transition:background .12s ease;
+  color:var(--s-t2); font-size:14px; font-weight:400; line-height:1;
+  transition:background .12s ease, color .12s ease;
 }
-.settings-nav-item:hover { background:var(--s-fill); }
-.settings-nav-item.active { background:var(--s-fill-hover); }
-.settings-nav-item .sni { display:inline-flex; align-items:center; justify-content:center; width:16px; flex:0 0 auto; color:var(--s-t2); }
-.settings-nav-item.active .sni { color:var(--s-t1); }
+.settings-nav-item:hover { background:var(--s-fill); color:var(--s-t1); }
+.settings-nav-item.active { background:var(--s-fill-hover); color:var(--s-t1); font-weight:500; }
+.settings-nav-item .sni { display:inline-flex; align-items:center; justify-content:center; width:16px; flex:0 0 auto; color:inherit; }
 .settings-nav-item .sni svg { width:16px; height:16px; }
 .settings-nav-empty { padding:10px; font-size:13px; color:var(--s-t3); }
 .settings-nav-foot { margin-top:auto; padding-top:10px; }
@@ -3936,20 +3986,48 @@ iframe.pdf { width:100%; height:calc(100vh - 200px); border:1px solid var(--bord
 .set-row-jump:hover .sr-chev { color:var(--s-t1); }
 .set-row-jump:focus-visible { outline:2px solid var(--accent); outline-offset:-2px; }
 
+/* 输入框：用内阴影环代替 border。环不占盒模型——聚焦换环色时控件不会跳半像素，
+   也不会和相邻行的 1px 分隔线叠成 2px。尺寸走全局控件令牌。 */
+.settings-panel input[type=text],
+.settings-panel input[type=password],
+.settings-panel input[type=number],
+.settings-panel textarea {
+  border:0; border-radius:var(--ctl-r);
+  background:var(--fill-field); color:var(--s-t1); font-size:14px;
+  box-shadow:inset 0 0 0 1px var(--s-edge);
+  transition:box-shadow .14s ease;
+}
+.settings-panel input::placeholder, .settings-panel textarea::placeholder { color:var(--s-t3); }
+.settings-panel input:hover, .settings-panel textarea:hover { box-shadow:inset 0 0 0 1px rgb(var(--s-ink) / .24); }
+.settings-panel input:focus, .settings-panel textarea:focus {
+  outline:none; box-shadow:inset 0 0 0 1px var(--accent), 0 0 0 3px var(--accent-soft);
+}
 .sr-ctl input[type=text],
 .sr-ctl input[type=password],
-.sr-ctl input[type=number] {
-  width:168px; height:32px; padding:0 10px;
-  border:1px solid var(--s-edge); border-radius:8px;
-  background:var(--s-paper); color:var(--s-t1); font-size:14px;
-  transition:border-color .14s ease, box-shadow .14s ease;
-}
+.sr-ctl input[type=number] { width:168px; height:var(--ctl-h); padding:0 12px; }
 .sr-ctl input.sr-input-wide { width:262px; }
-.sr-ctl input::placeholder { color:var(--s-t3); }
-.sr-ctl input:hover { border-color:rgb(var(--s-ink) / .24); }
-.sr-ctl input:focus { outline:none; border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft); }
-/* 行内自定义下拉触发器宽度对齐输入框 */
-.sr-ctl .sd-wrap { width:262px; }
+
+/* 行内下拉：Claude 把设置里的选择器做成「文字 + chevron」的无框按钮，静默时它只是
+   一行右对齐的值，hover 才浮出浅底——比一个常驻的输入框状边框安静得多。 */
+.sr-ctl .sd-wrap { width:auto; max-width:320px; }
+.sr-ctl .sd-trigger {
+  width:auto; max-width:320px; height:var(--ctl-h); padding:0 4px 0 8px; gap:6px;
+  border:0; border-radius:var(--ctl-r); background:transparent; box-shadow:none;
+  color:var(--s-t1); font-size:14px; font-weight:400;
+  transition:background .12s ease;
+}
+.sr-ctl .sd-trigger:hover,
+.sr-ctl .sd-trigger.active:hover { background:var(--s-fill); }
+.sr-ctl .sd-trigger.active { background:transparent; color:var(--s-t1); }
+.sr-ctl .sd-trigger .ft-label { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.sr-ctl .sd-trigger .ft-chev,
+.sr-ctl .sd-trigger.active .ft-chev { color:var(--s-t3); }
+/* 触发器右对齐 → 菜单也从右边缘展开，不然会顶到面板外 */
+.sr-ctl .sd-menu { left:auto; right:0; min-width:260px; border-color:var(--s-edge); }
+.settings-panel .fsm-item { font-size:14px; font-weight:400; color:var(--s-t1); padding:7px 10px; }
+.settings-panel .fsm-item:hover { background:var(--s-fill); color:var(--s-t1); }
+.settings-panel .fsm-item.active { background:transparent; color:var(--s-t1); }
+.settings-panel .fsm-item.active::after { color:var(--s-t1); }
 /* toggle 行并入行体系：与 .set-row 同一套内边距与分隔线 */
 .set-rows .toggle-field {
   border:0; border-radius:0; background:transparent;
@@ -3977,35 +4055,58 @@ iframe.pdf { width:100%; height:calc(100vh - 200px); border:1px solid var(--bord
 }
 .pane-back:hover { background:var(--s-fill); color:var(--s-t1); }
 .pane-title { font-size:15px; font-weight:600; color:var(--s-t1); line-height:20px; }
-.pane-reset { margin-left:auto; }
 .pane-lede { margin:0 0 16px 38px; font-size:13px; color:var(--s-t2); line-height:1.6; max-width:66ch; }
 
-/* ---- 提示词工作台（v3.55，Claude Memory 式）：只读视图 + AI 修改稿 + 底部 composer ---- */
-.ps { display:flex; flex-direction:column; gap:12px; }
-.ps-viewwrap { position:relative; }
-.ps-view {
-  min-height:150px; max-height:min(46vh, 460px); overflow:auto;
-  padding:14px 16px; border:1px solid var(--s-edge, var(--border)); border-radius:10px; background:var(--s-fill, var(--panel));
-  font:12.5px/1.75 ui-monospace,Consolas,"Cascadia Code",monospace; color:var(--s-t1, var(--text));
+/* 破坏性动作独立成行，落在所属分区的末尾（Claude 的 Account 页就是这么放
+   Log out / Delete account 的）。此前它挤在节标题右侧，既和标题抢注意力，
+   也没有地方说清「恢复默认到底会清掉什么」。 */
+.set-rows-foot { margin-top:22px; }
+.set-row-reset { padding-top:11px; }
+.set-row-reset .sr-hint { margin-top:0; }
+
+/* ---- 提示词工作台（v3.56）：只读视图 ⇄ 原地编辑 + AI 修改稿 + 底部 composer ----
+   两条编辑通道分开：内容自己的头上放「编辑」（改正文），底部 composer 只管「让 AI 改」。
+   只读视图与编辑框共用同一套几何（--ps-h / padding / 字体），互换时版面纹丝不动——
+   旧版一个 150px 的浅底只读块跳成 340px 的白底 textarea，每次点编辑页面都要重新找位置。 */
+.ps {
+  --ps-h:clamp(240px, 38vh, 520px);        /* 大屏给更高的正文视窗 */
+  display:flex; flex-direction:column; gap:10px;
+}
+.ps-head { display:flex; align-items:center; gap:8px; min-height:28px; }
+.ps-head .ps-manual { margin-left:auto; }
+/* 生效来源（内置默认 / 自定义） */
+.ps-src {
+  font-size:12px; font-weight:500; line-height:1; padding:4px 8px; border-radius:6px;
+  background:var(--s-fill, var(--panel2)); color:var(--s-t2, var(--muted2));
+}
+.ps-src.custom { background:var(--accent-soft); color:var(--accent-strong); }
+
+.ps-view,
+.ps-edit textarea {
+  display:block; width:100%; box-sizing:border-box;
+  height:var(--ps-h); overflow:auto;
+  padding:14px 16px; border:0; border-radius:10px;
+  background:var(--fill-field); box-shadow:inset 0 0 0 1px var(--s-edge, var(--border));
+  font:13px/1.75 ui-monospace,Consolas,"Cascadia Code",monospace;
+  color:var(--s-t1, var(--text));
   white-space:pre-wrap; word-break:break-word;
 }
-.ps-view:focus-visible { outline:none; border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft); }
-/* 生效来源角标（内置默认 / 自定义），贴只读视图右上 */
-.ps-src {
-  position:absolute; top:8px; right:10px;
-  font-size:12px; font-weight:500; line-height:1; padding:3px 8px; border-radius:6px;
-  background:var(--s-paper, var(--panel2)); color:var(--s-t2, var(--muted2)); border:1px solid var(--s-edge, var(--border));
-  pointer-events:none;
-}
-.ps-src.custom { background:var(--accent-soft); color:var(--accent-strong); border-color:transparent; }
-.ps-draft { border:1px solid var(--accent); border-radius:10px; background:var(--panel); overflow:hidden; }
+.ps-view:focus-visible { outline:none; box-shadow:inset 0 0 0 1px var(--accent), 0 0 0 3px var(--accent-soft); }
+.ps-edit textarea { resize:vertical; min-height:var(--ps-h); }
+.ps-edit-actions { display:flex; align-items:center; justify-content:flex-end; gap:8px; margin-top:10px; }
+.ps-edit-actions .save-hint { margin-right:auto; font-size:13px; }
+.ps-edit-actions .save-hint.good { color:var(--green); }
+.ps-edit-actions .save-hint.bad { color:var(--red); }
+
+/* AI 修改稿：唯一带主色描边的块——它是「未落盘的待决内容」，值得被指出来 */
+.ps-draft { border:1px solid var(--accent); border-radius:10px; background:var(--s-paper, var(--panel)); overflow:hidden; }
 .ps-draft-head {
   display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;
-  padding:9px 12px; border-bottom:1px solid var(--border);
-  background:linear-gradient(180deg, rgba(99,102,241,.06), rgba(99,102,241,.02));
+  padding:8px 10px 8px 14px; border-bottom:1px solid var(--s-line, var(--border));
+  background:var(--accent-soft);
 }
-.ps-draft-title { font-size:12.5px; font-weight:700; color:var(--text); display:inline-flex; align-items:center; gap:8px; }
-.ps-draft-status { font-size:11px; font-weight:500; color:var(--muted2); }
+.ps-draft-title { font-size:14px; font-weight:500; color:var(--s-t1, var(--text)); display:inline-flex; align-items:center; gap:8px; }
+.ps-draft-status { font-size:13px; font-weight:400; color:var(--s-t2, var(--muted2)); }
 .ps-draft-status.busy { color:var(--accent-strong); }
 .ps-draft-status.busy::after { content:""; display:inline-block; width:12px; margin-left:2px; animation:psDots 1.2s steps(3) infinite; }
 @keyframes psDots { 0% { content:""; } 33% { content:"·"; } 66% { content:"··"; } 100% { content:"···"; } }
@@ -4013,53 +4114,42 @@ iframe.pdf { width:100%; height:calc(100vh - 200px); border:1px solid var(--bord
 .ps-draft-status.bad { color:var(--red); }
 .ps-draft-acts { display:inline-flex; gap:8px; }
 .ps-draft-body {
-  min-height:110px; max-height:min(40vh, 420px); overflow:auto; padding:12px 16px;
-  font:12.5px/1.75 ui-monospace,Consolas,"Cascadia Code",monospace; color:var(--text);
+  min-height:140px; max-height:min(40vh, 460px); overflow:auto; padding:14px 16px;
+  font:13px/1.75 ui-monospace,Consolas,"Cascadia Code",monospace; color:var(--s-t1, var(--text));
   white-space:pre-wrap; word-break:break-word;
 }
 .ps-draft-body:focus-visible { outline:none; }
-.ps-edit textarea {
-  width:100%; min-height:340px; background:var(--panel); color:var(--text);
-  border:1px solid var(--border2); border-radius:10px; padding:12px 14px;
-  font:12.5px/1.7 ui-monospace,Consolas,"Cascadia Code",monospace; resize:vertical;
-}
-.ps-edit textarea:focus { outline:none; border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft); }
-.ps-edit .editor-actions { margin-top:10px; padding-top:0; border-top:0; }
-/* 底部 composer（Memory 式）：手动编辑钮 + 需求输入 + 圆形发送钮 */
+
+/* 底部 composer：需求输入 + 圆形发送钮。用内环而非 border，与其他输入一致 */
 .ps-composer {
-  display:flex; align-items:center; gap:8px;
-  padding:7px 8px 7px 8px; border:1px solid var(--border2); border-radius:999px; background:var(--panel);
-  transition:border-color .14s ease, box-shadow .14s ease;
+  display:flex; align-items:center; gap:6px;
+  padding:5px 5px 5px 14px; border:0; border-radius:999px;
+  background:var(--fill-field); box-shadow:inset 0 0 0 1px var(--s-edge, var(--border));
+  transition:box-shadow .14s ease;
 }
-.ps-composer:focus-within { border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft); }
-.ps-manual {
-  flex:0 0 auto; display:inline-flex; align-items:center; gap:6px;
-  height:32px; padding:0 13px; border:0; border-radius:999px;
-  background:var(--panel2); color:var(--muted); font-size:12px; font-weight:600; cursor:pointer;
-  transition:background .13s ease, color .13s ease;
-}
-.ps-manual:hover { background:var(--accent-soft); color:var(--accent-strong); }
-.ps-manual:disabled { opacity:.5; cursor:default; }
+.ps-composer:focus-within { box-shadow:inset 0 0 0 1px var(--accent), 0 0 0 3px var(--accent-soft); }
 .ps-input {
-  flex:1; min-width:0; border:0; background:transparent; color:var(--text);
-  font-size:13px; padding:6px 4px;
+  flex:1; min-width:0; border:0; background:transparent; color:var(--s-t1, var(--text));
+  font-size:14px; padding:7px 0;
 }
 .ps-input:focus { outline:none; }
+.ps-input::placeholder { color:var(--s-t3, var(--muted2)); }
 .ps-input:disabled { opacity:.55; }
 .ps-send {
-  flex:0 0 auto; display:inline-grid; place-items:center; width:32px; height:32px;
-  border:0; border-radius:50%; background:var(--accent); color:#fff; cursor:pointer;
+  flex:0 0 auto; display:inline-grid; place-items:center; width:30px; height:30px;
+  border:0; border-radius:50%; background:var(--fill-primary); color:var(--on-primary); cursor:pointer;
   transition:background .13s ease, transform .13s ease, opacity .13s ease;
 }
-.ps-send:hover { background:var(--accent-strong); }
+.ps-send:hover { background:var(--fill-primary-hover); }
 .ps-send:active { transform:scale(.94); }
-.ps-send:disabled { opacity:.45; cursor:default; }
+.ps-send:disabled { opacity:.35; cursor:default; }
 
 .ps-default pre {
-  background:var(--panel2); border:1px solid var(--border); border-radius:8px; padding:12px;
+  background:var(--s-fill, var(--panel2)); border:0; border-radius:8px; padding:12px;
   font:12px/1.6 ui-monospace,Consolas,"Cascadia Code",monospace;
-  max-height:340px; overflow:auto; white-space:pre-wrap; word-break:break-word;
+  max-height:min(38vh, 420px); overflow:auto; white-space:pre-wrap; word-break:break-word;
 }
+
 .ch-grid { display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:12px; }
 .ch-empty {
   grid-column:1 / -1; padding:18px; font-size:12.5px; color:var(--muted); line-height:1.7;
@@ -4685,6 +4775,17 @@ html[data-theme="dark"] {
   --surface-veil-soft:rgba(148,163,184,.08);
   --surface-hover:rgba(148,163,184,.16);
   --border-hover:#4d5b74;
+  /* 控件令牌：墨色翻转为浅色，主按钮随之变成「亮底深字」（同 Claude 暗色） */
+  --ink:230 234 242;
+  --ring:rgb(var(--ink) / .16);
+  --ring-hover:rgb(var(--ink) / .26);
+  --fill-field:rgb(var(--ink) / .05);
+  --fill-ghost-hover:rgb(var(--ink) / .07);
+  --fill-secondary:rgb(var(--ink) / .06);
+  --fill-secondary-hover:rgb(var(--ink) / .11);
+  --fill-primary:#e9edf5;
+  --fill-primary-hover:#ffffff;
+  --on-primary:#12161f;
   color-scheme:dark;
 }
 html[data-theme="dark"] ::selection { background:rgba(129,140,248,.4); }
@@ -4743,9 +4844,7 @@ html[data-theme="dark"] .pfd-merge-item.suspect .pfd-merge-suspect-tag { backgro
 /* 卡片标题行预留宽度收紧（图标化后比文字按钮窄 ~40px，还给标题） */
 .masonry-view .concept-card .ct { padding-right:64px; }
 .masonry-view .formula-card .ct { padding-right:92px; }
-/* ghost 按钮统一到同一 hover 语言（产品级：静默 → 主色浮现） */
-.btn.ghost:hover { background:var(--panel); border-color:var(--border2); color:var(--accent-strong); }
-.btn.ghost.danger:hover { color:var(--red); border-color:#fca5a5; background:var(--red-soft); }
+/* v3.56：ghost 的 hover 语言已并入上面的 .btn 体系（内环 + 中性抬底），此处不再单独覆盖 */
 html[data-theme="dark"] .qbtn:hover { background:var(--panel3); }
 html[data-theme="dark"] .card-star:hover, html[data-theme="dark"] .cd-star:hover { background:rgba(245,158,11,.18); }
 html[data-theme="dark"] .qbtn.danger:hover { border-color:rgba(248,113,113,.5); background:rgba(239,68,68,.14); }
@@ -4976,10 +5075,7 @@ input[type='number']:hover::-webkit-inner-spin-button { opacity:1; }
   margin-top:8px; display:flex; align-items:center; gap:5px; flex-wrap:wrap;
   color:var(--muted2); font-size:11px;
 }
-.formula-card .fc-hint { margin-top:8px; font-size:10.5px; color:var(--muted2); text-align:center; opacity:.75; }
-.formula-card .fc-hint:hover { color:var(--accent-strong); opacity:1; }
 .list-view .formula-card { cursor:default; }
-.list-view .formula-card .fc-hint { display:none; }
 
 .formula-detail-overlay { display:none; position:fixed; inset:0; z-index:1500; background:rgba(15,23,42,.38); backdrop-filter:blur(2px); align-items:center; justify-content:center; padding:min(6vh,48px) min(4vw,48px); }
 .formula-detail-overlay.open { display:flex; animation:cd-fade .14s ease; }
