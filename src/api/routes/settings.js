@@ -4,6 +4,8 @@
 // handler 体自 src/api/router.js 的 if 链原样迁移（v3.15 路由化重构），行为逐字不变。
 
 const pkg = require('../../../package.json');
+// 命名空间访问（可测试性）：测试 monkey-patch aiSvc.callChatStream 即可拦截 prompt-refine 的 AI 调用
+const aiSvc = require('../../services/ai');
 const {
   DEFAULT_SUMMARY_PROMPT,
   DEFAULT_TAGS_PROMPT,
@@ -12,7 +14,7 @@ const {
   DEFAULT_CONCEPT_MAP_PROMPT,
   applySettingsOverride,
   withGlobalAi,
-} = require('../../services/ai');
+} = aiSvc;
 const { DEFAULT_MINERU_NAMING_PROMPT } = require('../../services/mineru');
 const {
   aiSettingsView,
@@ -25,6 +27,48 @@ const {
 
 function register(t, ctx) {
   const { ok, fail, config, manager, scanner, conceptMapMeta } = ctx;
+
+  // ---- AI 改写提示词（v3.55，memory 式编辑）----
+  // 各提示词的取用规则与「改写时必须保留的机制」说明（喂给改写模型，防把硬约束改丢）。
+  // get(settings) 取当前覆盖值（空=用内置默认）；def() 取内置默认。
+  const PROMPT_REFINE_KEYS = {
+    summary: {
+      label: '论文总结提示词',
+      get: (s) => s.summaryPrompt,
+      def: () => DEFAULT_SUMMARY_PROMPT,
+      note: '该提示词驱动模型直接输出 Markdown 总结正文（非 JSON、不包代码块）。改写后必须仍要求输出 Markdown 正文。',
+    },
+    tags: {
+      label: '标签/主题抽取提示词',
+      get: (s) => s.tagsPrompt,
+      def: () => DEFAULT_TAGS_PROMPT,
+      note: '该提示词强制 JSON 输出（response_format: json_object），结构为 {"tags":[...],"topics":[...],"metadata":{...}}。改写后必须保留 JSON 输出要求与该字段结构。',
+    },
+    formula: {
+      label: '公式抽取提示词',
+      get: (s) => s.formulaPrompt,
+      def: () => DEFAULT_FORMULA_PROMPT,
+      note: '该提示词强制 JSON 输出；canonicalName 是跨论文合并的唯一 key，提示词中的规范名对照表决定同名公式能否合并——改写时必须保留规范名机制与 JSON 结构。',
+    },
+    concept: {
+      label: '概念抽取提示词',
+      get: (s) => s.conceptPrompt,
+      def: () => DEFAULT_CONCEPT_PROMPT,
+      note: '该提示词强制 JSON 输出，每条概念含 category（枚举）与 importance（core|supporting）字段；term 规范名对照表决定跨论文归并。改写后必须保留 JSON 结构、category 枚举与规范名机制。',
+    },
+    conceptMap: {
+      label: '概念地图生成提示词',
+      get: (s) => s.conceptMapPrompt,
+      def: () => DEFAULT_CONCEPT_MAP_PROMPT,
+      note: '该提示词驱动生成单文件 HTML 概念地图（自由输出，非 JSON）。改写后必须仍要求输出完整自包含的单文件 HTML。',
+    },
+    mineruNaming: {
+      label: 'MinerU 公式命名提示词',
+      get: (s) => (s.formulas && s.formulas.namingPrompt) || '',
+      def: () => DEFAULT_MINERU_NAMING_PROMPT,
+      note: 'MinerU 只产出 LaTeX，该提示词让 AI 批量产出 canonicalName/名称/解读，并要求逐条回显 index、可对噪声条目答 skip 拒判。改写后必须保留 index 对齐与 skip 机制（否则名字整体错位）。',
+    },
+  };
 
   // ---- 设置（提示词 / AI 接口 / 主题标签等） ----
   // GET /api/settings  返回提示词 + 生效 AI 配置（掩码）+ 内置默认，供设置面板渲染
@@ -151,6 +195,58 @@ function register(t, ctx) {
     store.settings.updatedAt = Date.now();
     await save(store);
     return ok(res, { conceptMapPrompt: store.settings.conceptMapPrompt });
+  });
+
+  // POST /api/settings/prompt-refine —— AI 改写提示词（v3.55，SSE 流式）。
+  //   memory 式编辑：用户用自然语言提修改需求，模型基于当前提示词产出完整修改稿。
+  //   body: { key, request, base? }——base 省略时取「覆盖值 || 内置默认」；多轮修改时前端传上一稿。
+  //   不落库：前端预览后由用户「采用」时走既有 PUT 端点保存。陷阱 42：走流式防代理空闲超时。
+  t.post('/api/settings/prompt-refine', async ({ res, body, store, gai }) => {
+    const op = JSON.parse(body || '{}');
+    const spec = PROMPT_REFINE_KEYS[op.key];
+    if (!spec) return fail(res, 400, 'unknown prompt key: ' + op.key);
+    const request = String(op.request || '').trim();
+    if (!request) return fail(res, 400, 'request required');
+    store.settings = store.settings || {};
+    const base =
+      typeof op.base === 'string' && op.base.trim()
+        ? op.base
+        : String(spec.get(store.settings) || '').trim() || spec.def();
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream; charset=utf-8',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
+      'X-Accel-Buffering': 'no',
+    });
+    const send = (event, data) => res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    try {
+      const system = [
+        '你是一位资深的 LLM 提示词工程专家。用户会给你一条正在使用的提示词和一句自然语言修改要求，',
+        '你要输出改写后的完整提示词正文。',
+        '',
+        `这条提示词的背景：${spec.label}。${spec.note}`,
+        '',
+        '硬性要求：',
+        '- 只输出改写后的提示词正文本身——不要任何解释、前言、总结，不要用 Markdown 代码块包裹整条输出。',
+        '- 完整输出整条提示词（不是 diff、不是片段），未被要求修改的部分原样保留。',
+        '- 保持原提示词的语言（中文提示词就用中文，英文就用英文）与整体结构。',
+      ].join('\n');
+      const user = `【当前提示词】\n${base}\n\n【修改要求】\n${request}`;
+      const effConfig = aiSvc.applySettingsOverride(config, aiSvc.withGlobalAi(store.settings, gai));
+      await aiSvc.callChatStream({
+        messages: [
+          { role: 'system', content: system },
+          { role: 'user', content: user },
+        ],
+        config: effConfig,
+        chatParams: { timeoutMs: 180000 },
+        onToken: (tok) => send('token', { tok }),
+      });
+      send('done', {});
+    } catch (e) {
+      send('fail', { error: e && e.message ? e.message : '改写失败' });
+    }
+    return res.end();
   });
 
   // PUT /api/settings/chat-presets  body: { value: [{label,prompt}] }  空数组=恢复内置默认

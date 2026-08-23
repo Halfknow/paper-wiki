@@ -144,12 +144,21 @@ test('error 制品：失败徽标 + 半成品缩略图 + 查看/优化/删除', 
   assert.ok($('concept-maps-list').querySelector('iframe.cms-thumb-frame'), '半成品也挂缩略图（可看残缺效果）');
 });
 
-test('设置页含「概念地图提示词」面板并回显默认值', async () => {
-  const nav = ui.document.querySelector('.settings-nav-item[data-tab="concept-map"]');
-  assert.ok(nav, '设置导航应有概念地图提示词入口');
-  assert.ok(nav.textContent.includes('概念地图提示词'));
-  const panel = ui.document.querySelector('.settings-panel[data-panel="concept-map"]');
-  assert.ok(panel, '设置面板应存在');
-  assert.ok(panel.querySelector('#concept-map-prompt-edit'), '面板应有编辑框');
-  assert.ok(panel.querySelector('#btn-concept-map-prompt-save'), '面板应有保存按钮');
+// v3.56：概念地图提示词不再是平级 tab，收进「提示词」页的行列表（老深链
+// /settings/concept-map 仍走别名落到这里）。这里验证入口与工作台仍在。
+test('概念地图提示词在「提示词」页里有条目与编辑工作台', async () => {
+  const nav = ui.document.querySelector('.settings-nav-item[data-tab="prompts"]');
+  assert.ok(nav, '设置导航应有「提示词」入口');
+  ui.$('btn-settings').click();
+  await sleep(120);
+  nav.click();
+  await sleep(120);
+  const row = ui.document.querySelector('#prompt-rows [data-prompt-open="conceptMap"]');
+  assert.ok(row, '提示词列表里有「概念地图提示词」一行');
+  assert.ok(row.textContent.includes('概念地图提示词'));
+  row.click();
+  const pane = ui.document.querySelector('.prompt-pane[data-prompt-pane="conceptMap"]');
+  assert.strictEqual(pane.hidden, false, '点行展开编辑工作台');
+  assert.ok(pane.querySelector('#concept-map-prompt-edit'), '工作台里有编辑框');
+  assert.ok(pane.querySelector('#btn-concept-map-prompt-save'), '工作台里有保存按钮');
 });

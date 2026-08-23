@@ -8,11 +8,29 @@ import { createRouter } from './router.js';
 /** 详情面板 tab（/paper/:id/:tab）。非法值回退 summary。 */
 export const PAPER_TABS = ['summary', 'notes', 'chat', 'info'];
 
-/** 设置中心 tab（/settings/:tab）。与 index.html 的 .settings-nav-item[data-tab] 一一对应。 */
-export const SETTINGS_TABS = [
-  'overview', 'ai', 'summary', 'tags', 'concept', 'concept-map', 'formula',
-  'scan', 'arxiv', 'discover', 'translate', 'formula-engine', 'taxonomy', 'system',
+/** 设置中心导航项（/settings/:tab）。与 index.html 的 .settings-nav-item[data-tab] 一一对应。
+ *  v3.56 起从 14 项收敛为 8 项：5 个提示词合并进 `prompts`（行列表 + 就地编辑），
+ *  scan/arxiv/formula-engine 合并进 `ingest`（一条「进来 → 解析」的流水线）。 */
+export const SETTINGS_NAV_TABS = [
+  'overview', 'ai', 'prompts', 'ingest', 'discover', 'translate', 'taxonomy', 'system',
 ];
+
+/** 旧 tab → 新导航项的深链别名。老 URL / 老书签仍然可用，并且会自动展开到对应子项：
+ *  `/settings/summary` 落在 prompts 页且直接打开总结提示词的编辑态。
+ *  值形如 `新tab` 或 `新tab#子项`（子项语义由 settingsSwitchTab 解释）。 */
+export const SETTINGS_TAB_ALIASES = {
+  summary: 'prompts#summary',
+  tags: 'prompts#tags',
+  formula: 'prompts#formula',
+  concept: 'prompts#concept',
+  'concept-map': 'prompts#conceptMap',
+  scan: 'ingest#scan',
+  arxiv: 'ingest#arxiv',
+  'formula-engine': 'ingest#formulas',
+};
+
+/** 合法的 /settings/:tab 取值 = 新导航项 + 全部历史别名（非法值回退 overview）。 */
+export const SETTINGS_TABS = [...SETTINGS_NAV_TABS, ...Object.keys(SETTINGS_TAB_ALIASES)];
 
 /** 库视图筛选在 URL 里的默认值——等于默认的键不写进 URL，避免
  *  /library?status=&sort=addedDesc&starred=0 这种噪声。 */

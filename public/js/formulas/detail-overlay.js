@@ -17,7 +17,7 @@ import { renderMd } from '../core/markdown.js';
 import { plotSvg } from '../core/plot.js';
 import { state } from '../core/state.js';
 import { toast } from '../core/ui-kit.js';
-import { escapeHtml } from '../core/format.js';
+import { chipClass, escapeHtml } from '../core/format.js';
 // 与 formulas.js / editor-drawer.js 构成模块循环，双方只在事件回调里调对方函数
 // （声明提升 + 运行时解析），顶层求值互不依赖——与 concepts ↔ drawer 同构安全。
 import { renderFormulaSidebar, renderFormulas, VAR_ROLE_LABEL } from './formulas.js';
@@ -137,7 +137,7 @@ function _render(f) {
       <section class="fdv-sec">
         <div class="fdv-sec-title">相关概念</div>
         <div class="fdv-concepts">${relConcepts
-          .map((c) => `<button class="concept-chip" data-cdopen="${c.id}" title="查看概念「${escapeHtml(c.term)}」">${escapeHtml(c.term)}</button>`)
+          .map((c) => `<button class="concept-chip ${chipClass(c.term)}" data-cdopen="${c.id}" title="查看概念「${escapeHtml(c.term)}」">${escapeHtml(c.term)}</button>`)
           .join('')}</div>
       </section>` : ''}
     </div>

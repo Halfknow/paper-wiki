@@ -26,9 +26,9 @@ import { refresh } from './library/refresh.js';
 import { syncAdvancedPanelFromDsl } from './search/advanced.js';
 import { closeSuggest, handleSuggestKeydown } from './search/suggest.js';
 import { bindChannelGrid, chEditModels, editingChannelId, renderChannels, set_chEditModels, set_editingChannelId } from './settings/channels.js';
-import { filterSettingsNav, normalizeWeights, renderWeightProp, resetAllSettings, resetSection, saveArxiv, saveDiscover, saveFormulaEngine, saveMineruNamingPrompt, saveScan, saveTranslate } from './settings/collect.js';
-import { saveConceptMapPrompt, saveConceptPrompt, saveFormulaPrompt, saveSummaryPrompt, saveTagsPrompt } from './settings/prompts.js';
-import { saveAiConfig, settingsSwitchTab } from './settings/settings.js';
+import { filterSettingsNav, normalizeWeights, renderWeightProp, resetAllSettings, resetSection, saveArxiv, saveDiscover, saveFormulaEngine, saveScan } from './settings/collect.js';
+import { currentPromptPane, initPromptStudios, showPromptIndex } from './settings/prompt-studio.js';
+import { saveAiConfig } from './settings/settings.js';
 import { renderTaxonomy, taxBatchDelete, taxBatchMerge, taxState, taxSwitchKind, taxToggleSelectMode } from './settings/taxonomy.js';
 import { applyListWidth, bindListSplitter, refreshSystemHealth, setSidebarCollapsed } from './views/layout.js';
 import { currentView } from './views/view-switch.js';
@@ -333,14 +333,13 @@ export function bind() {
   $('btn-settings').onclick = openSettingsOverlay;
   $('btn-settings-rail').onclick = openSettingsOverlay;
   $('btn-settings-close').onclick = closeSettingsOverlay;
+  if ($('btn-settings-x')) $('btn-settings-x').onclick = closeSettingsOverlay;
   // 点遮罩（面板之外）关闭——覆盖层的常规语义
   $('settings-view').addEventListener('click', (e) => { if (e.target.id === 'settings-view') closeSettingsOverlay(); });
   // 设置 tab 导航
   document.querySelectorAll('.settings-nav-item').forEach((el) => {
     el.onclick = () => router.navigate(buildPath('/settings/:tab', { tab: el.dataset.tab }));
   });
-  // AI 接口
-  $('btn-ai-save').onclick = saveAiConfig;
   // v3.13 模型渠道卡片：添加渠道 + 网格事件委托
   $('btn-ch-add').onclick = () => {
     set_chEditModels([]);
@@ -354,86 +353,44 @@ export function bind() {
     }
   };
   bindChannelGrid();
-  // 总结提示词
-  $('btn-summary-prompt-save').onclick = saveSummaryPrompt;
-  $('btn-summary-prompt-default').onclick = async () => {
-    if (await PWDialog.confirm('清空当前编辑内容并恢复为内置默认总结提示词？（保存后生效）', { title: '恢复默认提示词', okText: '恢复默认' })) {
-      $('summary-prompt-edit').value = $('summary-prompt-default-pre').textContent || '';
-      $('summary-prompt-hint').textContent = '已载入默认提示词，尚未保存';
-      toast('已载入默认提示词');
-    }
-  };
-  // 标签/主题提示词
-  $('btn-tags-prompt-save').onclick = saveTagsPrompt;
-  $('btn-tags-prompt-default').onclick = async () => {
-    if (await PWDialog.confirm('清空当前编辑内容并恢复为内置默认标签/主题提示词？（保存后生效）', { title: '恢复默认提示词', okText: '恢复默认' })) {
-      $('tags-prompt-edit').value = $('tags-prompt-default-pre').textContent || '';
-      $('tags-prompt-hint').textContent = '已载入默认提示词，尚未保存';
-      toast('已载入默认提示词');
-    }
-  };
-  // 公式抽取提示词
-  $('btn-formula-prompt-save').onclick = saveFormulaPrompt;
-  $('btn-formula-prompt-default').onclick = async () => {
-    if (await PWDialog.confirm('清空当前编辑内容并恢复为内置默认公式提示词？（保存后生效）', { title: '恢复默认提示词', okText: '恢复默认' })) {
-      $('formula-prompt-edit').value = $('formula-prompt-default-pre').textContent || '';
-      $('formula-prompt-hint').textContent = '已载入默认提示词，尚未保存';
-      toast('已载入默认提示词');
-    }
-  };
-  // 概念抽取提示词（v3.10）
-  if ($('btn-concept-prompt-save')) $('btn-concept-prompt-save').onclick = saveConceptPrompt;
-  if ($('btn-concept-prompt-default')) {
-    $('btn-concept-prompt-default').onclick = async () => {
-      if (await PWDialog.confirm('清空当前编辑内容并恢复为内置默认概念提示词？（保存后生效）', { title: '恢复默认提示词', okText: '恢复默认' })) {
-        $('concept-prompt-edit').value = $('concept-prompt-default-pre').textContent || '';
-        $('concept-prompt-hint').textContent = '已载入默认提示词，尚未保存';
-        toast('已载入默认提示词');
-      }
-    };
-  }
-  // 概念地图提示词（v3.14）
-  if ($('btn-concept-map-prompt-save')) $('btn-concept-map-prompt-save').onclick = saveConceptMapPrompt;
-  if ($('btn-concept-map-prompt-default')) {
-    $('btn-concept-map-prompt-default').onclick = async () => {
-      if (await PWDialog.confirm('清空当前编辑内容并恢复为内置默认概念地图提示词？（保存后生效）', { title: '恢复默认提示词', okText: '恢复默认' })) {
-        $('concept-map-prompt-edit').value = $('concept-map-prompt-default-pre').textContent || '';
-        $('concept-map-prompt-hint').textContent = '已载入默认提示词，尚未保存';
-        toast('已载入默认提示词');
-      }
-    };
-  }
+  // 提示词工作台（v3.55 memory 式）：各提示词面板的只读视图 / AI 改写 composer / 手动编辑 /
+  // 恢复默认全部由 studio 挂载并接线（复用旧元素 id，loadSettingsData 回显零改动）。
+  initPromptStudios();
   // 概念地图生成按钮（v3.10）
   if ($('btn-concept-map')) $('btn-concept-map').onclick = generateConceptMap;
-  // 采集：文件扫描 / arXiv / 主题发现
-  $('btn-scan-save').onclick = saveScan;
+  // 各分区「恢复 config 默认」（v3.56：保存按钮已取消，只留这一个显式动作在节标题右侧）
   $('btn-scan-reset').onclick = () => resetSection('scan', '文件扫描');
-  $('btn-arxiv-save').onclick = saveArxiv;
   $('btn-arxiv-reset').onclick = () => resetSection('arxiv', 'arXiv 元数据');
-  $('btn-discover-save').onclick = saveDiscover;
   $('btn-discover-reset').onclick = () => resetSection('discover', '主题发现');
-  $('btn-translate-save').onclick = saveTranslate;
   $('btn-translate-reset').onclick = () => resetSection('translate', '划线翻译');
-  $('btn-formula-engine-save').onclick = saveFormulaEngine;
   $('btn-formula-engine-reset').onclick = () => resetSection('formulas', '公式抽取引擎');
-  $('btn-mineru-naming-save').onclick = saveMineruNamingPrompt;
-  if ($('btn-mineru-naming-default')) {
-    $('btn-mineru-naming-default').onclick = () => {
-      const pre = $('mineru-naming-default-pre');
-      if (pre && $('mineru-naming-prompt-edit')) $('mineru-naming-prompt-edit').value = pre.textContent;
-    };
-  }
+  $('btn-ai-reset').onclick = () => resetSection('ai', '模型渠道与全局参数');
+  $('btn-reset-all').onclick = resetAllSettings;
+
+  // ---- 即时保存（v3.56）----
+  // Claude 设置页没有「保存」：改完即生效。这里统一用 change 事件——number/text 在 blur 或
+  // Enter 时触发，checkbox 立刻触发，正好是「用户表达完一个完整意图」的时刻，不会像 input
+  // 那样每敲一个字符打一次接口。保存后 loadSettingsData 会整页回填，setField 的聚焦保护
+  // 负责不覆盖用户手上正在改的那个框。
+  const autosave = (ids, fn) =>
+    ids.forEach((id) => {
+      const el = $(id);
+      if (el) el.addEventListener('change', () => fn({ auto: true }));
+    });
+  autosave(['ai-maxinput', 'ai-timeout', 'tb-summary', 'tb-tags', 'tb-notes', 'tb-concepts', 'tb-formulas', 'tb-chat'], saveAiConfig);
+  autosave(['scan-interval'], saveScan);
+  autosave(['arxiv-enabled', 'arxiv-thr', 'arxiv-interval'], saveArxiv);
+  autosave(
+    ['disc-maxresults', 'disc-peraxis', 'disc-recency', 'disc-titlesim', 'disc-s2', 'disc-openalex', 'disc-s2key', 'disc-w-rel', 'disc-w-auth', 'disc-w-rec'],
+    saveDiscover,
+  );
+  autosave(['formula-mineru-url'], saveFormulaEngine);
+  // 自定义下拉不是原生控件，没有 change 事件——在 settings.js 挂载时通过 onChange 回调直连保存。
+
   // 主题发现：权重三联实时占比条 + 一键归一化为 1
   ['disc-w-rel', 'disc-w-auth', 'disc-w-rec'].forEach((id) => { const el = $(id); if (el) el.oninput = renderWeightProp; });
   const wNorm = $('btn-w-norm');
-  if (wNorm) wNorm.onclick = normalizeWeights;
-  // AI 接口恢复默认
-  $('btn-ai-reset').onclick = () => resetSection('ai', '模型渠道与全局参数');
-  // 概览：全部恢复默认 + 快捷入口
-  $('btn-reset-all').onclick = resetAllSettings;
-  document.querySelectorAll('.ov-quick-links [data-goto]').forEach((b) => {
-    b.onclick = () => settingsSwitchTab(b.dataset.goto);
-  });
+  if (wNorm) wNorm.onclick = () => { normalizeWeights(); saveDiscover({ auto: true }); };
   // 系统信息：刷新服务状态
   $('btn-system-health').onclick = refreshSystemHealth;
   // 设置内搜索
@@ -678,8 +635,11 @@ export function bind() {
       $('folder-manager').classList.remove('active');
       $('import-modal').classList.remove('active');
       $('discover-modal').classList.remove('active');
-      // 设置覆盖层：回到打开它之前的那个页面（同 closeSettingsOverlay）
-      if (document.body.dataset.view === 'settings') closeSettingsOverlay();
+      // 设置覆盖层：分层退出——先从提示词编辑态退回列表，再退才关整个覆盖层
+      if (document.body.dataset.view === 'settings') {
+        if (currentPromptPane()) showPromptIndex();
+        else closeSettingsOverlay();
+      }
     }
   });
 }

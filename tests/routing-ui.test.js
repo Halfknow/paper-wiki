@@ -181,9 +181,67 @@ test('点顶栏导航段「概念」「公式」→ URL 与视图同步', async 
 test('设置左侧导航切换 → /settings/:tab', async () => {
   const ui = await boot('/settings/overview');
   for (let i = 0; i < 60 && view(ui) !== 'settings'; i++) await sleep(20);
-  ui.document.querySelector('.settings-nav-item[data-tab="scan"]').click();
+  ui.document.querySelector('.settings-nav-item[data-tab="ingest"]').click();
   for (let i = 0; i < 60 && ui.path() === '/settings/overview'; i++) await sleep(20);
-  assert.strictEqual(ui.path(), '/settings/scan');
+  assert.strictEqual(ui.path(), '/settings/ingest');
+});
+
+// v3.56 导航 14 → 8 项：老 tab 变成深链别名，落到新页并展开对应子项。
+// 别人分享出去的 /settings/summary 链接不能因为一次重构就死掉。
+test('老设置深链走别名：/settings/summary → 提示词页并展开总结条目', async () => {
+  const ui = await boot('/settings/summary');
+  for (let i = 0; i < 60 && view(ui) !== 'settings'; i++) await sleep(20);
+  assert.strictEqual(
+    ui.document.querySelector('.settings-nav-item.active').dataset.tab,
+    'prompts',
+    '左侧高亮落在「提示词」',
+  );
+  const panel = ui.document.querySelector('.settings-panel[data-panel="prompts"]');
+  assert.strictEqual(panel.hidden, false, '提示词面板可见');
+  assert.strictEqual(ui.document.getElementById('prompt-index').hidden, true, '直接进编辑态，不停在列表');
+  assert.strictEqual(
+    ui.document.querySelector('.prompt-pane[data-prompt-pane="summary"]').hidden,
+    false,
+    '展开的是总结提示词',
+  );
+});
+
+test('老设置深链走别名：/settings/scan → 入库与解析页', async () => {
+  const ui = await boot('/settings/scan');
+  for (let i = 0; i < 60 && view(ui) !== 'settings'; i++) await sleep(20);
+  assert.strictEqual(ui.document.querySelector('.settings-nav-item.active').dataset.tab, 'ingest');
+  assert.strictEqual(ui.document.querySelector('.settings-panel[data-panel="ingest"]').hidden, false);
+  assert.ok(ui.$('scan-interval'), '扫描间隔输入框在入库页里');
+});
+
+test('导航只剩 8 项，且每一项都有对应面板', async () => {
+  const ui = await boot('/settings/overview');
+  for (let i = 0; i < 60 && view(ui) !== 'settings'; i++) await sleep(20);
+  const items = [...ui.document.querySelectorAll('.settings-nav-item')];
+  assert.strictEqual(items.length, 8, '左导航 8 项');
+  for (const it of items) {
+    assert.ok(
+      ui.document.querySelector(`.settings-panel[data-panel="${it.dataset.tab}"]`),
+      `导航项 ${it.dataset.tab} 有对应面板`,
+    );
+  }
+});
+
+test('提示词页：列表点行进编辑态，返回钮回列表', async () => {
+  const ui = await boot('/settings/prompts');
+  for (let i = 0; i < 60 && view(ui) !== 'settings'; i++) await sleep(20);
+  for (let i = 0; i < 60 && !ui.document.querySelector('[data-prompt-open]'); i++) await sleep(20);
+  const rows = ui.document.querySelectorAll('#prompt-rows [data-prompt-open]');
+  assert.strictEqual(rows.length, 6, '6 条提示词各占一行');
+  assert.strictEqual(ui.document.getElementById('prompt-index').hidden, false, '默认停在列表');
+
+  ui.document.querySelector('[data-prompt-open="tags"]').click();
+  assert.strictEqual(ui.document.getElementById('prompt-index').hidden, true);
+  assert.strictEqual(ui.document.querySelector('.prompt-pane[data-prompt-pane="tags"]').hidden, false);
+
+  ui.document.querySelector('.prompt-pane[data-prompt-pane="tags"] [data-prompt-back]').click();
+  assert.strictEqual(ui.document.getElementById('prompt-index').hidden, false, '返回列表');
+  assert.strictEqual(ui.document.querySelector('.prompt-pane[data-prompt-pane="tags"]').hidden, true);
 });
 
 // ---------------------------------------------------------------------------

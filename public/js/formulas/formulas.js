@@ -4,7 +4,7 @@
 
 import { DEL, PATCH, POST, jget, sp } from '../core/api.js';
 import { $, selectionWithin } from '../core/dom.js';
-import { escapeHtml } from '../core/format.js';
+import { chipClass, escapeHtml } from '../core/format.js';
 import { conceptsForFormula } from '../core/knowledge-link.js';
 import { gotoPaper, router, syncPageQueryToUrl } from '../core/nav.js';
 import { plotSvg } from '../core/plot.js';
@@ -519,7 +519,7 @@ function _buildFormulaCard(f, layout) {
   const relConcepts = conceptsForFormula(f).slice(0, 3);
   const relHtml = relConcepts.length
     ? `<div class="fc-concepts"><span class="meta-label">相关概念</span>${relConcepts
-        .map((c) => `<button class="concept-chip" data-cdopen="${c.id}" title="查看概念「${escapeHtml(c.term)}」">${escapeHtml(c.term)}</button>`)
+        .map((c) => `<button class="concept-chip ${chipClass(c.term)}" data-cdopen="${c.id}" title="查看概念「${escapeHtml(c.term)}」">${escapeHtml(c.term)}</button>`)
         .join('')}</div>`
     : '';
 
