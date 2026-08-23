@@ -410,16 +410,18 @@ function createScanner({ store, papersDir, textStore, deps, scanIntervalMs, onEn
           const conceptTerms = (store.papers[id].conceptIds || []).map((cid) => conceptTermOf.get(cid)).filter(Boolean);
           // 简单度门禁（v3.50）：单变量/裸记号不是公式，不入库（MinerU 侧 v3.27 已在原始片段过滤，
           // 这里对两引擎的归一化产物统一再过一道——AI 也会抽出 \tau、y_t 这类「太简单的公式」）
-          const items = (await extractFn({
-            title: store.papers[id].title,
-            abstract: store.papers[id].abstract,
-            fulltext: text,
-            filepath: store.papers[id].filepath,
-            existingFormulas: store.formulas || [],
-            conceptTerms,
-            config: effConfig,
-            prompt: formulaPromptOf(store),
-          })).filter((it) => looksLikeFormula(it && it.latex));
+          const items = (
+            await extractFn({
+              title: store.papers[id].title,
+              abstract: store.papers[id].abstract,
+              fulltext: text,
+              filepath: store.papers[id].filepath,
+              existingFormulas: store.formulas || [],
+              conceptTerms,
+              config: effConfig,
+              prompt: formulaPromptOf(store),
+            })
+          ).filter((it) => looksLikeFormula(it && it.latex));
           const touched = deps.mergeFormulas(store, items, id);
           // 本篇「贡献」的公式 = 本次涉及的全部条目（含并入已有条目的），故按 occurrence 反查
           store.papers[id].formulaIds = formulaIdsOfPaper(store, id);
@@ -569,10 +571,28 @@ function createScanner({ store, papersDir, textStore, deps, scanIntervalMs, onEn
       backfillIds.push(p.id);
     }
     if (backfillIds.length) log(`[scan] 元数据回填入队：${backfillIds.length} 篇（无标题存量）`);
+    // 失败占位总结的自动重试（v3.56）：AI 超时/空回复曾把总结留成「生成失败」占位，此前
+    // 永不自愈（只能手点「重新总结」）。入队时打 summaryRetryAt 一次性标记（metaBackfillAt
+    // 同款）——处理完成前每轮 scan 不会重复入队（共享队列无去重，重复入队会堆任务）；
+    // 重试失败再留占位时，1 小时冷却后自然再试（AI 持续故障时每篇每小时最多 1 次，
+    // 串行队列不压垮网关）。重跑走完整 processOne（总结/标签/概念/公式 merge 均幂等）。
+    const retrySummaryIds = [];
+    const retryCoolMs = 60 * 60 * 1000;
+    const nowMs = Date.now();
+    for (const p of Object.values(store.papers)) {
+      if (!p || p.status !== 'ready') continue;
+      if (!deps.ai.isFailedSummaryPlaceholder || !deps.ai.isFailedSummaryPlaceholder(p.summary)) continue;
+      if (nowMs - (p.updatedAt || 0) < retryCoolMs) continue; // 占位刚写入（失败冷却）
+      if (nowMs - (p.summaryRetryAt || 0) < retryCoolMs) continue; // 已入队未处理完，防重复堆任务
+      p.summaryRetryAt = nowMs;
+      retrySummaryIds.push(p.id);
+    }
+    if (retrySummaryIds.length) log(`[scan] 失败总结重试入队：${retrySummaryIds.length} 篇`);
     await deps.saveStore(store);
     enqueue([...added, ...changed].map((s) => s.id));
     if (requeueIds.length) enqueue(requeueIds);
     if (backfillIds.length) enqueue(backfillIds, { metaOnly: true });
+    if (retrySummaryIds.length) enqueue(retrySummaryIds);
     return {
       added: added.length,
       changed: changed.length,
@@ -582,6 +602,7 @@ function createScanner({ store, papersDir, textStore, deps, scanIntervalMs, onEn
       requeued: requeueIds.length,
       renamed,
       backfilled: backfillIds.length,
+      retriedSummary: retrySummaryIds.length,
     };
   }
 
@@ -665,16 +686,18 @@ function createScanner({ store, papersDir, textStore, deps, scanIntervalMs, onEn
         // 本篇概念清单喂给 AI 供其输出 conceptTerms 显式关联（同 processOne 第 6 步）
         const conceptTermOf = new Map((store.concepts || []).map((c) => [c.id, c.term]));
         const conceptTerms = (p.conceptIds || []).map((cid) => conceptTermOf.get(cid)).filter(Boolean);
-        const items = (await extractFn({
-          title: p.title,
-          abstract: p.abstract,
-          fulltext: text,
-          filepath: p.filepath,
-          existingFormulas: store.formulas || [],
-          conceptTerms,
-          config: effConfig,
-          prompt: formulaPromptOf(store),
-        })).filter((it) => looksLikeFormula(it && it.latex)); // 简单度门禁（v3.50，同 processOne 第 6 步）
+        const items = (
+          await extractFn({
+            title: p.title,
+            abstract: p.abstract,
+            fulltext: text,
+            filepath: p.filepath,
+            existingFormulas: store.formulas || [],
+            conceptTerms,
+            config: effConfig,
+            prompt: formulaPromptOf(store),
+          })
+        ).filter((it) => looksLikeFormula(it && it.latex)); // 简单度门禁（v3.50，同 processOne 第 6 步）
         if (items.length && deps.mergeFormulas) {
           const newIds = deps.mergeFormulas(store, items, id);
           p.formulaIds = formulaIdsOfPaper(store, id);

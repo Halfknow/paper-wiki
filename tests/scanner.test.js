@@ -852,13 +852,20 @@ test('scan missing 少量缺失（≤5 或 ≤50%）正常标 missing，无熔�
 
 test('generateNoteCards：正常路径拆出 skeleton 卡（## 分段）', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pwnc-'));
-  const store = { version: 2, tags: [], papers: { p1: { id: 'p1', filename: 'a.pdf', title: 'T', abstract: 'ab', status: 'ready' } } };
+  const store = {
+    version: 2,
+    tags: [],
+    papers: { p1: { id: 'p1', filename: 'a.pdf', title: 'T', abstract: 'ab', status: 'ready' } },
+  };
   let gotPrompt;
   const deps = {
     parser: { extractText: async () => ({ text: 't', charCount: 1, numPages: 1 }) },
     ai: {
       applySettingsOverride: (c) => c,
-      generateNotes: async ({ prompt }) => { gotPrompt = prompt; return '## 🎯 研究问题\n问题正文\n## 🔧 方法拆解\n方法正文'; },
+      generateNotes: async ({ prompt }) => {
+        gotPrompt = prompt;
+        return '## 🎯 研究问题\n问题正文\n## 🔧 方法拆解\n方法正文';
+      },
     },
     arxiv: {},
     rateLimitArxiv: async () => {},
@@ -881,14 +888,21 @@ test('generateNoteCards：正常路径拆出 skeleton 卡（## 分段）', async
 test('generateNoteCards：notesPrompt 三级回退（settings > config）', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pwnc-'));
   const store = {
-    version: 2, tags: [],
+    version: 2,
+    tags: [],
     papers: { p1: { id: 'p1', filename: 'a.pdf', title: 'T', status: 'ready' } },
     settings: { notesPrompt: '空间自定义提示词' },
   };
   let gotPrompt;
   const deps = {
     parser: { extractText: async () => ({ text: 't', charCount: 1, numPages: 1 }) },
-    ai: { applySettingsOverride: (c) => c, generateNotes: async ({ prompt }) => { gotPrompt = prompt; return '## A\nx'; } },
+    ai: {
+      applySettingsOverride: (c) => c,
+      generateNotes: async ({ prompt }) => {
+        gotPrompt = prompt;
+        return '## A\nx';
+      },
+    },
     arxiv: {},
     rateLimitArxiv: async () => {},
     config: { ai: {}, arxiv: { enabled: false }, notesPrompt: 'config 提示词' },
@@ -905,9 +919,10 @@ test('generateNoteCards：notesPrompt 三级回退（settings > config）', asyn
 test('generateNoteCards：无全文且无摘要 → error；模型输出无 ## → error', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pwnc-'));
   const store = {
-    version: 2, tags: [],
+    version: 2,
+    tags: [],
     papers: {
-      p1: { id: 'p1', filename: 'a.pdf', title: 'T', status: 'ready' },       // 无全文无摘要
+      p1: { id: 'p1', filename: 'a.pdf', title: 'T', status: 'ready' }, // 无全文无摘要
       p2: { id: 'p2', filename: 'b.pdf', title: 'T2', abstract: 'ab', status: 'ready' }, // 有摘要无全文
     },
   };
@@ -945,7 +960,9 @@ test('createMultiSpaceScanner.generateNoteCards 透传到对应空间子扫描�
     assert.strictEqual(r.cards[0].type, 'skeleton');
     const rBad = await ms.generateNoteCards('no-such-space', pid);
     assert.ok(rBad.error, '空间不存在返回 error 而非抛错');
-  } finally { cleanup(); }
+  } finally {
+    cleanup();
+  }
 });
 
 // ==================== processOne 缺失/错误分支 ====================
@@ -1315,18 +1332,39 @@ test('scan 存量规范化改名：已 ready 的自有命名文件统一改成�
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pwscanrename-'));
   const { sha1OfFile } = require('../src/core/util');
   // 两篇已入库论文：一篇自有命名（应被规范化），一篇曾被外部手动改名（先同步磁盘事实）
-  fs.writeFileSync(path.join(dir, '1-s2.0-S0010482525010480-main.pdf'), Buffer.from('%PDF-1.4' + String.fromCharCode(10) + '%A'));
+  fs.writeFileSync(
+    path.join(dir, '1-s2.0-S0010482525010480-main.pdf'),
+    Buffer.from('%PDF-1.4' + String.fromCharCode(10) + '%A'),
+  );
   fs.writeFileSync(path.join(dir, 'user-renamed.pdf'), Buffer.from('%PDF-1.4' + String.fromCharCode(10) + '%B'));
   const id1 = (await sha1OfFile(path.join(dir, '1-s2.0-S0010482525010480-main.pdf'))).slice(0, 16);
   const id2 = (await sha1OfFile(path.join(dir, 'user-renamed.pdf'))).slice(0, 16);
   const mkReady = (id, fn, title, statFn) => ({
-    id, filename: fn, filepath: path.join(dir, fn), fileSize: fs.statSync(path.join(dir, statFn || fn)).size,
-    title, authors: ['Jane Doe', 'John Smith'], year: '2024', arxivId: null,
-    summary: '## TL;DR 已有总结内容足够长超过三十个字符阈值要求', summaryAt: 1,
-    tags: [], topics: [], folders: [], conceptIds: [], status: 'ready', error: null, addedAt: 1, updatedAt: 1,
+    id,
+    filename: fn,
+    filepath: path.join(dir, fn),
+    fileSize: fs.statSync(path.join(dir, statFn || fn)).size,
+    title,
+    authors: ['Jane Doe', 'John Smith'],
+    year: '2024',
+    arxivId: null,
+    summary: '## TL;DR 已有总结内容足够长超过三十个字符阈值要求',
+    summaryAt: 1,
+    tags: [],
+    topics: [],
+    folders: [],
+    conceptIds: [],
+    status: 'ready',
+    error: null,
+    addedAt: 1,
+    updatedAt: 1,
   });
   const store = {
-    version: 2, tags: [], topics: [], folders: [], concepts: [],
+    version: 2,
+    tags: [],
+    topics: [],
+    folders: [],
+    concepts: [],
     papers: {
       [id1]: mkReady(id1, '1-s2.0-S0010482525010480-main.pdf', 'Deep Learning Advances'),
       // store 里还是旧文件名（外部改名未同步场景），磁盘上已是 user-renamed.pdf
@@ -1372,24 +1410,59 @@ test('scan 元数据回填：无标题 ready 论文入 metaOnly 队列 → arXiv
   const id1 = (await sha1OfFile(path.join(dir, 'DeepSeek-V3.2.pdf'))).slice(0, 16);
   const id2 = (await sha1OfFile(path.join(dir, 'random-download.pdf'))).slice(0, 16);
   const mkReady = (id, fn) => ({
-    id, filename: fn, filepath: path.join(dir, fn), fileSize: fs.statSync(path.join(dir, fn)).size,
-    title: '', authors: [], year: null, arxivId: null,
-    abstract: '', metaSource: null, metaConfidence: 0,
-    summary: '## TL;DR 已有总结内容足够长超过三十个字符阈值要求', summaryAt: 1,
-    tags: ['existing-tag'], topics: ['已有主题'], folders: [], conceptIds: [],
-    fulltextChars: 100, status: 'ready', error: null, addedAt: 1, updatedAt: 1,
+    id,
+    filename: fn,
+    filepath: path.join(dir, fn),
+    fileSize: fs.statSync(path.join(dir, fn)).size,
+    title: '',
+    authors: [],
+    year: null,
+    arxivId: null,
+    abstract: '',
+    metaSource: null,
+    metaConfidence: 0,
+    summary: '## TL;DR 已有总结内容足够长超过三十个字符阈值要求',
+    summaryAt: 1,
+    tags: ['existing-tag'],
+    topics: ['已有主题'],
+    folders: [],
+    conceptIds: [],
+    fulltextChars: 100,
+    status: 'ready',
+    error: null,
+    addedAt: 1,
+    updatedAt: 1,
   });
   const store = {
-    version: 2, tags: [], topics: [], folders: [], concepts: [],
+    version: 2,
+    tags: [],
+    topics: [],
+    folders: [],
+    concepts: [],
     papers: { [id1]: mkReady(id1, 'DeepSeek-V3.2.pdf'), [id2]: mkReady(id2, 'random-download.pdf') },
   };
   const deps = {
-    parser: { extractText: async () => { throw new Error('metaOnly 不应重解析'); } },
+    parser: {
+      extractText: async () => {
+        throw new Error('metaOnly 不应重解析');
+      },
+    },
     arxiv: {
       cleanFilenameToTitle: (f) => f.replace(/\.pdf$/i, ''),
       searchArxiv: async (query) => {
         if (query.includes('DeepSeek')) {
-          return { entries: [{ title: 'DeepSeek-V3.2 Technical Report', authors: ['DeepSeek Team'], summary: 'abs', id: 'http://arxiv.org/abs/2512.00001v1', primaryCategory: 'cs.CL', published: '2025-12-01T00:00:00Z' }] };
+          return {
+            entries: [
+              {
+                title: 'DeepSeek-V3.2 Technical Report',
+                authors: ['DeepSeek Team'],
+                summary: 'abs',
+                id: 'http://arxiv.org/abs/2512.00001v1',
+                primaryCategory: 'cs.CL',
+                published: '2025-12-01T00:00:00Z',
+              },
+            ],
+          };
         }
         return { entries: [] };
       },
@@ -1400,9 +1473,12 @@ test('scan 元数据回填：无标题 ready 论文入 metaOnly 队列 → arXiv
       extractArxivId: () => '2512.00001',
     },
     ai: {
-      summarize: async () => { throw new Error('metaOnly 不应重总结'); },
+      summarize: async () => {
+        throw new Error('metaOnly 不应重总结');
+      },
       extractTagsTopics: async ({ title }) => ({
-        tags: ['should-not-apply'], topics: ['不应覆盖'],
+        tags: ['should-not-apply'],
+        topics: ['不应覆盖'],
         metadata: { title: 'Random Download Paper', authors: ['Jane Doe'], year: '2023' },
       }),
       buildSummaryMarkdown: (md) => md,
@@ -1497,7 +1573,11 @@ test('processOne 自动抽取概念：mergeConcepts 返回 newIds 写入 p.conce
   await new Promise((r) => setTimeout(r, 80));
   const p = store.papers.x;
   assert.strictEqual(p.status, 'ready');
-  assert.deepStrictEqual(gotItems, [{ term: 'MoE', definition: '混合专家' }], 'extractConcepts 结果透传给 mergeConcepts');
+  assert.deepStrictEqual(
+    gotItems,
+    [{ term: 'MoE', definition: '混合专家' }],
+    'extractConcepts 结果透传给 mergeConcepts',
+  );
   assert.strictEqual(gotPid, 'x', 'mergeConcepts 收到论文 id');
   assert.deepStrictEqual(p.conceptIds, ['c1', 'c2'], 'newIds 写入 p.conceptIds');
   scanner.stop();
@@ -1611,7 +1691,10 @@ test('chatPaper regenerate：弹出末尾 user+assistant 对，用该 user 内�
     ],
     'history 缩短（不含被丢弃的最后一轮）',
   );
-  assert.ok(Array.isArray(captured.extraPapers) && captured.extraPapers[0].title === 'B论文', '回退取被丢弃 user 的 extraIds');
+  assert.ok(
+    Array.isArray(captured.extraPapers) && captured.extraPapers[0].title === 'B论文',
+    '回退取被丢弃 user 的 extraIds',
+  );
   const chat = store.papers.a.chat;
   assert.strictEqual(chat.length, 4, '旧对被丢弃、新对写入，总长不变');
   assert.strictEqual(chat[1].content, '第一答');
@@ -1764,8 +1847,16 @@ test('processOne 方括号 arXiv ID 文件名 → id: 精确查 + 规范改名�
     tags: [],
     papers: {
       br1: {
-        id: 'br1', filename: fname, filepath: path.join(dir, fname),
-        title: '', authors: [], year: null, arxivId: null, status: 'pending', error: null, updatedAt: 0,
+        id: 'br1',
+        filename: fname,
+        filepath: path.join(dir, fname),
+        title: '',
+        authors: [],
+        year: null,
+        arxivId: null,
+        status: 'pending',
+        error: null,
+        updatedAt: 0,
       },
     },
   };
@@ -1777,13 +1868,21 @@ test('processOne 方括号 arXiv ID 文件名 → id: 精确查 + 规范改名�
       searchArxiv: async (query) => {
         usedQuery = query;
         return {
-          entries: [{
-            title: 'Some Transformer Paper', authors: ['Jane Doe'], summary: 'a',
-            id: 'http://arxiv.org/abs/2401.99999v1', primaryCategory: 'cs.CL', published: '2024-01-15T00:00:00Z',
-          }],
+          entries: [
+            {
+              title: 'Some Transformer Paper',
+              authors: ['Jane Doe'],
+              summary: 'a',
+              id: 'http://arxiv.org/abs/2401.99999v1',
+              primaryCategory: 'cs.CL',
+              published: '2024-01-15T00:00:00Z',
+            },
+          ],
         };
       },
-      pickBest: () => { throw new Error('方括号ID应走 id: 精确查'); },
+      pickBest: () => {
+        throw new Error('方括号ID应走 id: 精确查');
+      },
       extractArxivId: () => '2401.99999',
     },
     ai: {
@@ -1933,12 +2032,68 @@ test('scan() 中断残留自愈：无实质总结的中间态论文重新入队�
     mergeTags: () => {},
     mergeTopics: () => {},
   };
-  const scanner = createScanner({ store, textStore: memTextStore({ [id]: '全文' }), papersDir: dir, deps, scanIntervalMs: 0 });
+  const scanner = createScanner({
+    store,
+    textStore: memTextStore({ [id]: '全文' }),
+    papersDir: dir,
+    deps,
+    scanIntervalMs: 0,
+  });
   const r = await scanner.scan();
   assert.strictEqual(r.requeued, 1, '中断残留被重新入队');
   await new Promise((res) => setTimeout(res, 150));
   assert.strictEqual(store.papers[id].status, 'ready', '重新跑完整流水线后转 ready');
   assert.ok(summarized >= 1, 'AI 总结被重新调用');
+  scanner.stop();
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('scan 存量 pass：失败占位总结自动重试（v3.56，1h 冷却内不重复入队）', async () => {
+  const { isFailedSummaryPlaceholder } = require('../src/services/ai');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pwscanretry-'));
+  fs.writeFileSync(path.join(dir, 'sample.pdf'), Buffer.from('%PDF-1.4\n%placeholder\n'));
+  const store = { version: 2, tags: [], topics: [], papers: {} };
+  let round = 0;
+  const deps = {
+    parser: { extractText: async () => ({ text: '全文内容', charCount: 5, numPages: 1 }) },
+    arxiv: {
+      cleanFilenameToTitle: (f) => f,
+      searchArxiv: async () => ({ entries: [] }),
+      pickBest: () => ({ best: null, confidence: 0, source: 'none' }),
+      extractArxivId: () => null,
+    },
+    ai: {
+      summarize: async () => (round++ === 0 ? '## TL;DR\n首次总结' : '## TL;DR\n重试后的总结'),
+      extractTagsTopics: async () => ({ tags: [], topics: [] }),
+      buildSummaryMarkdown: (md) => md,
+      applySettingsOverride: (c) => c,
+      isFailedSummaryPlaceholder,
+    },
+    saveStore: async () => {},
+    mergeTags: () => {},
+    mergeTopics: () => {},
+    config: { ai: { model: 'm' }, arxiv: {} },
+    rateLimitArxiv: async () => {},
+  };
+  const scanner = createScanner({ store, textStore: memTextStore(), papersDir: dir, deps, scanIntervalMs: 0 });
+  const r1 = await scanner.scan();
+  assert.ok(r1.added >= 1);
+  await new Promise((res) => setTimeout(res, 80));
+  const id = Object.keys(store.papers)[0];
+  assert.strictEqual(store.papers[id].status, 'ready');
+
+  // 置为失败占位 + updatedAt 回拨 2 小时（越过冷却）→ 下轮 scan 应重试
+  store.papers[id].summary = '*（总结生成失败，可点击「重新总结」重试）*';
+  store.papers[id].updatedAt = Date.now() - 2 * 60 * 60 * 1000;
+  const r2 = await scanner.scan();
+  assert.strictEqual(r2.retriedSummary, 1, '冷却已过应入队重试');
+  await new Promise((res) => setTimeout(res, 120));
+  assert.ok(String(store.papers[id].summary).includes('重试后的总结'), '重跑后总结恢复');
+
+  // 再置占位（updatedAt 刚被重跑刷新）→ 冷却窗口内不重复入队
+  store.papers[id].summary = '*（总结生成失败，可点击「重新总结」重试）*';
+  const r3 = await scanner.scan();
+  assert.strictEqual(r3.retriedSummary, 0, '冷却内不应重复入队');
   scanner.stop();
   fs.rmSync(dir, { recursive: true, force: true });
 });

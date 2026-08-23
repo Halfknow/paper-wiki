@@ -1207,8 +1207,8 @@ body.is-resizing { cursor:col-resize; user-select:none; }
 .tab.active { color:var(--accent-strong); border-color:var(--accent); font-weight:650; }
 .tab .cnt { font-size:11px; color:var(--muted2); margin-left:3px; }
 
-/* markdown 渲染 */
-.md { max-width:860px; line-height:1.75; }
+/* markdown 渲染（v3.56 起全宽：860px/72ch 限宽均按用户要求退役，见 R6 区块注释） */
+.md { max-width:none; line-height:1.75; }
 .md h1,.md h2,.md h3,.md h4 { color:var(--text); margin-top:1.2em; }
 .md h2 { font-size:18px; padding-bottom:4px; border-bottom:1px solid var(--border); }
 .md h3 { font-size:15px; }
@@ -3662,49 +3662,73 @@ iframe.pdf { width:100%; height:calc(100vh - 200px); border:1px solid var(--bord
    ============================================================================ */
 /* 覆盖层（v3.17 第二步）：设置不是第四个平级页面，是盖在当前页面之上的配置界面。
    保留 /settings/:tab 路由（深链有价值），但呈现为遮罩 + 居中面板；点遮罩或 Esc 关闭。 */
+/* ---- 设置页作用域的中性令牌（v3.56）----
+   Claude 的设置面板只有一个墨色，靠透明度阶梯派生边框/填充/次要文字，不铺第二种色相。
+   我们照此在 .settings-overlay 内建一层局部 token：Indigo 仍是产品的主色，但在设置页里
+   只出现在焦点环与开关开启态——设置项本身应该让位于内容。产品其余页面不受影响。 */
 .settings-overlay {
+  --s-ink:15 23 42;                            /* 墨色（浅色态 = slate-900） */
+  --s-paper:#fff;                              /* 面板底 */
+  --s-nav:#fafafa;                             /* 左导航底 */
+  --s-t1:rgb(var(--s-ink));                    /* 主文：行标签、值 */
+  --s-t2:rgb(var(--s-ink) / .60);              /* 次要：行描述、分组标题 */
+  --s-t3:rgb(var(--s-ink) / .42);              /* 弱：占位、元信息 */
+  --s-line:rgb(var(--s-ink) / .07);            /* 行间发丝线 */
+  --s-edge:rgb(var(--s-ink) / .13);            /* 输入框/容器边框 */
+  --s-fill:rgb(var(--s-ink) / .05);            /* 导航激活 / chip 底 */
+  --s-fill-hover:rgb(var(--s-ink) / .08);
+
   position:fixed; inset:0; z-index:80;
   display:flex; align-items:center; justify-content:center; padding:min(4vh, 40px) min(4vw, 48px);
-  background:rgba(15,23,42,.42); backdrop-filter:blur(2px);
+  background:rgba(15,23,42,.40); backdrop-filter:blur(2px);
   animation:settingsOverlayIn .12s ease-out;
 }
 .settings-overlay.view-hidden { display:none; }
 @keyframes settingsOverlayIn { from { opacity:0; } to { opacity:1; } }
+/* 尺寸对齐 claude.ai 的设置模态（960×720）：中文标签更长，导航列给到 212px。
+   固定宽高而非铺满，是「设置是盖在工作面上的一张卡」这个语义的一部分。 */
 .settings-shell {
-  display:grid; grid-template-columns:220px 1fr;
-  width:100%; max-width:1180px; height:100%; max-height:860px; min-height:0;
-  background:var(--bg); overflow:hidden;
-  border-radius:var(--radius); box-shadow:0 10px 32px rgba(15,23,42,.13);
+  position:relative;
+  display:grid; grid-template-columns:212px 1fr;
+  width:100%; max-width:1000px; height:100%; max-height:min(88vh, 748px); min-height:0;
+  background:var(--s-paper); overflow:hidden;
+  border-radius:12px; box-shadow:0 16px 48px rgba(15,23,42,.18), 0 0 0 1px rgb(var(--s-ink) / .06);
   animation:settingsShellIn .14s ease-out;
 }
 @keyframes settingsShellIn { from { opacity:0; transform:translateY(8px) scale(.99); } to { opacity:1; transform:none; } }
+.settings-x {
+  position:absolute; top:12px; right:14px; z-index:5;
+  display:inline-grid; place-items:center; width:28px; height:28px;
+  border:0; border-radius:8px; background:transparent; color:var(--s-t3); cursor:pointer;
+  transition:background .13s ease, color .13s ease;
+}
+.settings-x:hover { background:var(--s-fill); color:var(--s-t1); }
 /* 单一滚动条原则：覆盖层与面板都不整体滚，改由内部 settings-nav（左）和 settings-body（右）
    各作为独立滚动区——二者是兄弟关系，无嵌套。 */
 .settings-nav {
-  background:var(--panel); border-right:1px solid var(--border);
-  padding:18px 12px; display:flex; flex-direction:column; gap:2px; overflow:auto;
+  background:var(--s-nav); border-right:1px solid var(--s-line);
+  padding:14px 10px 12px; display:flex; flex-direction:column; gap:1px; overflow:auto;
 }
+/* 导航项 = 32px 中性圆角块。字重 500 而非 600/700：分组的层级由「分组标题 vs 条目」
+   区分，条目之间不需要再靠字重打架。 */
 .settings-nav-item {
-  display:flex; align-items:center; gap:10px;
-  padding:9px 12px; border-radius:8px; cursor:pointer;
-  color:var(--muted); font-size:13px; font-weight:600;
-  border:1px solid transparent; transition:background .14s ease, color .14s ease, border-color .14s ease;
+  display:flex; align-items:center; gap:9px;
+  height:32px; padding:0 10px; border-radius:8px; cursor:pointer;
+  color:var(--s-t1); font-size:14px; font-weight:500; line-height:1;
+  transition:background .12s ease;
 }
-.settings-nav-item:hover { background:rgba(99,102,241,.06); color:var(--text); }
-.settings-nav-item.active {
-  background:var(--accent-soft); color:var(--accent-strong);
-  font-weight:700;
-}
-.settings-nav-item .sni { display:inline-flex; align-items:center; justify-content:center; width:18px; flex:0 0 auto; color:inherit; }
+.settings-nav-item:hover { background:var(--s-fill); }
+.settings-nav-item.active { background:var(--s-fill-hover); }
+.settings-nav-item .sni { display:inline-flex; align-items:center; justify-content:center; width:16px; flex:0 0 auto; color:var(--s-t2); }
+.settings-nav-item.active .sni { color:var(--s-t1); }
 .settings-nav-item .sni svg { width:16px; height:16px; }
-.settings-nav-foot { margin-top:auto; padding-top:12px; border-top:1px solid var(--border); }
+.settings-nav-empty { padding:10px; font-size:13px; color:var(--s-t3); }
+.settings-nav-foot { margin-top:auto; padding-top:10px; }
 
-.settings-body { overflow:auto; padding:32px 36px; min-width:0; }
-.settings-panel { max-width:760px; }
+/* 内容区。行宽收在 ~700px：设置行是「标签 ↔ 控件」的对读，太宽会让眼睛在中间那段空白里迷路。 */
+.settings-body { overflow:auto; padding:26px 32px 44px; min-width:0; }
+.settings-panel { max-width:704px; }
 .settings-panel[hidden] { display:none; }
-.settings-head { margin-bottom:24px; }
-.settings-head h2 { margin:0; font-size:22px; line-height:1.25; display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
-.settings-head p { margin:6px 0 0; color:var(--muted); font-size:13px; line-height:1.6; }
 
 /* 表单（v3.10 现代化：卡片分组 + 更大输入 + 圆角聚焦环） */
 .settings-form { display:flex; flex-direction:column; gap:18px; }
@@ -3826,51 +3850,216 @@ iframe.pdf { width:100%; height:calc(100vh - 200px); border:1px solid var(--bord
 .tax-batch-pick { display:inline-flex; align-items:center; gap:8px; }
 .tax-batch-pick span { font-size:13px; color:var(--muted); }
 
-/* 关于 */
-.about-card {
-  background:var(--panel); border:1px solid var(--border); border-radius:8px;
-  padding:16px 20px; display:flex; flex-direction:column; gap:10px;
+/* 设置内搜索 + 分组导航小标题（v3.56：搜索框 32px 带前置放大镜；分组标题不再是
+   10px 全大写字母间距——中文没有大写，那套排版在这里只是把标题变小变糊） */
+.settings-search {
+  display:flex; align-items:center; gap:8px; margin:0 2px 10px;
+  height:32px; padding:0 10px; border-radius:8px;
+  border:1px solid var(--s-edge); background:var(--s-paper);
+  transition:border-color .14s ease, box-shadow .14s ease;
 }
-.about-row { display:flex; gap:12px; font-size:13px; align-items:baseline; }
-.about-k { color:var(--muted); min-width:88px; font-weight:600; }
-.about-v { color:var(--text); font-family:ui-monospace,Consolas,monospace; word-break:break-all; }
-.about-actions { margin-top:14px; display:flex; gap:8px; }
-
-/* 设置内搜索 + 分组导航小标题 */
-.settings-search { margin:2px 4px 10px; }
+.settings-search svg { flex:0 0 auto; color:var(--s-t3); }
 .settings-search input {
-  width:100%; height:32px; padding:0 10px; font-size:12px;
-  border:1px solid var(--border2); border-radius:var(--radius-sm);
-  background:var(--panel); color:var(--text);
+  flex:1; min-width:0; height:100%; padding:0; font-size:14px;
+  border:0; background:transparent; color:var(--s-t1);
 }
-.settings-search input:focus { outline:none; border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft); }
+.settings-search input::placeholder { color:var(--s-t3); }
+.settings-search input:focus { outline:none; }
+.settings-search:focus-within { border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft); }
 .settings-nav-group {
-  font-size:10px; font-weight:700; letter-spacing:.08em; text-transform:uppercase;
-  color:var(--muted2); padding:11px 12px 4px;
+  font-size:13px; font-weight:400; color:var(--s-t2);
+  padding:14px 10px 5px;
 }
+.settings-nav-group:first-of-type { padding-top:4px; }
 
-/* 「已覆盖 config」徽标（v3.10：更克制，inline-flex 适配 label 内） */
+/* 「已覆盖 config」/「自定义」徽标：中性 chip，不再抢眼 */
 .ovr-badge {
   display:inline-flex; align-items:center;
-  font-size:10.5px; font-weight:600; line-height:1; padding:2px 8px;
-  border-radius:999px; background:var(--accent-soft); color:var(--accent-strong);
-  border:1px solid #c7d2fe; white-space:nowrap;
+  font-size:12px; font-weight:500; line-height:1; padding:3px 7px;
+  border-radius:6px; background:var(--s-fill); color:var(--s-t2);
+  border:0; white-space:nowrap;
 }
-/* editor-actions（保存/重置按钮栏，v3.10：粘底 + 间距优化） */
-.settings-panel .editor-actions {
-  display:flex; align-items:center; gap:10px; margin-top:20px; padding-top:16px; border-top:1px solid var(--border);
-}
-.settings-panel .editor-actions .save-hint { font-size:12px; }
-.settings-panel .editor-actions .save-hint.good { color:var(--accent-strong); font-weight:600; }
-.settings-panel .editor-actions .save-hint.bad { color:var(--red); }
 
 /* ---- 模型渠道卡片（v3.13：多渠道 + 默认切换） ---- */
-.settings-panel-wide { max-width:920px; }
+.settings-panel-wide { max-width:832px; }
 .settings-subhead {
   display:flex; align-items:baseline; gap:10px;
   margin:26px 0 12px; font-size:13.5px; font-weight:700; color:var(--text);
 }
 .settings-subhead span { font-size:11.5px; font-weight:400; color:var(--muted2); }
+
+/* ---- 行式设置布局（v3.56，规格量自 claude.ai 设置模态）----
+   节标题 15px/600；行 = padding 12px 0 + 上边发丝线；标签 14px/400 用主文色（不加粗——
+   加粗的标签会让每一行都在喊，反而看不出哪行重要）；描述 13px 次要色；控件右对齐。
+   字号只留 4 级（15 / 14 / 13 / 12），此前散着 10.5–14 共 9 级。 */
+.set-section {
+  display:flex; align-items:baseline; gap:8px; flex-wrap:wrap;
+  margin:32px 0 4px; font-size:15px; font-weight:600; color:var(--s-t1); line-height:20px;
+}
+.set-section:first-child { margin-top:0; }
+.set-section-sub {
+  flex:1 1 100%; order:9;                 /* 说明整行独占，落在标题下方而不是挤在同一行尾 */
+  font-size:13px; font-weight:400; color:var(--s-t2); line-height:1.6; max-width:66ch; margin-top:2px;
+}
+.set-section-sub code, .sr-hint code, .pane-lede code {
+  background:var(--s-fill); padding:1px 5px; border-radius:4px;
+  font:12px/1.5 ui-monospace,Consolas,"Cascadia Code",monospace; color:var(--s-t1);
+}
+.set-section-btn { margin-left:auto; }
+/* 深链落到某一节时的一次性提示（/settings/scan → 入库与解析页的「文件扫描」节） */
+.set-section.flash { animation:setSectionFlash 1.2s ease-out; }
+@keyframes setSectionFlash {
+  0%, 60% { background:var(--accent-soft); box-shadow:0 0 0 6px var(--accent-soft); border-radius:6px; }
+  100% { background:transparent; box-shadow:none; }
+}
+
+.set-rows { margin-top:8px; }
+.set-row {
+  display:flex; align-items:center; justify-content:space-between; gap:28px;
+  padding:12px 0; border-top:1px solid var(--s-line);
+}
+.set-row-top { align-items:flex-start; }
+.sr-main { min-width:0; flex:1 1 auto; }
+.sr-label { font-size:14px; font-weight:400; color:var(--s-t1); line-height:20px; display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
+.sr-hint { font-size:13px; color:var(--s-t2); line-height:1.6; margin-top:2px; max-width:62ch; }
+.sr-ctl { flex:0 0 auto; display:flex; align-items:center; gap:8px; }
+.sr-ctl-col { flex-direction:column; align-items:flex-end; gap:8px; }
+/* 只读行的值（概览 / 系统信息） */
+.sr-val { font-size:14px; color:var(--s-t1); max-width:34ch; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.sr-val.mono { font-family:ui-monospace,Consolas,"Cascadia Code",monospace; font-size:13px; }
+.sr-val.muted { color:var(--s-t2); }
+.sr-val.good { color:var(--green); }
+.sr-chev { color:var(--s-t3); flex:0 0 auto; }
+/* 整行可点（跳到另一个设置分区 / 展开提示词编辑） */
+.set-row-jump { cursor:pointer; margin:0 -10px; padding-left:10px; padding-right:10px; border-radius:8px; transition:background .12s ease; }
+.set-row-jump:hover { background:var(--s-fill); }
+.set-row-jump:hover .sr-chev { color:var(--s-t1); }
+.set-row-jump:focus-visible { outline:2px solid var(--accent); outline-offset:-2px; }
+
+.sr-ctl input[type=text],
+.sr-ctl input[type=password],
+.sr-ctl input[type=number] {
+  width:168px; height:32px; padding:0 10px;
+  border:1px solid var(--s-edge); border-radius:8px;
+  background:var(--s-paper); color:var(--s-t1); font-size:14px;
+  transition:border-color .14s ease, box-shadow .14s ease;
+}
+.sr-ctl input.sr-input-wide { width:262px; }
+.sr-ctl input::placeholder { color:var(--s-t3); }
+.sr-ctl input:hover { border-color:rgb(var(--s-ink) / .24); }
+.sr-ctl input:focus { outline:none; border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft); }
+/* 行内自定义下拉触发器宽度对齐输入框 */
+.sr-ctl .sd-wrap { width:262px; }
+/* toggle 行并入行体系：与 .set-row 同一套内边距与分隔线 */
+.set-rows .toggle-field {
+  border:0; border-radius:0; background:transparent;
+  padding:12px 0; border-top:1px solid var(--s-line); gap:28px;
+}
+.set-rows .toggle-main label { font-size:14px; font-weight:400; color:var(--s-t1); line-height:20px; display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
+.set-rows .toggle-main .hint { font-size:13px; color:var(--s-t2); line-height:1.6; }
+
+/* 即时保存的轻提示（v3.56）：取代每个面板底部的「保存」按钮 + 「已保存 · 14:03:21」长句。
+   成功态 2 秒后自行消失——保存成功是常态，不该在界面上留痕；失败态常驻直到下次保存。 */
+.set-saved { font-size:12px; color:var(--s-t3); min-height:1em; transition:color .12s ease; }
+.set-saved.saving { color:var(--s-t3); }
+.set-saved.saved { color:var(--green); }
+.set-saved.error { color:var(--red); font-weight:500; }
+
+/* ---- 提示词页（v3.56）：列表 ↔ 编辑两态 ---- */
+.prompt-pane .pane-head {
+  display:flex; align-items:center; gap:10px;
+  margin-bottom:6px; min-height:32px;
+}
+.pane-back {
+  display:inline-grid; place-items:center; width:28px; height:28px; flex:0 0 auto;
+  border:0; border-radius:8px; background:transparent; color:var(--s-t2); cursor:pointer;
+  transition:background .12s ease, color .12s ease;
+}
+.pane-back:hover { background:var(--s-fill); color:var(--s-t1); }
+.pane-title { font-size:15px; font-weight:600; color:var(--s-t1); line-height:20px; }
+.pane-reset { margin-left:auto; }
+.pane-lede { margin:0 0 16px 38px; font-size:13px; color:var(--s-t2); line-height:1.6; max-width:66ch; }
+
+/* ---- 提示词工作台（v3.55，Claude Memory 式）：只读视图 + AI 修改稿 + 底部 composer ---- */
+.ps { display:flex; flex-direction:column; gap:12px; }
+.ps-viewwrap { position:relative; }
+.ps-view {
+  min-height:150px; max-height:min(46vh, 460px); overflow:auto;
+  padding:14px 16px; border:1px solid var(--s-edge, var(--border)); border-radius:10px; background:var(--s-fill, var(--panel));
+  font:12.5px/1.75 ui-monospace,Consolas,"Cascadia Code",monospace; color:var(--s-t1, var(--text));
+  white-space:pre-wrap; word-break:break-word;
+}
+.ps-view:focus-visible { outline:none; border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft); }
+/* 生效来源角标（内置默认 / 自定义），贴只读视图右上 */
+.ps-src {
+  position:absolute; top:8px; right:10px;
+  font-size:12px; font-weight:500; line-height:1; padding:3px 8px; border-radius:6px;
+  background:var(--s-paper, var(--panel2)); color:var(--s-t2, var(--muted2)); border:1px solid var(--s-edge, var(--border));
+  pointer-events:none;
+}
+.ps-src.custom { background:var(--accent-soft); color:var(--accent-strong); border-color:transparent; }
+.ps-draft { border:1px solid var(--accent); border-radius:10px; background:var(--panel); overflow:hidden; }
+.ps-draft-head {
+  display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;
+  padding:9px 12px; border-bottom:1px solid var(--border);
+  background:linear-gradient(180deg, rgba(99,102,241,.06), rgba(99,102,241,.02));
+}
+.ps-draft-title { font-size:12.5px; font-weight:700; color:var(--text); display:inline-flex; align-items:center; gap:8px; }
+.ps-draft-status { font-size:11px; font-weight:500; color:var(--muted2); }
+.ps-draft-status.busy { color:var(--accent-strong); }
+.ps-draft-status.busy::after { content:""; display:inline-block; width:12px; margin-left:2px; animation:psDots 1.2s steps(3) infinite; }
+@keyframes psDots { 0% { content:""; } 33% { content:"·"; } 66% { content:"··"; } 100% { content:"···"; } }
+.ps-draft-status.done { color:var(--amber); }
+.ps-draft-status.bad { color:var(--red); }
+.ps-draft-acts { display:inline-flex; gap:8px; }
+.ps-draft-body {
+  min-height:110px; max-height:min(40vh, 420px); overflow:auto; padding:12px 16px;
+  font:12.5px/1.75 ui-monospace,Consolas,"Cascadia Code",monospace; color:var(--text);
+  white-space:pre-wrap; word-break:break-word;
+}
+.ps-draft-body:focus-visible { outline:none; }
+.ps-edit textarea {
+  width:100%; min-height:340px; background:var(--panel); color:var(--text);
+  border:1px solid var(--border2); border-radius:10px; padding:12px 14px;
+  font:12.5px/1.7 ui-monospace,Consolas,"Cascadia Code",monospace; resize:vertical;
+}
+.ps-edit textarea:focus { outline:none; border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft); }
+.ps-edit .editor-actions { margin-top:10px; padding-top:0; border-top:0; }
+/* 底部 composer（Memory 式）：手动编辑钮 + 需求输入 + 圆形发送钮 */
+.ps-composer {
+  display:flex; align-items:center; gap:8px;
+  padding:7px 8px 7px 8px; border:1px solid var(--border2); border-radius:999px; background:var(--panel);
+  transition:border-color .14s ease, box-shadow .14s ease;
+}
+.ps-composer:focus-within { border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft); }
+.ps-manual {
+  flex:0 0 auto; display:inline-flex; align-items:center; gap:6px;
+  height:32px; padding:0 13px; border:0; border-radius:999px;
+  background:var(--panel2); color:var(--muted); font-size:12px; font-weight:600; cursor:pointer;
+  transition:background .13s ease, color .13s ease;
+}
+.ps-manual:hover { background:var(--accent-soft); color:var(--accent-strong); }
+.ps-manual:disabled { opacity:.5; cursor:default; }
+.ps-input {
+  flex:1; min-width:0; border:0; background:transparent; color:var(--text);
+  font-size:13px; padding:6px 4px;
+}
+.ps-input:focus { outline:none; }
+.ps-input:disabled { opacity:.55; }
+.ps-send {
+  flex:0 0 auto; display:inline-grid; place-items:center; width:32px; height:32px;
+  border:0; border-radius:50%; background:var(--accent); color:#fff; cursor:pointer;
+  transition:background .13s ease, transform .13s ease, opacity .13s ease;
+}
+.ps-send:hover { background:var(--accent-strong); }
+.ps-send:active { transform:scale(.94); }
+.ps-send:disabled { opacity:.45; cursor:default; }
+
+.ps-default pre {
+  background:var(--panel2); border:1px solid var(--border); border-radius:8px; padding:12px;
+  font:12px/1.6 ui-monospace,Consolas,"Cascadia Code",monospace;
+  max-height:340px; overflow:auto; white-space:pre-wrap; word-break:break-word;
+}
 .ch-grid { display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:12px; }
 .ch-empty {
   grid-column:1 / -1; padding:18px; font-size:12.5px; color:var(--muted); line-height:1.7;
@@ -3995,47 +4184,36 @@ iframe.pdf { width:100%; height:calc(100vh - 200px); border:1px solid var(--bord
 @media (max-width:1100px) { .ch-grid { grid-template-columns:1fr; } }
 
 
-/* 概览仪表盘 */
-.ov-metrics { display:grid; grid-template-columns:repeat(auto-fit, minmax(150px,1fr)); gap:10px; margin-bottom:16px; }
-.ov-card { background:var(--panel2); border:1px solid transparent; border-radius:var(--radius-sm); padding:12px 14px; min-width:0; display:flex; gap:10px; align-items:flex-start; }
-.ov-card.jump { cursor:pointer; transition:border-color .12s, background .12s; }
-.ov-card.jump:hover { border-color:var(--accent); background:var(--accent-soft); }
-.ov-ico { flex:0 0 auto; width:30px; height:30px; display:inline-flex; align-items:center; justify-content:center; border-radius:7px; background:var(--panel); color:var(--accent); }
-.ov-ico svg { width:17px; height:17px; }
-.ov-card-main { min-width:0; flex:1; }
-.ov-k { font-size:12px; color:var(--muted); margin-bottom:5px; }
-.ov-v { font-size:15px; font-weight:600; color:var(--text); word-break:break-all; }
-.ov-v.good { color:var(--green); }
-.ov-v.muted { color:var(--muted); }
-/* 服务状态实时点：绿色脉冲表示在线 */
-.ov-v .live-dot { display:inline-block; width:7px; height:7px; border-radius:50%; background:var(--green); margin-right:6px; vertical-align:1px; animation:pulse-dot 1.4s ease-in-out infinite; }
+/* 概览：服务状态实时点（绿色脉冲表示在线） */
+.sr-val .live-dot { display:inline-block; width:7px; height:7px; border-radius:50%; background:var(--green); margin-right:6px; vertical-align:1px; animation:pulse-dot 1.4s ease-in-out infinite; }
+/* 「有 N 项覆盖了 config.json」提示条：唯一允许在设置页出现的强调色块，因为它确实是个状态告警 */
 .ov-override-bar {
   display:flex; align-items:center; justify-content:space-between; gap:12px;
-  padding:11px 14px; background:var(--amber-soft); border:1px solid #fcd34d;
-  border-radius:var(--radius-sm); margin-bottom:20px;
+  margin-top:32px; padding:12px 14px; border-radius:10px;
+  background:var(--amber-soft); border:1px solid rgba(217,119,6,.28);
 }
-.ov-override-text { font-size:13px; color:var(--text); }
-.ov-override-text b { color:var(--amber); font-weight:700; }
-.ov-quick-title { font-size:11px; font-weight:700; letter-spacing:.04em; text-transform:uppercase; color:var(--muted2); margin-bottom:8px; }
-.ov-quick-links { display:flex; flex-wrap:wrap; gap:8px; }
+.ov-override-text { font-size:13px; color:var(--s-t1); }
+.ov-override-text b { color:var(--amber); font-weight:600; }
 
-/* 开关（toggle） */
+/* 开关（toggle）：36×20 轨 + 16 圆钮，规格取自 claude.ai */
 .toggle-field {
   display:flex; align-items:center; justify-content:space-between; gap:16px;
   padding:12px 14px; border:1px solid var(--border); border-radius:var(--radius-sm); background:var(--panel);
 }
-.toggle-main { display:flex; flex-direction:column; gap:3px; min-width:0; }
+.toggle-main { display:flex; flex-direction:column; gap:2px; min-width:0; }
 .toggle-main label { font-size:13px; font-weight:600; color:var(--text); }
 .toggle-main .hint { font-size:11px; color:var(--muted2); }
-.switch { position:relative; display:inline-block; width:40px; height:22px; flex:0 0 auto; cursor:pointer; }
+.switch { position:relative; display:inline-block; width:36px; height:20px; flex:0 0 auto; cursor:pointer; }
 .switch input { position:absolute; opacity:0; width:100%; height:100%; margin:0; cursor:pointer; }
-.switch-track { position:absolute; inset:0; background:var(--border2); border-radius:999px; transition:background .15s ease; }
+.switch-track { position:absolute; inset:0; background:rgba(15,23,42,.20); border-radius:999px; transition:background .15s ease; }
 .switch-track::before {
-  content:""; position:absolute; top:2px; left:2px; width:18px; height:18px;
-  background:#fff; border-radius:50%; box-shadow:0 1px 2px rgba(15,23,42,.12); transition:transform .15s ease;
+  content:""; position:absolute; top:2px; left:2px; width:16px; height:16px;
+  background:#fff; border-radius:50%; box-shadow:0 1px 2px rgba(15,23,42,.16); transition:transform .15s ease;
 }
+.switch:hover .switch-track { background:rgba(15,23,42,.28); }
 .switch input:checked + .switch-track { background:var(--accent); }
-.switch input:checked + .switch-track::before { transform:translateX(18px); }
+.switch:hover input:checked + .switch-track { background:var(--accent-strong); }
+.switch input:checked + .switch-track::before { transform:translateX(16px); }
 .switch input:focus-visible + .switch-track { box-shadow:0 0 0 3px var(--accent-soft); }
 
 /* 复合排序权重三联 */
@@ -4064,12 +4242,68 @@ iframe.pdf { width:100%; height:calc(100vh - 200px); border:1px solid var(--bord
 .sf-body { padding:4px 14px 14px; }
 
 /* 系统信息：脱敏 config 只读 */
-.raw-config { margin-top:16px; }
+.raw-config { margin-top:24px; }
 .raw-config pre {
-  background:var(--panel2); border:1px solid var(--border); border-radius:8px; padding:12px;
+  background:var(--s-fill); border:0; border-radius:8px; padding:12px; margin-top:8px;
   font:12px/1.6 ui-monospace,Consolas,"Cascadia Code",monospace;
   max-height:340px; overflow:auto; white-space:pre-wrap; word-break:break-word;
 }
+
+/* ---- 设置页内的 <details> 统一样式（v3.56）----
+   「查看内置默认」「高级参数」「各任务输入上限」此前三种写法三种字号，现在共用一套：
+   summary 是 13px 次要色的可点行，展开后内容退到弱背景块里。 */
+.settings-panel details > summary {
+  list-style:none; cursor:pointer; display:inline-flex; align-items:center; gap:6px;
+  font-size:13px; color:var(--s-t2); user-select:none;
+  padding:4px 0; transition:color .12s ease;
+}
+.settings-panel details > summary::-webkit-details-marker { display:none; }
+.settings-panel details > summary::before {
+  content:""; width:0; height:0; flex:0 0 auto;
+  border:4px solid transparent; border-left-color:currentColor; border-right:0;
+  transition:transform .14s ease;
+}
+.settings-panel details[open] > summary::before { transform:rotate(90deg) translateX(-1px); }
+.settings-panel details > summary:hover { color:var(--s-t1); }
+.ps-default { margin-top:14px; }
+.ps-default pre { background:var(--s-fill); border:0; margin-top:8px; }
+
+/* 高级参数折叠区：去掉卡片边框，与行体系一致（内容本身已经有行分隔线） */
+.advanced-fold { border:0; border-radius:0; background:transparent; margin-top:4px; }
+.advanced-fold > summary { padding:10px 0; font-size:13px; font-weight:400; color:var(--s-t2); }
+.advanced-fold > summary svg { display:none; }          /* 改用统一的 ::before 三角 */
+.advanced-fold .af-hint { font-size:13px; color:var(--s-t3); margin-left:6px; }
+.sf-body { padding:0; }
+
+/* 各任务输入上限 */
+.task-budget { margin-top:16px; border-top:0; padding-top:0; }
+.task-budget > summary { font-size:13px; color:var(--s-t2); }
+.task-budget .hint { display:block; margin:4px 0 12px; font-size:13px; color:var(--s-t2); line-height:1.6; }
+.task-budget-grid label { font-size:13px; color:var(--s-t2); }
+.task-budget-grid input { border-color:var(--s-edge); }
+
+/* config.json 原值参考 */
+.config-ref { margin-top:28px; padding:12px 14px; background:var(--s-fill); border:0; border-radius:10px; }
+.config-ref .ref-title { font-size:12px; font-weight:500; color:var(--s-t2); letter-spacing:0; text-transform:none; margin-bottom:8px; }
+.ref-grid .ref-k { color:var(--s-t2); }
+.ref-grid .ref-v { color:var(--s-t1); }
+
+/* ---- 暗色（v3.56）：同一套阶梯换一个墨色。设置页不需要第二组暗色规则，
+   因为所有面/线/字都是从 --s-ink 派生的。 ---- */
+html[data-theme="dark"] .settings-overlay {
+  --s-ink:226 232 240;
+  --s-paper:#1b1f26;
+  --s-nav:#171a20;
+  --s-line:rgb(var(--s-ink) / .10);
+  --s-edge:rgb(var(--s-ink) / .16);
+  --s-fill:rgb(var(--s-ink) / .06);
+  --s-fill-hover:rgb(var(--s-ink) / .11);
+  background:rgba(0,0,0,.56);
+}
+html[data-theme="dark"] .settings-shell { box-shadow:0 16px 48px rgba(0,0,0,.5), 0 0 0 1px rgb(var(--s-ink) / .09); }
+html[data-theme="dark"] .switch-track { background:rgba(226,232,240,.22); }
+html[data-theme="dark"] .switch:hover .switch-track { background:rgba(226,232,240,.3); }
+html[data-theme="dark"] .ov-override-bar { background:rgba(217,119,6,.14); border-color:rgba(245,158,11,.34); }
 
 /* 窄屏：设置导航变顶部横向 tab */
 @media (max-width:860px) {
@@ -4083,6 +4317,11 @@ iframe.pdf { width:100%; height:calc(100vh - 200px); border:1px solid var(--bord
   .settings-nav-foot { display:none; }
   .settings-nav-group, .settings-search { display:none; }
   .settings-form .field-row { grid-template-columns:1fr; }
+  /* v3.55 行式布局窄屏堆叠：标签/描述在上，控件在下 */
+  .set-row { flex-direction:column; align-items:stretch; gap:10px; }
+  .sr-ctl { justify-content:flex-end; }
+  .sr-ctl .sd-wrap, .sr-ctl input.sr-input-wide { width:100%; }
+  .sr-ctl-col { align-items:stretch; }
   .tax-toolbar { flex-wrap:wrap; }
   .tax-row-name { max-width:140px; }
 }
@@ -4338,11 +4577,12 @@ textarea.pwdlg-textarea { resize:vertical; min-height:84px; line-height:1.55; }
 
 /* ===== R6（v3.32）：长文阅读舒适度 =====
    总结/笔记/聊天是研究者停留最久的界面。排版原则：
-   - measure ≈ 72ch（860px 在 15px 字号下约 100+ 字符，过宽导致视线长扫）
    - 正文 15px / 1.75（14px 适合 chrome，不适合长文）
    - 段落呼吸感（.9em 段距）、标题节奏（h2 前 1.4em 后 0.5em）、首标题不吃顶部外距
-   - 表格斑马纹 + 表头底色（纯线框表格在宽表里难逐行追踪） */
-.md { max-width:72ch; font-size:15px; }
+   - 表格斑马纹 + 表头底色（纯线框表格在宽表里难逐行追踪）
+   - v3.56：72ch measure 限宽按用户要求退役改**全宽**（用户明确希望总结铺满详情列）；
+     随之而来的超宽公式/表格/图片由下方 R6b 横向滚动兜底 */
+.md { max-width:none; font-size:15px; }
 .md > :first-child { margin-top:0; }
 .md h1, .md h2 { margin-top:1.5em; margin-bottom:.55em; }
 .md h3, .md h4 { margin-top:1.3em; margin-bottom:.4em; }
@@ -4358,6 +4598,11 @@ textarea.pwdlg-textarea { resize:vertical; min-height:84px; line-height:1.55; }
 .note-card .md, .ncv-body .md { font-size:13.5px; max-width:none; }
 /* 聊天气泡内正文紧凑 */
 .chat-msg .md { font-size:14px; max-width:none; }
+/* R6b（v3.56）：全宽放开后超宽内容的横向滚动兜底——display 公式（KaTeX 内部 nowrap，
+   长公式原本会溢出裁切）/ 表格（display:block 使 table 成为滚动容器）/ 图片缩放 */
+.md .katex-display { overflow-x:auto; overflow-y:hidden; padding:4px 2px; }
+.md table { display:block; overflow-x:auto; max-width:100%; }
+.md img { max-width:100%; }
 
 /* ===== R7（v3.32）：详情加载骨架 ===== */
 .detail-skel { padding:26px 0; max-width:72ch; }
@@ -4465,11 +4710,6 @@ html[data-theme="dark"] .cp-kind.k-concept { color:#c4b5fd; }
 html[data-theme="dark"] .cp-kind.k-formula { color:#67e8f9; }
 html[data-theme="dark"] .cp-kind.k-action { color:#86efac; }
 html[data-theme="dark"] .pfd-merge-item.suspect .pfd-merge-suspect-tag { background:rgba(245,158,11,.14); border-color:rgba(245,158,11,.4); color:#fbbf24; }
-/* 外观分段控件（设置导航顶部） */
-.settings-appearance { display:flex; align-items:center; gap:8px; padding:8px 10px 10px; border-bottom:1px solid var(--border); }
-.settings-appearance .sa-label { font-size:12px; font-weight:600; color:var(--muted); flex:0 0 auto; }
-.settings-appearance .seg { flex:1 1 auto; }
-.settings-appearance .seg button { flex:1 1 auto; padding:3px 4px; font-size:11.5px; }
 
 /* ===== v3.33：卡片工具按钮语言（参考 workitem_extract_viewer .ri-btn）=====
    静默态：透明边框 + 弱文字色（藏在卡片里不抢注意力）
@@ -4601,23 +4841,23 @@ html[data-theme="dark"] #formulas-view.scrolled > .concepts-head {
 .card-star, .cd-star { width:24px; height:24px; }
 .card-star svg, .cd-star svg { width:14px; height:14px; }
 
-/* ===== v3.38：设置「外观」主题分段控件补样式 =====
-   v3.32 引入时误用 .seg/.text-seg 类名——该样式只作用于 .concepts-toolbar 作用域，
-   设置导航里实际是裸 UA 按钮（截图中的无样式状态）。按 .text-seg 同款语言补专属样式。 */
+/* 设置「外观」分段控件（v3.56：随设置页改版从导航顶部移入「通用 → 偏好」行，
+   并从三个文字按钮改为三枚图标——跟随系统 / 浅色 / 深色本来就是图标能说清的事，
+   文字版在 212px 导航里长期被裁字）。 */
 #theme-seg {
-  display:inline-flex; align-items:stretch;
-  border:1px solid var(--border2); border-radius:8px; overflow:hidden;
-  background:var(--panel);
+  display:inline-flex; align-items:center; gap:2px; padding:2px;
+  border:1px solid var(--s-edge, var(--border2)); border-radius:9px;
+  background:var(--s-paper, var(--panel));
 }
 #theme-seg button {
-  border:0; background:none; padding:5px 10px; font:inherit; font-size:12px;
-  color:var(--muted); cursor:pointer; white-space:nowrap; line-height:1.5;
+  display:inline-grid; place-items:center; width:30px; height:26px;
+  border:0; background:transparent; border-radius:7px; padding:0;
+  color:var(--s-t3, var(--muted2)); cursor:pointer;
   transition:background .12s ease, color .12s ease;
 }
-#theme-seg button + button { border-left:1px solid var(--border); }
-#theme-seg button:hover { background:var(--surface-veil-soft); color:var(--text); }
-#theme-seg button.active { background:var(--accent-soft); color:var(--accent-strong); font-weight:600; }
-html[data-theme="dark"] #theme-seg button + button { border-left-color:var(--border); }
+#theme-seg button:hover { background:var(--s-fill, var(--panel2)); color:var(--s-t1, var(--text)); }
+#theme-seg button.active { background:var(--s-fill-hover, var(--panel3)); color:var(--s-t1, var(--text)); }
+#theme-seg button:focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
 
 /* ===== v3.39：标签/主题 chip 双主题配色 =====
    旧实现是 chipOf() 内联 style 硬编码浅色（#eef2ff 底等）——内联样式压过任何暗色
@@ -4643,12 +4883,6 @@ html[data-theme="dark"] .chip-7 { background:rgba(244,63,94,.15); color:#fda4af;
 /* 基座（无色槽的 .tag 默认灰）同步暗色 */
 html[data-theme="dark"] .tag { background:var(--panel2); border-color:var(--border); color:var(--muted); }
 html[data-theme="dark"] .topic { border-color:rgba(99,102,241,.4); }
-/* 设置「外观」行：窄导航（220px）下三段按钮被 overflow:hidden 裁掉「深色」——
-   改为两行堆叠（标签一行、分段占满一行），按钮等分宽度永不溢出 */
-.settings-appearance { flex-wrap:wrap; gap:6px 8px; padding-bottom:12px; }
-.settings-appearance .sa-label { flex:1 1 100%; margin-bottom:0; }
-#theme-seg { flex:1 1 100%; display:flex; }
-#theme-seg button { flex:1 1 0; min-width:0; text-align:center; padding:5px 4px; }
 
 /* ===== v3.41：制品卡工具按钮统一 qbtn 语言 =====
    与概念/公式卡同款：静默弱色 → hover 浮现（卡片悬停时），删除红。

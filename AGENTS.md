@@ -120,7 +120,10 @@ public/                零构建前端（原生 ESM，浏览器直接加载；�
                         侧栏「重点」分面 star:1）、**时间线**（抽屉出现论文按年份时间轴）、**按筛选导出**
                         （exportXxxMd：POST ids → blob，无筛选回退全量 GET）、**AI 综合解读**
                         （POST /api/concepts/:id/explain SSE 流式，streamPostSse 渲染，不落库））
-    settings/          settings channels prompts collect taxonomy
+    settings/          settings channels prompts collect taxonomy prompt-studio
+                        （prompt-studio = 提示词工作台 v3.55：Memory 式——只读视图 + 底部
+                        「向 AI 提需求」composer + 手动编辑；textarea/save/hint/default-pre
+                        全部以旧 id 由 JS 生成，loadSettingsData 回显零改动）
     spaces/            spaces dir-wizard
     search/            advanced suggest help saved
     views/             view-switch（内容视图与侧栏 .side-ctx 显隐 + 设置覆盖层 + 顶栏 chrome
@@ -726,6 +729,29 @@ arXiv 导入 (POST /api/import { url, meta? }):
     finished），单测 `tests/stream-protocol.test.js`。另注意 Playwright 拦截带 query 的
     URL 时 glob pattern 要带尾 `*`（`**/chat/vision*`），否则 `?space=` 挂尾巴永不命中、
     拦截悄悄失效。
+
+47. **提示词工作台复用旧元素 id（v3.55）**：6 条提示词（summary/tags/formula/concept/
+    conceptMap/mineruNaming）的编辑走 `settings/prompt-studio.js`——index.html 里只有
+    `<div class="ps" data-ps="...">` 容器，textarea/save 按钮/hint/default-pre 由 studio
+    **以旧 id 现场生成**（`summary-prompt-edit` 等），故 loadSettingsData 的回显语句与
+    prompts.js/collect.js 的保存函数都不用改；新增提示词时照此在 index.html 放容器 +
+    在 DEFS 表注册即可，别再回写静态 textarea。保存函数**返回成功布尔**（r.ok），studio
+    据此决定保存后是否退出编辑态。AI 改写端点 `POST /api/settings/prompt-refine`（SSE，
+    不落库）的 `PROMPT_REFINE_KEYS` 表为每条提示词内置「必须保留的机制」说明（JSON 结构/
+    规范名对照表/index 对齐 skip）——**改某条提示词的输出契约时必须同步这条 note**，
+    否则 AI 改写会把硬约束改丢。studio 视图渲染的是「覆盖值 || 内置默认」，与后端三级
+    回退同序；「恢复默认」= PUT 空串（后端既有语义），不是把默认文本填回编辑器。
+
+48. **扫描类 AI 任务也必须流式 + 失败要能自愈（v3.56 总结经常失败根因）**：陷阱 42 的
+    流式定式不只概念地图——`summarize / extractTagsTopics / extractConcepts /
+    extractFormulas / generateNotes` 全部走 `callChatStream` + `TASK_STREAM_CHAT_PARAMS`
+    （ai.js 单点：10 分钟预算 + 重试 1 次）。思考型模型出首字节前静默数分钟，非流式
+    120s 必超时 → 空内容 →「生成失败」占位（生产曾 3 篇挂数周）。配套自愈：scan()
+    存量 pass 对「ready && summary === 失败占位（`isFailedSummaryPlaceholder`）&&
+    updatedAt 距今 > 1h」入队重跑（冷却即防打转，merge 幂等）。**给扫描任务加新 AI
+    调用时勿回 callChat**。前端 CSS 侧：`.md` 已全宽（860px/72ch 限宽退役），超宽
+    display 公式/表格靠 `.katex-display`/table 的 `display:block; overflow-x:auto`
+    兜底，勿删（全宽后没有它们长公式会被裁）。
 
 ## 工程化
 

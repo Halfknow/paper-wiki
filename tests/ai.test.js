@@ -201,16 +201,23 @@ test('applySettingsOverride 缺省 config 段时不抛错', () => {
   assert.strictEqual(eff.discover.maxResults, 5);
 });
 
+/** v3.56：扫描任务（summarize/tags/concepts/formulas/notes）全切 callChatStream——
+ *  成功响应 mock 统一为「单 content delta + [DONE]」的 SSE 流。sseStream 定义在下方
+ *  （函数声明提升，本处即可用）。 */
+function sseOk(text) {
+  return {
+    ok: true,
+    body: sseStream(`data: ${JSON.stringify({ choices: [{ delta: { content: text } }] })}\n\ndata: [DONE]\n\n`),
+  };
+}
+
 test('summarize 调用注入的 fetch 并返回 Markdown 字符串（jsonMode:false）', async () => {
   let capturedBody;
   const fakeFetch = async (url, opts) => {
     assert.strictEqual(url, 'http://gw/v1/chat/completions');
     assert.strictEqual(opts.headers.Authorization, 'Bearer k');
     capturedBody = JSON.parse(opts.body);
-    return {
-      ok: true,
-      json: async () => ({ choices: [{ message: { content: '## TL;DR\n短\n\n## 方法\nM' } }] }),
-    };
+    return sseOk('## TL;DR\n短\n\n## 方法\nM');
   };
   const md = await summarize({ title: 'T', abstract: 'A', fulltext: 'F', config: CFG, fetchImpl: fakeFetch });
   assert.strictEqual(md, '## TL;DR\n短\n\n## 方法\nM');
@@ -223,18 +230,18 @@ test('summarize 非 2xx 抛错', async () => {
   await assert.rejects(() => summarize({ config: CFG, fetchImpl: fakeFetch }), /401/);
 });
 
-test('summarize 对 429 限流做指数退避重试并最终成功', async () => {
+test('summarize 对 429 限流退避重试并最终成功（v3.56 流式 + maxRetries:1）', async () => {
   let calls = 0;
   const fakeFetch = async () => {
     calls++;
-    if (calls < 3) return { ok: false, status: 429, text: async () => 'rate limit' };
-    return { ok: true, json: async () => ({ choices: [{ message: { content: 'ok' } }] }) };
+    if (calls < 2) return { ok: false, status: 429, text: async () => 'rate limit' };
+    return sseOk('ok');
   };
   const md = await summarize({
     config: { ai: { baseURL: 'http://gw/v1', apiKey: 'k', model: 'm', maxInputChars: 10 } },
     fetchImpl: fakeFetch,
   });
-  assert.strictEqual(calls, 3);
+  assert.strictEqual(calls, 2);
   assert.strictEqual(md, 'ok');
 });
 
@@ -252,12 +259,7 @@ test('extractTagsTopics 强制 json_object 并解析 {tags,topics}', async () =>
   let capturedBody;
   const fakeFetch = async (url, opts) => {
     capturedBody = JSON.parse(opts.body);
-    return {
-      ok: true,
-      json: async () => ({
-        choices: [{ message: { content: '{"tags":["moe","in-context-learning"],"topics":["推理"]}' } }],
-      }),
-    };
+    return sseOk('{"tags":["moe","in-context-learning"],"topics":["推理"]}');
   };
   const tt = await extractTagsTopics({ title: 'T', abstract: 'A', fulltext: 'F', config: CFG, fetchImpl: fakeFetch });
   assert.deepStrictEqual(tt.tags, ['moe', 'in-context-learning']);
@@ -268,7 +270,7 @@ test('extractTagsTopics 强制 json_object 并解析 {tags,topics}', async () =>
 });
 
 test('extractTagsTopics 解析失败返回空结构', async () => {
-  const fakeFetch = async () => ({ ok: true, json: async () => ({ choices: [{ message: { content: 'not json' } }] }) });
+  const fakeFetch = async () => sseOk('not json');
   const tt = await extractTagsTopics({ config: CFG, fetchImpl: fakeFetch });
   assert.deepStrictEqual(tt.tags, []);
   assert.deepStrictEqual(tt.topics, []);
@@ -295,12 +297,7 @@ test('parseConceptResult 兼容 {concepts:[...]} 与裸数组', () => {
 test('extractConcepts 调用注入的 fetch 并返回概念数组', async () => {
   const fakeFetch = async (url) => {
     assert.ok(/\/chat\/completions$/.test(url));
-    return {
-      ok: true,
-      json: async () => ({
-        choices: [{ message: { content: '{"concepts":[{"term":"MoE","definition":"混合专家"}]}' } }],
-      }),
-    };
+    return sseOk('{"concepts":[{"term":"MoE","definition":"混合专家"}]}');
   };
   const items = await extractConcepts({
     title: 'T',
@@ -598,7 +595,7 @@ test('generateNotes 走自由 Markdown 调用（jsonMode:false）并返回原文
   let capturedBody;
   const fakeFetch = async (url, opts) => {
     capturedBody = JSON.parse(opts.body);
-    return { ok: true, json: async () => ({ choices: [{ message: { content: '## 🎯 研究问题\nx' } }] }) };
+    return sseOk('## 🎯 研究问题\nx');
   };
   const md = await generateNotes({ title: 'T', abstract: 'A', fulltext: 'F', config: CFG, fetchImpl: fakeFetch });
   assert.strictEqual(md, '## 🎯 研究问题\nx');
@@ -1118,19 +1115,8 @@ test('extractFormulas：走 jsonMode + 注入 fetch，返回公式数组', async
   const fakeFetch = async (url, opt) => {
     assert.ok(/\/chat\/completions$/.test(url));
     sawBody = JSON.parse(opt.body);
-    return {
-      ok: true,
-      json: async () => ({
-        choices: [
-          {
-            message: {
-              // JSON 里 LaTeX 反斜杠要转义：JS 源 \\\\ → JS 串 \\ → JSON 解析出 \sigma
-              content: '{"formulas":[{"canonicalName":"softmax","name":"归一化指数函数","latex":"\\\\sigma(z)"}]}',
-            },
-          },
-        ],
-      }),
-    };
+    // JSON 里 LaTeX 反斜杠要转义：JS 源 \\\\ → JS 串 \\ → JSON 解析出 \sigma
+    return sseOk('{"formulas":[{"canonicalName":"softmax","name":"归一化指数函数","latex":"\\\\sigma(z)"}]}');
   };
   const items = await extractFormulas({
     title: 'T',
@@ -1150,7 +1136,7 @@ test('extractFormulas：读 taskMaxInputChars.formulas 而非全局 maxInputChar
   let userMsg = '';
   const fakeFetch = async (_url, opt) => {
     userMsg = JSON.parse(opt.body).messages[1].content;
-    return { ok: true, json: async () => ({ choices: [{ message: { content: '{"formulas":[]}' } }] }) };
+    return sseOk('{"formulas":[]}');
   };
   const cfg = { ai: { ...CFG.ai, maxInputChars: 50, taskMaxInputChars: { formulas: 3000 } } };
   await extractFormulas({ title: 'T', fulltext: 'y'.repeat(2000), config: cfg, fetchImpl: fakeFetch });
@@ -1201,8 +1187,7 @@ test('callChat：chatParams.maxRetries 覆盖默认 4 次重试', async () => {
 test('generateConceptMap：流式自由输出（非 JSON 模式）+ 剥 ```html 围栏', async () => {
   const { generateConceptMap } = require('../src/services/ai');
   let sawBody;
-  const sse = (text) =>
-    `data: ${JSON.stringify({ choices: [{ delta: { content: text } }] })}\n\ndata: [DONE]\n\n`;
+  const sse = (text) => `data: ${JSON.stringify({ choices: [{ delta: { content: text } }] })}\n\ndata: [DONE]\n\n`;
   const fakeFetch = async (_url, opt) => {
     sawBody = JSON.parse(opt.body);
     return { ok: true, text: async () => sse('```html\n<html><body>MAP</body></html>\n```') };
@@ -1222,8 +1207,7 @@ test('generateConceptMap：流式自由输出（非 JSON 模式）+ 剥 ```html 
 test('generateConceptMap：prevHtml 注入（优化模式）', async () => {
   const { generateConceptMap } = require('../src/services/ai');
   let sawBody;
-  const sse = (text) =>
-    `data: ${JSON.stringify({ choices: [{ delta: { content: text } }] })}\n\ndata: [DONE]\n\n`;
+  const sse = (text) => `data: ${JSON.stringify({ choices: [{ delta: { content: text } }] })}\n\ndata: [DONE]\n\n`;
   const fakeFetch = async (_url, opt) => {
     sawBody = JSON.parse(opt.body);
     return { ok: true, text: async () => sse('<html>v2</html>') };

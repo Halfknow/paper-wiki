@@ -4,6 +4,58 @@
 
 ## [Unpublished]
 
+### Fixed — 总结经常失败（AI 超时根因）+ 失败占位自动重试；总结全宽与超宽内容横向滚动（v3.56）
+
+用户报告三件事，一并处理：
+
+- **总结失败根因 = AI 调用超时**：日志实测 `summary call failed: aborted due to timeout`——
+  思考型模型出首字节前静默数分钟，非流式 120s 预算必超时 → 空内容 → 存「生成失败」占位
+  （库内历史遗留 3 篇）。修复：**扫描类任务（summarize / extractTagsTopics /
+  extractConcepts / extractFormulas / generateNotes）全部切 `callChatStream`**（流式从
+  思考阶段就有字节流动、连接保活；预算 10 分钟 + 重试 1 次，`TASK_STREAM_CHAT_PARAMS`
+  单点定义）。接口/返回不变，scanner 零改动。
+- **失败占位永不自愈**：旧逻辑只能手点「重新总结」。scan() 存量 pass 新增自动重试：
+  `ready && summary === 失败占位 && updatedAt 距今 > 1h` → 入串行队列重跑完整流水线
+  （总结/标签/概念 merge 幂等）。冷却 1 小时防打转（重试失败再写占位会刷 updatedAt，
+  AI 持续故障时每篇每小时最多 1 次）。
+- **总结全宽**：`.md` 的 860px（v2）与 72ch（v3.32 R6 measure）限宽按用户要求退役，
+  总结铺满详情列（1920 视口实测 md 1220px = 详情列满宽）。
+- **超宽内容横向滚动**：`.md .katex-display` / `.md table`（display:block 化）/ `.md img`
+  三类兜底——超长公式/宽表不再撑破或被裁，出横向滚动条（`.md pre` 本就有 overflow:auto）。
+
+验证：ai.test.js 相关 mock 适配 SSE（429 重试用例随 maxRetries:1 更新）；scanner.test.js
+新增占位重试用例（入队 + 冷却内不重复）；快套件 613 例 0 失败；线上容器 Playwright
+几何断言全宽 + 注入超宽公式/表格滚动生效。
+
+### Changed — 设置页 Claude Desktop 风格重构 + 提示词 Memory 式 AI 编辑（v3.55）
+
+参照 Anthropic Claude Desktop 设置样式重做设置中心，并把全部提示词的编辑方式改为
+「向模型提需求」的 Memory 式交互（手动编辑仍保留）：
+
+- **行式布局**：表单面板（扫描/arXiv/发现/翻译/公式引擎/AI 全局参数）从「标签在上、
+  控件在下」的卡片式字段改为 Claude 式 `.set-row` 行——标签+描述居左、控件居右、
+  行间细分隔线；节标题 `.set-section`（召回规模 / 复合排序权重 / 全局参数…）；
+  toggle 行并入同一分隔线体系；系统信息行加细分隔线；左导航激活项从 Indigo 填充改
+  中性圆角块；设置面板右上角新增关闭 X（与 Esc/遮罩点击同语义）。
+- **提示词工作台**（`public/js/settings/prompt-studio.js`，6 条提示词：总结/标签/
+  公式/概念/概念地图/MinerU 命名）：默认**只读视图**展示当前生效提示词（右上角
+  「自定义/内置默认」角标），底部 composer 用自然语言提修改需求（如「加一节局限性」）
+  → 新端点 `POST /api/settings/prompt-refine`（SSE 流式，`callChatStream`，不落库）
+  让模型基于当前提示词产出完整修改稿 → 预览后「采用并保存」（走既有 PUT 端点）/
+  「放弃」/ 继续提需求（多轮时以上一稿为 base）。「手动编辑」切回传统 textarea
+  （进入时快照原值、取消可回滚、覆盖为空时预填内置默认便于在其基础上改）；
+  「恢复默认」直接 PUT 空串（后端既有语义：空=恢复默认）。textarea/save/hint/
+  default-pre 全部复用旧元素 id（studio 以原 id 生成 DOM），`loadSettingsData` 回显
+  与 prompts.js/collect.js 保存函数零改动（仅令其返回成功布尔供 studio 决定进退）。
+- **改写防线**：prompt-refine 的 system 消息为每条提示词内置「必须保留的机制」说明
+  （tags/formula/concept 的 JSON 结构与规范名对照表、conceptMap 的单文件 HTML、
+  MinerU 命名的 index 对齐 + skip 拒判），防 AI 改写时把硬约束改丢。
+
+验证：新增 `tests/api-prompt-refine.test.js`（4 例：参数校验/SSE 全链/base 三级
+解析/mineruNaming 取 formulas.namingPrompt）+ `tests/prompt-studio-ui.test.js`
+（5 例：挂载/手动编辑回滚/AI 改写全链/多轮 base/恢复默认）；全量 test:full 815 例
+0 失败；Playwright 浅/深色截图核验 5 个面板；真实网关 SSE 改写链路实测通过。
+
 ### Fixed — 聊天输入框永久锁死（v3.54 流式协议层双兜底）
 
 用户报告「AI 聊天问答一两次之后输入框无法选中继续输入」。定位为**流式协议层两个叠加

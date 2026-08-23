@@ -564,10 +564,17 @@ function parseTagsResult(text) {
  *  - v2.4 起入参是**字符串**（summarize 不再返回 JSON 对象）。
  *  - 剥首尾空白与偶发的 ```markdown 围栏。
  *  - 空 / null 返回可重试占位，便于「重新总结」识别。 */
+const FAILED_SUMMARY_PLACEHOLDER = '*（总结生成失败，可点击「重新总结」重试）*';
+
+/** 失败占位判定（scanner 的自动重试 pass 用，v3.56）。 */
+function isFailedSummaryPlaceholder(s) {
+  return s === FAILED_SUMMARY_PLACEHOLDER;
+}
+
 function buildSummaryMarkdown(md) {
-  if (!md) return '*（总结生成失败，可点击「重新总结」重试）*';
+  if (!md) return FAILED_SUMMARY_PLACEHOLDER;
   let s = String(md).trim();
-  if (!s) return '*（总结生成失败，可点击「重新总结」重试）*';
+  if (!s) return FAILED_SUMMARY_PLACEHOLDER;
   const fence = s.match(/^```(?:markdown|md)?\s*([\s\S]*?)```\s*$/i);
   if (fence) s = fence[1].trim();
   return s;
@@ -963,12 +970,24 @@ function parseSseBody(text, onToken) {
   return reply;
 }
 
+/** 扫描类任务（总结/标签/概念/公式/笔记骨架）的流式调用参数（v3.56）：
+ *  全部走 callChatStream——思考型模型出首字节前静默几分钟，非流式 120s 预算必超时
+ *  （生产表现：「总结经常失败」= aborted due to timeout → 空内容占位）；流式从思考
+ *  阶段就有字节流动保活。预算 10 分钟 + 重试 1 次（后台串行任务，不占交互）。 */
+const TASK_STREAM_CHAT_PARAMS = { timeoutMs: 600000, maxRetries: 1 };
+
 /** 生成总结：自由 Markdown 调用（jsonMode:false）。
  *  返回模型原文字符串（未解析 JSON）。调用方用 buildSummaryMarkdown 归一化后存储。 */
 async function summarize({ title, abstract, fulltext, config, fetchImpl = fetch, prompt }) {
   const maxInputChars = resolveMaxInputChars(config, 'summary');
   const messages = buildSummaryMessages({ title, abstract, fulltext, maxInputChars, prompt });
-  const text = await callChat({ messages, config, fetchImpl, jsonMode: false });
+  const text = await callChatStream({
+    messages,
+    config,
+    fetchImpl,
+    jsonMode: false,
+    chatParams: TASK_STREAM_CHAT_PARAMS,
+  });
   return text;
 }
 
@@ -988,7 +1007,13 @@ function buildNotesMessages({ title, abstract, fulltext, maxInputChars = 24000, 
 async function generateNotes({ title, abstract, fulltext, config, fetchImpl = fetch, prompt }) {
   const maxInputChars = resolveMaxInputChars(config, 'notes');
   const messages = buildNotesMessages({ title, abstract, fulltext, maxInputChars, prompt });
-  const text = await callChat({ messages, config, fetchImpl, jsonMode: false });
+  const text = await callChatStream({
+    messages,
+    config,
+    fetchImpl,
+    jsonMode: false,
+    chatParams: TASK_STREAM_CHAT_PARAMS,
+  });
   return text;
 }
 
@@ -997,7 +1022,13 @@ async function generateNotes({ title, abstract, fulltext, config, fetchImpl = fe
 async function extractTagsTopics({ title, abstract, fulltext, config, fetchImpl = fetch, prompt }) {
   const maxInputChars = resolveMaxInputChars(config, 'tags');
   const messages = buildTagsMessages({ title, abstract, fulltext, maxInputChars, prompt });
-  const text = await callChat({ messages, config, fetchImpl, jsonMode: true });
+  const text = await callChatStream({
+    messages,
+    config,
+    fetchImpl,
+    jsonMode: true,
+    chatParams: TASK_STREAM_CHAT_PARAMS,
+  });
   return parseTagsResult(text);
 }
 
@@ -1005,7 +1036,7 @@ async function extractTagsTopics({ title, abstract, fulltext, config, fetchImpl 
 async function extractConcepts({ title, abstract, fulltext, existingTerms, config, fetchImpl = fetch, prompt }) {
   const maxInputChars = resolveMaxInputChars(config, 'concepts');
   const messages = buildConceptMessages({ title, abstract, fulltext, existingTerms, maxInputChars, prompt });
-  const text = await callChat({ messages, config, fetchImpl });
+  const text = await callChatStream({ messages, config, fetchImpl, chatParams: TASK_STREAM_CHAT_PARAMS });
   return parseConceptResult(text);
 }
 
@@ -1080,7 +1111,13 @@ async function extractFormulas({
     maxInputChars,
     prompt,
   });
-  const text = await callChat({ messages, config, fetchImpl, jsonMode: true });
+  const text = await callChatStream({
+    messages,
+    config,
+    fetchImpl,
+    jsonMode: true,
+    chatParams: TASK_STREAM_CHAT_PARAMS,
+  });
   return parseFormulaResult(text);
 }
 
@@ -1264,6 +1301,7 @@ module.exports = {
   parseTagsResult,
   // 归一化
   buildSummaryMarkdown,
+  isFailedSummaryPlaceholder,
   // 配置覆盖
   applySettingsOverride,
   withGlobalAi,
