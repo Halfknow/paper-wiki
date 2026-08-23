@@ -367,7 +367,9 @@ test('设置是覆盖层：打开时底下的内容视图仍在，关闭回到�
   assert.ok(!ui.$('concepts-view').classList.contains('view-hidden'), '覆盖层不应把底下的概念页藏掉——关掉后要原样回来');
   assert.ok(!ui.$('settings-view').classList.contains('view-hidden'));
 
-  ui.$('btn-settings-close').click();
+  // v3.58：左下角那个「关闭」退役——右上角已有 ×，同一个出口不需要两个入口
+  assert.strictEqual(ui.$('btn-settings-close'), null, '左下角关闭按钮已移除');
+  ui.$('btn-settings-x').click();
   await sleep(120);
   assert.equal(ui.path(), '/concepts', '从概念页进设置，关掉应回概念页');
   assert.equal(view(ui), 'concepts');

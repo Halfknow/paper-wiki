@@ -48,8 +48,13 @@ function register(t, ctx) {
 
     // —— AI 引擎：流式 SSE（EventSource）——
     const langName = LANG_NAMES[targetLang] || targetLang;
+    // 系统提示词三级回退（v3.58 起可在设置页编辑，此前是写死的常量）：
+    //   store.settings.translatePrompt > config.translatePrompt > 内置默认
+    const sysPrompt =
+      ((store.settings && store.settings.translatePrompt) || config.translatePrompt || '').trim() ||
+      TRANSLATE_SYSTEM_PROMPT;
     const messages = [
-      { role: 'system', content: TRANSLATE_SYSTEM_PROMPT },
+      { role: 'system', content: sysPrompt },
       { role: 'user', content: `请将以下文本翻译为「${langName}」，只输出译文：\n\n${text.slice(0, 8000)}` },
     ];
     res.writeHead(200, {

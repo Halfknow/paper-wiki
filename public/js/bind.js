@@ -28,7 +28,7 @@ import { closeSuggest, handleSuggestKeydown } from './search/suggest.js';
 import { bindChannelGrid, chEditModels, editingChannelId, renderChannels, set_chEditModels, set_editingChannelId } from './settings/channels.js';
 import { filterSettingsNav, normalizeWeights, renderWeightProp, resetAllSettings, resetSection, saveArxiv, saveDiscover, saveFormulaEngine, saveScan } from './settings/collect.js';
 import { currentPromptPane, initPromptStudios, showPromptIndex } from './settings/prompt-studio.js';
-import { saveAiConfig } from './settings/settings.js';
+import { mountSettingDropdown, saveAiConfig } from './settings/settings.js';
 import { renderTaxonomy, taxBatchDelete, taxBatchMerge, taxState, taxSwitchKind, taxToggleSelectMode } from './settings/taxonomy.js';
 import { applyListWidth, bindListSplitter, refreshSystemHealth, setSidebarCollapsed } from './views/layout.js';
 import { currentView } from './views/view-switch.js';
@@ -332,7 +332,6 @@ export function bind() {
   // 设置入口：侧栏 footer（展开态）+ rail 底部（收起态），两处同一行为（v3.18 自顶栏移回）
   $('btn-settings').onclick = openSettingsOverlay;
   $('btn-settings-rail').onclick = openSettingsOverlay;
-  $('btn-settings-close').onclick = closeSettingsOverlay;
   if ($('btn-settings-x')) $('btn-settings-x').onclick = closeSettingsOverlay;
   // 点遮罩（面板之外）关闭——覆盖层的常规语义
   $('settings-view').addEventListener('click', (e) => { if (e.target.id === 'settings-view') closeSettingsOverlay(); });
@@ -401,10 +400,19 @@ export function bind() {
     taxState.q = e.target.value;
     renderTaxonomy();
   };
-  $('tax-sort').onchange = (e) => {
-    taxState.sort = e.target.value;
-    renderTaxonomy();
-  };
+  mountSettingDropdown(
+    'sd-tax-sort-wrap',
+    [
+      { value: 'countDesc', label: '按使用量' },
+      { value: 'nameAsc', label: '按名称 A–Z' },
+      { value: 'countAsc', label: '最少使用' },
+    ],
+    'countDesc',
+    (v) => {
+      taxState.sort = v;
+      renderTaxonomy();
+    },
+  );
   $('tax-select-toggle').onclick = () => taxToggleSelectMode();
   $('tax-batch-merge').onclick = taxBatchMerge;
   $('tax-batch-delete').onclick = taxBatchDelete;

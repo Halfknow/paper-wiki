@@ -56,8 +56,8 @@
       <div class="space-menu" id="space-menu" hidden>
         <div class="space-list" id="space-list"></div>
         <div class="space-menu-divider"></div>
-        <button class="space-menu-item" id="space-new" type="button">+ 新建空间</button>
-        <button class="space-menu-item" id="space-manage" type="button">⚙ 管理空间</button>
+        <button class="space-menu-item" id="space-new" type="button"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M12 11.5v4.5M9.75 13.75h4.5"/></svg><span>新建空间</span></button>
+        <button class="space-menu-item" id="space-manage" type="button"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg><span>管理空间</span></button>
       </div>
     </div>
     <!-- 一级导航（v3.17）：论文 / 概念 / 公式 是同一空间的三种切面，故紧贴空间切换器右侧，
@@ -448,9 +448,6 @@
         <div class="settings-nav-item" data-tab="taxonomy" data-kw="主题 标签 管理 合并 重命名 分类"><span class="sni"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2.5 2.5 7 12 11.5 21.5 7 12 2.5"/><polyline points="2.5 16.5 12 21 21.5 16.5"/><polyline points="2.5 11.8 12 16.3 21.5 11.8"/></svg></span><span>主题与标签</span></div>
         <div class="settings-nav-item" data-tab="system" data-kw="系统 信息 端口 目录 版本 健康 config 服务"><span class="sni"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="3.5" width="19" height="7" rx="2"/><rect x="2.5" y="13.5" width="19" height="7" rx="2"/><line x1="6" y1="7" x2="6.01" y2="7"/><line x1="6" y1="17" x2="6.01" y2="17"/></svg></span><span>系统</span></div>
         <div class="settings-nav-empty" id="settings-nav-empty" hidden>没有匹配的设置项</div>
-        <div class="settings-nav-foot">
-          <button class="btn ghost sm" id="btn-settings-close" title="关闭设置（Esc）">关闭</button>
-        </div>
       </aside>
 
       <section class="settings-body">
@@ -519,13 +516,31 @@
           <details class="task-budget" id="task-budget">
             <summary>各任务输入上限（留空 = 跟随全局）</summary>
             <p class="hint">不同任务需要的上下文长度差别很大：公式散布全篇，需要远大于总结的窗口；聊天要给多轮历史留位置。单位 tokens，留空则用上面的「最大输入（tokens）」。</p>
-            <div class="task-budget-grid">
-              <label>总结<input type="number" id="tb-summary" min="0" step="1000" placeholder="跟随全局" /></label>
-              <label>标签 / 主题<input type="number" id="tb-tags" min="0" step="1000" placeholder="跟随全局" /></label>
-              <label>笔记骨架<input type="number" id="tb-notes" min="0" step="1000" placeholder="跟随全局" /></label>
-              <label>概念抽取<input type="number" id="tb-concepts" min="0" step="1000" placeholder="跟随全局" /></label>
-              <label>公式抽取<input type="number" id="tb-formulas" min="0" step="1000" placeholder="跟随全局" /></label>
-              <label>论文聊天<input type="number" id="tb-chat" min="0" step="1000" placeholder="跟随全局" /></label>
+            <div class="set-rows task-budget-rows">
+              <div class="set-row">
+                <div class="sr-main"><div class="sr-label">总结</div></div>
+                <div class="sr-ctl"><input type="number" id="tb-summary" min="0" step="1000" placeholder="跟随全局" /></div>
+              </div>
+              <div class="set-row">
+                <div class="sr-main"><div class="sr-label">标签 / 主题</div></div>
+                <div class="sr-ctl"><input type="number" id="tb-tags" min="0" step="1000" placeholder="跟随全局" /></div>
+              </div>
+              <div class="set-row">
+                <div class="sr-main"><div class="sr-label">笔记骨架</div></div>
+                <div class="sr-ctl"><input type="number" id="tb-notes" min="0" step="1000" placeholder="跟随全局" /></div>
+              </div>
+              <div class="set-row">
+                <div class="sr-main"><div class="sr-label">概念抽取</div></div>
+                <div class="sr-ctl"><input type="number" id="tb-concepts" min="0" step="1000" placeholder="跟随全局" /></div>
+              </div>
+              <div class="set-row">
+                <div class="sr-main"><div class="sr-label">公式抽取</div></div>
+                <div class="sr-ctl"><input type="number" id="tb-formulas" min="0" step="1000" placeholder="跟随全局" /></div>
+              </div>
+              <div class="set-row">
+                <div class="sr-main"><div class="sr-label">论文聊天</div></div>
+                <div class="sr-ctl"><input type="number" id="tb-chat" min="0" step="1000" placeholder="跟随全局" /></div>
+              </div>
             </div>
           </details>
           <div class="config-ref">
@@ -648,6 +663,66 @@
               <div class="set-row set-row-reset">
                 <div class="sr-main"><div class="sr-hint">清除当前自定义内容，改回内置默认提示词。</div></div>
                 <div class="sr-ctl"><button class="btn subtle sm danger" id="btn-concept-map-prompt-default" type="button">恢复默认</button></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="prompt-pane" data-prompt-pane="notes" hidden>
+            <div class="pane-head">
+              <button class="pane-back" type="button" data-prompt-back aria-label="返回提示词列表"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg></button>
+              <span class="pane-title">笔记骨架提示词</span>
+              <span class="ovr-badge" id="ovr-notes" hidden>自定义</span>
+            </div>
+            <p class="pane-lede">生成读书笔记骨架（Markdown，六个 <code>##</code> 二级章节）。章节标题被笔记面板用来定位与分栏——可以增删章节，但要保持「## 标题」这一层结构。</p>
+            <div class="ps" data-ps="notes"></div>
+            <details class="ps-default">
+              <summary>查看内置默认（只读参考）</summary>
+              <pre id="notes-prompt-default-pre" class="md"></pre>
+            </details>
+            <div class="set-rows set-rows-foot">
+              <div class="set-row set-row-reset">
+                <div class="sr-main"><div class="sr-hint">清除当前自定义内容，改回内置默认提示词。</div></div>
+                <div class="sr-ctl"><button class="btn subtle sm danger" id="btn-notes-prompt-default" type="button">恢复默认</button></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="prompt-pane" data-prompt-pane="chat" hidden>
+            <div class="pane-head">
+              <button class="pane-back" type="button" data-prompt-back aria-label="返回提示词列表"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg></button>
+              <span class="pane-title">论文聊天提示词</span>
+              <span class="ovr-badge" id="ovr-chat" hidden>自定义</span>
+            </div>
+            <p class="pane-lede">论文对话的 system 角色设定。论文标题 / 摘要 / 全文会作为上下文另行注入，无需在此重复；对话是自由文本，不要要求 JSON。</p>
+            <div class="ps" data-ps="chat"></div>
+            <details class="ps-default">
+              <summary>查看内置默认（只读参考）</summary>
+              <pre id="chat-prompt-default-pre" class="md"></pre>
+            </details>
+            <div class="set-rows set-rows-foot">
+              <div class="set-row set-row-reset">
+                <div class="sr-main"><div class="sr-hint">清除当前自定义内容，改回内置默认提示词。</div></div>
+                <div class="sr-ctl"><button class="btn subtle sm danger" id="btn-chat-prompt-default" type="button">恢复默认</button></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="prompt-pane" data-prompt-pane="translate" hidden>
+            <div class="pane-head">
+              <button class="pane-back" type="button" data-prompt-back aria-label="返回提示词列表"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg></button>
+              <span class="pane-title">划线翻译提示词</span>
+              <span class="ovr-badge" id="ovr-translate-prompt" hidden>自定义</span>
+            </div>
+            <p class="pane-lede">PDF 划线后的 AI 翻译（「划线翻译」引擎选 AI 时生效）。目标语言由每次请求给出；必须仍要求「只输出译文」，多余解释会被整段塞进浮窗。</p>
+            <div class="ps" data-ps="translate"></div>
+            <details class="ps-default">
+              <summary>查看内置默认（只读参考）</summary>
+              <pre id="translate-prompt-default-pre" class="md"></pre>
+            </details>
+            <div class="set-rows set-rows-foot">
+              <div class="set-row set-row-reset">
+                <div class="sr-main"><div class="sr-hint">清除当前自定义内容，改回内置默认提示词。</div></div>
+                <div class="sr-ctl"><button class="btn subtle sm danger" id="btn-translate-prompt-default" type="button">恢复默认</button></div>
               </div>
             </div>
           </div>
@@ -894,11 +969,9 @@
                 <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
                 <input type="text" id="tax-search" placeholder="搜索标签…" autocomplete="off" />
               </div>
-              <select id="tax-sort" aria-label="排序">
-                <option value="countDesc">按使用量</option>
-                <option value="nameAsc">按名称 A–Z</option>
-                <option value="countAsc">最少使用</option>
-              </select>
+              <!-- v3.58：原生 select 的弹出面板由系统渲染，CSS 完全够不着——
+                   换成与设置页同款的自定义下拉，弹层才能走「下拉内容统一规格」。 -->
+              <div class="sd-wrap" id="sd-tax-sort-wrap" aria-label="排序"></div>
               <button class="btn ghost sm" id="tax-select-toggle">多选</button>
             </div>
             <div class="tax-rows" id="tax-rows"></div>
@@ -1152,7 +1225,7 @@
       <div class="sa-list" id="space-admin-list"></div>
       <!-- 新建空间：内联表单（默认折叠为一个按钮，点击展开） -->
       <div class="sa-create" id="space-create">
-        <button class="btn ghost sm sa-create-btn" id="space-create-toggle" type="button">+ 新建空间</button>
+        <button class="btn ghost sm sa-create-btn" id="space-create-toggle" type="button"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M12 11.5v4.5M9.75 13.75h4.5"/></svg>新建空间</button>
         <div class="sa-create-form" id="space-create-form" hidden>
           <input type="text" id="space-create-name" placeholder="空间名称（如：AI 论文）" autocomplete="off" />
           <input type="text" id="space-create-dir" placeholder="文件夹（可选，留空 = 与空间名一致）" autocomplete="off" />

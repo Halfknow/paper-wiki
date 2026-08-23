@@ -199,7 +199,7 @@ export function toggleModelSwitcher(btn) {
       const tag = m.id === def ? '<span class="cmp-tag">默认</span>' : '';
       // contextLength 徽标（网关返回才显示，OpenAI 原生 /v1/models 不返回此字段）
       const ctx = m.contextLength ? `<span class="cmp-ctx" title="${m.contextLength} tokens 上下文">${formatTokens(m.contextLength)}</span>` : '';
-      return `<button class="cmp-item${isSel ? ' active' : ''}" data-model="${escapeHtml(m.id)}" type="button"><span class="cmp-id"></span>${tag}${ctx}<span class="cmp-check">${isSel ? '✓' : ''}</span></button>`;
+      return `<button class="cmp-item${isSel ? ' active' : ''}" data-model="${escapeHtml(m.id)}" type="button"><span class="cmp-id"></span>${tag}${ctx}</button>`;
     }).join('') +
     '</div>';
   document.body.appendChild(pop);

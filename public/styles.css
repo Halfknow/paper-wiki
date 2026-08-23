@@ -41,6 +41,7 @@
   --fill-ghost-hover:rgba(var(--ink), .05);  /* 无底按钮的 hover */
   --fill-secondary:rgba(var(--ink), .04);    /* 次级按钮底 */
   --fill-secondary-hover:rgba(var(--ink), .08);
+  --fill-active:rgba(var(--ink), .10);       /* 选中态：hover 的两倍，保证相邻可辨 */
   --fill-primary:#4f46e5;                    /* 主按钮底 = 产品身份色 Indigo */
   --fill-primary-hover:#4338ca;
   --on-primary:#fff;
@@ -122,32 +123,111 @@ input,select,textarea { font:inherit; color:var(--text); }
 .space-current .space-ico { opacity:.85; }
 .space-current .space-name { max-width:130px; overflow:hidden; text-overflow:ellipsis; }
 .space-current .space-chev { opacity:.7; transition:transform .12s; }
+/* ============================================================================
+   下拉内容统一规格（v3.58）—— 单一事实源
+   ============================================================================
+   此前 6 个浮层各写各的：面板圆角 8/12 混用，项高 30/32、圆角 6/8、字号 12.5/13/14
+   各不相同，选中态有的整块 Indigo、有的靠一个字面 '✓'。这里把「面板长什么样、项长
+   什么样」收成一处，各家族的规则里只留自己独有的定位/动画/省略行为。
+
+   规格量自 claude.ai：面板 r12 + 4px 内边距；项 32px / r8 / padding 0 12px / 14px·400，
+   项与项之间不留缝（面板的 4px 内边距已经提供了呼吸）。
+
+   例外（不并入本段）：主题/标签的**多选**筛选面板 .filter-pop —— 它有搜索框、
+   全选行、AND/OR 切换和复选框行，是另一种交互物件，硬套单选菜单的壳只会更别扭。
+   ---------------------------------------------------------------------------- */
+
+/* 面板外壳 */
+.menu-pop,
+.filter-status-menu,
+.sd-menu,
+.space-menu,
+.add-menu-list,
+.bulk-menu,
+.chat-model-pop {
+  background:var(--surface-raise);
+  border:1px solid var(--ring);
+  border-radius:12px;
+  box-shadow:var(--shadow-lg);
+  padding:4px;
+}
+/* 模型浮层自带标题栏，内边距由内部 .cmp-list 提供 */
+.chat-model-pop { padding:0; overflow:hidden; }
+.chat-model-pop .cmp-list { padding:4px; }
+
+/* 菜单项 */
+.menu-item,
+.fsm-item,
+.space-opt,
+.space-menu-item,
+.add-menu-list button,
+.bulk-menu-item,
+.chat-model-pop .cmp-item {
+  display:flex; align-items:center; gap:8px;
+  width:100%; min-height:var(--ctl-h); padding:0 12px;
+  text-align:left; background:transparent; border:0; border-radius:var(--ctl-r);
+  font:inherit; font-size:14px; font-weight:400; line-height:1.4;
+  color:var(--text); cursor:pointer;
+  transition:background .1s ease, color .1s ease;
+}
+.menu-item:hover,
+.fsm-item:hover,
+.space-opt:hover,
+.space-menu-item:hover,
+.add-menu-list button:hover,
+.bulk-menu-item:hover,
+.chat-model-pop .cmp-item:hover {
+  background:var(--fill-ghost-hover); color:var(--text);
+}
+/* 选中：中性底 + 主色勾。整块色底在多选中项的菜单里会连成色块拼贴，
+   反而看不出光标在哪；勾只标「这项被选了」，与 hover 各司其职。 */
+.menu-item.active,
+.fsm-item.active,
+.space-opt.active,
+.chat-model-pop .cmp-item.active {
+  background:transparent; color:var(--text); font-weight:500;
+}
+.menu-item.active:hover,
+.fsm-item.active:hover,
+.space-opt.active:hover,
+.chat-model-pop .cmp-item.active:hover { background:var(--fill-ghost-hover); }
+
+/* 勾：SVG 遮罩而不是字面 '✓'。字面勾在不同字体/平台上粗细与基线都会漂，
+   遮罩方案形状固定、跟随 currentColor，且能和其它线性图标对上笔画。 */
+.menu-item.active::after,
+.fsm-item.active::after,
+.space-opt.active::after,
+.chat-model-pop .cmp-item.active::after {
+  content:''; flex:0 0 auto; margin-left:auto;
+  width:15px; height:15px; background-color:var(--accent);
+  -webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2.75' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='20 6 9 17 4 12'/%3E%3C/svg%3E") center / 15px 15px no-repeat;
+  mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2.75' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='20 6 9 17 4 12'/%3E%3C/svg%3E") center / 15px 15px no-repeat;
+}
+
+/* 分隔线 */
+.menu-sep,
+.space-menu-divider,
+.bulk-menu-divider { height:1px; background:var(--ring); margin:4px 8px; border:0; }
+
+/* 菜单里的次级说明文字（如空间的目录路径） */
+.space-opt .space-opt-dir { font-size:12px; color:var(--muted); flex:0 0 auto; }
+
+
 .space-switcher.open .space-chev { transform:rotate(180deg); }
 .space-menu {
   position:absolute; top:calc(100% + 4px); left:0; z-index:60;
-  min-width:220px; background:var(--surface-raise); border:1px solid var(--border);
-  border-radius:var(--radius); box-shadow:var(--shadow-lg);
-  padding:4px; animation:spaceMenuIn .1s ease-out;
+  min-width:220px; animation:spaceMenuIn .1s ease-out;
 }
 @keyframes spaceMenuIn { from { opacity:0; transform:translateY(-4px); } to { opacity:1; transform:translateY(0); } }
-.space-list { display:flex; flex-direction:column; gap:1px; max-height:300px; overflow:auto; }
-.space-opt {
-  display:flex; align-items:center; gap:8px; width:100%; text-align:left;
-  padding:7px 10px; background:transparent; border:none; border-radius:6px;
-  font-size:13px; color:var(--text); cursor:pointer;
-}
-.space-opt:hover { background:var(--fill-ghost-hover); }
-.space-opt.active { background:var(--accent-soft); color:var(--accent-strong); font-weight:600; }
+.space-list { display:flex; flex-direction:column; max-height:320px; overflow:auto; }
+.space-opt { gap:8px; }
 .space-opt .space-opt-name { flex:1; overflow:hidden; text-overflow:ellipsis; }
-.space-opt .space-opt-check { color:var(--accent-strong); font-size:14px; }
 .space-opt .space-opt-dir { font-size:11px; color:var(--muted); }
 .space-menu-divider { height:1px; background:var(--border); margin:4px 6px; }
-.space-menu-item {
-  display:block; width:100%; text-align:left; padding:7px 10px;
-  background:transparent; border:none; border-radius:6px; font-size:13px;
-  color:var(--text); cursor:pointer;
-}
-.space-menu-item:hover { background:var(--hover, #f1f5f9); }
+.space-menu-item { color:var(--muted); }
+/* 菜单底部两个动作项的图标：静默弱色，随整项 hover 一起转主文色 */
+.space-menu-item > svg { flex:0 0 auto; color:var(--muted2); transition:color .1s ease; }
+.space-menu-item:hover > svg { color:var(--text); }
 
 /* ---- 空间管理模态（展示优先 + 行内编辑）---- */
 .modal-hint { font-size:12px; color:var(--muted); margin:0 0 14px; line-height:1.5; }
@@ -443,7 +523,7 @@ input,select,textarea { font:inherit; color:var(--text); }
 /* 语法帮助 popover */
 .search-help-pop {
   position:fixed; z-index:400; width:min(440px, 92vw); max-height:min(80vh, 600px);
-  background:var(--panel); border:1px solid var(--border); border-radius:12px;
+  background:var(--panel); border:1px solid var(--ring); border-radius:12px;
   box-shadow:0 6px 24px rgba(15,23,42,.10); overflow:hidden; display:flex; flex-direction:column;
   animation:sf-in .14s ease;
 }
@@ -505,30 +585,15 @@ input,select,textarea { font:inherit; color:var(--text); }
 .filter-status-wrap.open .ft-chev { transform:rotate(180deg); }
 .filter-status-menu {
   position:absolute; top:calc(100% + 4px); left:0; z-index:60;
-  min-width:160px; background:var(--surface-raise); border:1px solid var(--border);
-  border-radius:var(--radius); box-shadow:var(--shadow-lg);
-  padding:4px; animation:fsmIn .12s ease-out;
+  min-width:200px; animation:fsmIn .12s ease-out;
 }
 @keyframes fsmIn { from { opacity:0; transform:translateY(-4px); } to { opacity:1; transform:translateY(0); } }
-.fsm-item {
-  display:flex; align-items:center; justify-content:space-between; gap:8px;
-  width:100%; text-align:left; padding:7px 10px; background:transparent; border:none; border-radius:6px;
-  font-size:14px; font-weight:400; color:var(--text); cursor:pointer;
-  transition:background .1s ease, color .1s ease;
-}
-/* v3.56：hover 中性；选中态靠右侧 ✓ 标记而不是整块色底——一个菜单里往往有多个
-   已选项，整块 Indigo 会让菜单变成色块拼贴，反而看不出哪个是光标所在。 */
-.fsm-item:hover { background:var(--fill-ghost-hover); color:var(--text); }
-.fsm-item.active { background:transparent; color:var(--text); font-weight:500; }
-.fsm-item.active:hover { background:var(--fill-ghost-hover); }
-.fsm-item.active::after { content:'✓'; color:var(--accent); font-size:14px; }
+.fsm-item { justify-content:space-between; }
 /* 设置页自定义下拉（v3.10：替代原生 <select>，与顶栏「全部状态」同设计语言） */
 .sd-wrap { position:relative; }
 .sd-menu {
   position:absolute; top:calc(100% + 4px); left:0; z-index:60;
-  min-width:100%; background:var(--surface-raise); border:1px solid var(--border);
-  border-radius:var(--radius); box-shadow:var(--shadow-lg);
-  padding:4px; animation:sd-in .12s ease-out; max-height:280px; overflow:auto;
+  min-width:100%; max-height:320px; overflow:auto; animation:sd-in .12s ease-out;
 }
 @keyframes sd-in { from { opacity:0; transform:translateY(-4px); } to { opacity:1; transform:translateY(0); } }
 .sd-trigger { width:100%; justify-content:space-between; }
@@ -580,7 +645,6 @@ input,select,textarea { font:inherit; color:var(--text); }
 /* 下拉框统一设计语言（列表工具条排序 / 分类排序 / 任意 .ui-select 共用）：
    去原生箭头 + 自定义 chevron + 悬停边框加深 + 焦点 Indigo 光环，与 .badge/.tag/.sort-field 同源。
    注：列表排序 select 包在 .sort-field 外壳里（外壳自带背景/边框），单独处理；<option>/<optgroup> 弹出面板由系统渲染，无法 CSS 定制。 */
-.tax-toolbar select,
 .ui-select {
   appearance:none; -webkit-appearance:none; -moz-appearance:none;
   height:var(--ctl-h); cursor:pointer; font-size:14px; font-weight:400;
@@ -592,7 +656,6 @@ input,select,textarea { font:inherit; color:var(--text); }
   background-repeat:no-repeat; background-position:right 10px center; background-size:12px;
   transition:border-color .12s ease, box-shadow .12s ease, background-color .12s ease;
 }
-.tax-toolbar select { min-width:112px; }
 /* 列表排序 select：包在 .sort-field 外壳里，自身透明无边框（外壳提供视觉），
    只保留字体/箭头/对齐；option 面板样式走下面的统一规则。 */
 /* 列表排序 select：包在 .sort-field 外壳里，自身透明无边框（外壳提供视觉）。
@@ -609,16 +672,12 @@ input,select,textarea { font:inherit; color:var(--text); }
 }
 .list-toolbar select:focus { outline:none; }
 /* 统一交互态（分类排序 / 通用下拉） */
-.tax-toolbar select:hover,
 .ui-select:hover { box-shadow:inset 0 0 0 1px var(--ring-hover); background-color:var(--fill-secondary-hover); }
-.tax-toolbar select:focus,
 .ui-select:focus { outline:none; box-shadow:inset 0 0 0 1px var(--accent), 0 0 0 3px var(--accent-soft); }
 /* 弹出面板内的分组标题/选项（系统支持部分定制：字重/颜色） */
 .list-toolbar select optgroup,
-.tax-toolbar select optgroup,
 .ui-select optgroup { color:var(--muted); font-weight:700; font-size:11px; }
 .list-toolbar select option,
-.tax-toolbar select option,
 .ui-select option { color:var(--text); font-weight:500; }
 .stats { display:flex; align-items:center; gap:4px; color:var(--muted); font-size:12px; white-space:nowrap; }
 
@@ -715,18 +774,10 @@ html[data-boot-path^="/settings"] #settings-view.view-hidden { display:flex !imp
 .add-menu .add-trigger .ft-chev { opacity:.8; }
 .add-menu.open .add-trigger .ft-chev { transform:rotate(180deg); }
 .add-menu-list {
-  position:absolute; top:calc(100% + 6px); right:0; z-index:60; min-width:190px;
-  background:var(--surface-raise); border:1px solid var(--border); border-radius:var(--radius);
-  box-shadow:var(--shadow-lg); padding:4px;
-  display:flex; flex-direction:column; gap:1px;
-  animation:spaceMenuIn .1s ease-out;
+  position:absolute; top:calc(100% + 6px); right:0; z-index:60; min-width:200px;
+  display:flex; flex-direction:column; animation:spaceMenuIn .1s ease-out;
 }
-.add-menu-list button {
-  display:flex; align-items:center; gap:8px; width:100%; text-align:left;
-  padding:8px 10px; background:transparent; border:none; border-radius:6px;
-  font-size:13px; color:var(--text); cursor:pointer;
-}
-.add-menu-list button:hover { background:var(--fill-ghost-hover); color:var(--text); }
+.add-menu-list button { gap:8px; }
 .add-menu-list button svg { opacity:.75; flex:0 0 auto; }
 
 .stat-pill {
@@ -781,6 +832,7 @@ html[data-boot-path^="/settings"] #settings-view.view-hidden { display:flex !imp
 .btn.sm { min-height:var(--ctl-h-sm); padding:0 10px; font-size:13px; border-radius:var(--ctl-r-sm); }
 .btn.icon { padding:0; width:var(--ctl-h); }
 .btn.sm.icon { width:var(--ctl-h-sm); }
+
 .toast-root {
   position:fixed; right:18px; top:66px; z-index:300;
   display:flex; flex-direction:column; gap:8px; pointer-events:none;
@@ -875,7 +927,7 @@ body.is-resizing { cursor:col-resize; user-select:none; }
 .sidebar-rail .rail-btn:active { transform:translateY(1px); }
 /* v3.56：中性填充 + Indigo 图标——与展开态 .side-item.active 同语义，不再是整块 Indigo 色片 */
 .sidebar-rail .rail-btn.active {
-  background:var(--fill-secondary-hover); color:var(--accent); border-color:transparent;
+  background:var(--fill-active); color:var(--accent); border-color:transparent;
   box-shadow:none;
 }
 .sidebar-rail .rail-btn svg { display:block; }
@@ -951,13 +1003,15 @@ body.is-resizing { cursor:col-resize; user-select:none; }
    那才是真正在传达「你在这一项」。 */
 .side-item {
   display:flex; align-items:center; gap:9px; min-height:32px; padding:0 8px;
+  margin-bottom:2px;                       /* 相邻填充块之间的缝，见 --fill-active 注释 */
   border-radius:var(--ctl-r); cursor:pointer; color:var(--muted);
   font-size:14px; font-weight:400; border:0;
   transition:background .12s ease, color .12s ease;
 }
+.side-item:last-child { margin-bottom:0; }
 .side-item:hover { background:var(--fill-ghost-hover); color:var(--text); }
 .side-item.active {
-  background:var(--fill-secondary-hover); color:var(--text); font-weight:500;
+  background:var(--fill-active); color:var(--text); font-weight:500;
   border:0; box-shadow:none;
 }
 .side-item .ico {
@@ -1702,29 +1756,20 @@ body.is-resizing { cursor:col-resize; user-select:none; }
 /* 模型切换下拉浮层（body 级，JS 定位到按钮上方） */
 .chat-model-pop {
   position:fixed; z-index:300; width:min(280px, 92vw);
-  background:var(--panel); border:1px solid var(--border); border-radius:12px;
-  box-shadow:var(--shadow-lg); overflow:hidden; display:flex; flex-direction:column;
-  animation:co-in .12s ease;
+  display:flex; flex-direction:column; animation:co-in .12s ease;
 }
 .chat-model-pop .cmp-head {
   flex:0 0 auto; display:flex; align-items:center; justify-content:space-between;
-  padding:9px 12px; border-bottom:1px solid var(--border); font-size:12px; font-weight:700; color:var(--text);
+  padding:9px 12px; border-bottom:1px solid var(--ring); font-size:13px; font-weight:500; color:var(--text);
 }
 .chat-model-pop .cmp-close { border:0; background:none; cursor:pointer; color:var(--muted2); font-size:18px; line-height:1; padding:0 4px; border-radius:6px; }
 .chat-model-pop .cmp-close:hover { background:var(--panel2); color:var(--text); }
 .chat-model-pop .cmp-list { flex:1 1 auto; overflow:auto; padding:4px; max-height:300px; }
-.chat-model-pop .cmp-item {
-  display:flex; align-items:center; gap:8px; width:100%; text-align:left;
-  padding:8px 10px; border:0; background:none; cursor:pointer; color:var(--text);
-  font:inherit; font-size:12.5px; border-radius:8px; transition:background .12s ease;
-}
-.chat-model-pop .cmp-item:hover { background:var(--fill-ghost-hover); }
-.chat-model-pop .cmp-item.active { background:var(--accent-soft); color:var(--accent-strong); font-weight:600; }
+.chat-model-pop .cmp-item { gap:8px; font-size:13px; }
 .chat-model-pop .cmp-id { flex:1 1 auto; min-width:0; font-family:ui-monospace,monospace; font-size:11.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .chat-model-pop .cmp-tag { flex:0 0 auto; padding:1px 6px; border-radius:8px; background:var(--panel2); border:1px solid var(--border); color:var(--muted); font-size:9.5px; font-weight:600; }
 /* 上下文窗口徽标（tokens，来自网关 /v1/models 扩展字段；OpenAI 原生不返回则不显示） */
 .chat-model-pop .cmp-ctx { flex:0 0 auto; padding:1px 6px; border-radius:8px; background:var(--accent-soft); border:1px solid #c7d2fe; color:var(--accent-strong); font-size:9.5px; font-weight:700; font-family:ui-monospace,monospace; }
-.chat-model-pop .cmp-check { flex:0 0 auto; color:var(--accent); font-size:13px; width:14px; text-align:center; }
 /* 发送/停止合并 morphing 按钮（圆形，流式时变红方块） */
 /* v3.5 quiet send button：扁平实色（去渐变 + 去常驻阴影 + 去 hover scale + 去无限 pulse）。
    发送键的形态变化（圆→方块停止）本身已足够信号，不需要持续脉冲动画。 */
@@ -3000,9 +3045,12 @@ body.fab-dragging { user-select:none; cursor:ns-resize; }
   transition:border-color .12s ease, background .12s ease;
 }
 .concept-card.picked, .formula-card.picked { border-color:var(--accent); box-shadow:0 0 0 1px var(--accent); }
+.concept-card.picked::before, .formula-card.picked::before { border-width:0; border-radius:0; }
 .concept-card.picked::before, .formula-card.picked::before {
-  content:'✓'; display:flex; align-items:center; justify-content:center;
-  border-color:var(--accent); background:var(--accent); color:#fff; font-size:11px; line-height:1;
+  content:''; border-color:var(--accent); background:var(--accent);
+  -webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='3.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='20 6 9 17 4 12'/%3E%3C/svg%3E") center / 11px 11px no-repeat;
+  mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='3.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='20 6 9 17 4 12'/%3E%3C/svg%3E") center / 11px 11px no-repeat;
+  -webkit-mask-composite:source-over;
 }
 .kpick-bar {
   position:fixed; left:50%; transform:translateX(-50%) translateY(80px); bottom:18px; z-index:900;
@@ -3495,13 +3543,10 @@ html[data-theme="dark"] .concept-chip:hover { filter:brightness(1.22); }
 .task-budget > summary { cursor:pointer; font-size:13px; color:var(--muted); }
 .task-budget > summary:hover { color:var(--accent-strong); }
 .task-budget .hint { display:block; margin:6px 0 10px; }
-.task-budget-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:8px 12px; }
-.task-budget-grid label { display:flex; align-items:center; gap:8px; font-size:12.5px; color:var(--muted); }
-.task-budget-grid input {
-  flex:1 1 auto; min-width:0; background:var(--panel); color:var(--text);
-  border:1px solid var(--border2); border-radius:7px; padding:5px 8px; font:inherit; font-size:12.5px;
-}
-.task-budget-grid input:focus { outline:none; border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft); }
+/* 每任务上限走行式（.set-row 规格），不再是自适应网格——见 index.html 处注释。
+   作为折叠区里的嵌套子列表，行距比顶层设置行收紧一档（12px → 8px）。 */
+.task-budget-rows { margin-top:0; }
+.task-budget-rows .set-row { padding:8px 0; }
 .prompt-panel { max-width:940px; }
 .prompt-panel textarea {
   width:100%; min-height:380px; background:var(--panel); color:var(--text);
@@ -3548,19 +3593,11 @@ html[data-theme="dark"] .concept-chip:hover { filter:brightness(1.22); }
 /* 上弹菜单：底部栏在 .list-pane 末尾，菜单向上展开（bottom:100%）。设计语言同 .space-menu */
 .bulk-menu {
   position:absolute; bottom:calc(100% + 6px); right:0; z-index:30;
-  min-width:200px; background:var(--surface-raise); border:1px solid var(--border);
-  border-radius:var(--radius); box-shadow:var(--shadow-lg);
-  padding:4px; animation:bulkMenuIn .12s ease-out;
+  min-width:200px; animation:bulkMenuIn .12s ease-out;
 }
 @keyframes bulkMenuIn { from { opacity:0; transform:translateY(4px); } to { opacity:1; transform:translateY(0); } }
-.bulk-menu-item {
-  display:flex; align-items:center; gap:9px; width:100%; text-align:left;
-  padding:8px 10px; background:transparent; border:none; border-radius:6px;
-  font-size:13px; font-weight:600; color:var(--text); cursor:pointer;
-  transition:background .1s ease, color .1s ease;
-}
+.bulk-menu-item { gap:9px; }
 .bulk-menu-item svg { color:var(--muted2); flex:0 0 auto; }
-.bulk-menu-item:hover { background:var(--fill-ghost-hover); color:var(--text); }
 .bulk-menu-item:hover svg { color:var(--accent); }
 .bulk-menu-divider { height:1px; background:var(--border); margin:4px 6px; }
 /* busy 门：任一批量动作执行时，禁用触发器/外露删除键/全选/取消的交互（CSS 统一兜底） */
@@ -3774,7 +3811,7 @@ iframe.pdf { width:100%; height:calc(100vh - 200px); border:1px solid var(--bord
    各作为独立滚动区——二者是兄弟关系，无嵌套。 */
 .settings-nav {
   background:var(--s-nav); border-right:1px solid var(--s-line);
-  padding:14px 10px 12px; display:flex; flex-direction:column; gap:1px; overflow:auto;
+  padding:14px 10px 12px; display:flex; flex-direction:column; gap:2px; overflow:auto;
 }
 /* 导航项 32px：未选中是次要色 + 常规字重，选中才升到主文色 + 500 + 8% 填充——
    只有一处在「说话」，扫一眼就知道自己在哪。 */
@@ -3785,11 +3822,10 @@ iframe.pdf { width:100%; height:calc(100vh - 200px); border:1px solid var(--bord
   transition:background .12s ease, color .12s ease;
 }
 .settings-nav-item:hover { background:var(--s-fill); color:var(--s-t1); }
-.settings-nav-item.active { background:var(--s-fill-hover); color:var(--s-t1); font-weight:500; }
+.settings-nav-item.active { background:var(--fill-active); color:var(--s-t1); font-weight:500; }
 .settings-nav-item .sni { display:inline-flex; align-items:center; justify-content:center; width:16px; flex:0 0 auto; color:inherit; }
 .settings-nav-item .sni svg { width:16px; height:16px; }
 .settings-nav-empty { padding:10px; font-size:13px; color:var(--s-t3); }
-.settings-nav-foot { margin-top:auto; padding-top:10px; }
 
 /* 内容区。行宽收在 ~700px：设置行是「标签 ↔ 控件」的对读，太宽会让眼睛在中间那段空白里迷路。 */
 .settings-body { overflow:auto; padding:26px 32px 44px; min-width:0; }
@@ -3861,12 +3897,19 @@ iframe.pdf { width:100%; height:calc(100vh - 200px); border:1px solid var(--bord
 .tax-search { position:relative; flex:1; display:flex; align-items:center; }
 .tax-search svg { position:absolute; left:9px; color:var(--muted2); pointer-events:none; }
 .tax-search input {
-  width:100%; height:32px; padding:0 10px 0 30px; font-size:13px;
-  border:1px solid var(--border2); border-radius:var(--radius-sm); background:var(--panel); color:var(--text);
+  width:100%; height:var(--ctl-h); padding:0 12px 0 32px; font-size:14px;
+  border:0; border-radius:var(--ctl-r); background:var(--fill-field); color:var(--text);
+  box-shadow:inset 0 0 0 1px var(--ring);
 }
-.tax-search input:focus { outline:none; border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft); }
+.tax-search input:hover { box-shadow:inset 0 0 0 1px var(--ring-hover); }
+.tax-search input:focus { outline:none; box-shadow:inset 0 0 0 1px var(--accent), 0 0 0 3px var(--accent-soft); }
+/* 排序下拉（v3.58 自原生 select 换来）：与同行搜索框等宽策略——固定宽度不抢搜索的弹性空间 */
+.tax-toolbar .sd-wrap { flex:0 0 auto; width:150px; }
+.tax-toolbar .sd-trigger { width:100%; height:var(--ctl-h); }
+.tax-toolbar .sd-menu { left:auto; right:0; min-width:180px; }
+/* 该行三个控件统一 32px：搜索 / 排序 / 多选 */
+.tax-toolbar #tax-select-toggle { min-height:var(--ctl-h); border-radius:var(--ctl-r); }
 /* 分类排序下拉：与顶栏/列表 select 同设计语言——自定义 chevron + 焦点光环 + 悬停 */
-/* .tax-toolbar select 规则见顶部「下拉框统一设计语言」段（与顶栏/列表 select 同源） */
 #tax-select-toggle.active { background:var(--accent-soft); color:var(--accent-strong); border-color:#c7d2fe; }
 .tax-rows { border:1px solid var(--border); border-radius:8px; overflow:hidden; background:var(--panel); }
 .tax-row { display:flex; align-items:center; gap:10px; padding:9px 14px; border-bottom:1px solid var(--border); min-height:42px; }
@@ -4014,6 +4057,14 @@ iframe.pdf { width:100%; height:calc(100vh - 200px); border:1px solid var(--bord
   transition:box-shadow .14s ease;
 }
 .settings-panel input::placeholder, .settings-panel textarea::placeholder { color:var(--s-t3); }
+/* 复合控件内的裸输入：外壳已提供边框/底色，自身必须完全透明，否则就是框中框。
+   选择器必须带上 input（= .settings-panel input[type=text] 的同等特异性 0,2,1），
+   只写 .settings-panel .ps-input 会被那条属性选择器压过——这正是之前没修掉的原因。 */
+.settings-panel input.ps-input,
+.settings-panel input.ps-input:hover,
+.settings-panel input.ps-input:focus {
+  background:transparent; box-shadow:none; border-radius:0;
+}
 .settings-panel input:hover, .settings-panel textarea:hover { box-shadow:inset 0 0 0 1px rgba(var(--s-ink), .24); }
 .settings-panel input:focus, .settings-panel textarea:focus {
   outline:none; box-shadow:inset 0 0 0 1px var(--accent), 0 0 0 3px var(--accent-soft);
@@ -4040,10 +4091,11 @@ iframe.pdf { width:100%; height:calc(100vh - 200px); border:1px solid var(--bord
 .sr-ctl .sd-trigger.active .ft-chev { color:var(--s-t3); }
 /* 触发器右对齐 → 菜单也从右边缘展开，不然会顶到面板外 */
 .sr-ctl .sd-menu { left:auto; right:0; min-width:260px; border-color:var(--s-edge); }
-.settings-panel .fsm-item { font-size:14px; font-weight:400; color:var(--s-t1); padding:7px 10px; }
-.settings-panel .fsm-item:hover { background:var(--s-fill); color:var(--s-t1); }
-.settings-panel .fsm-item.active { background:transparent; color:var(--s-t1); }
-.settings-panel .fsm-item.active::after { color:var(--s-t1); }
+/* 设置页里的菜单项只换配色令牌（面板底是白的，用 --s-* 那套墨色阶梯），
+   几何与交互态一律走「下拉内容统一规格」，不在这里重复定义。 */
+.settings-panel .fsm-item { color:var(--s-t1); }
+.settings-panel .fsm-item:hover,
+.settings-panel .fsm-item.active:hover { background:var(--s-fill); color:var(--s-t1); }
 /* toggle 行并入行体系：与 .set-row 同一套内边距与分隔线 */
 .set-rows .toggle-field {
   border:0; border-radius:0; background:transparent;
@@ -4101,7 +4153,7 @@ iframe.pdf { width:100%; height:calc(100vh - 200px); border:1px solid var(--bord
 .ps-edit textarea {
   display:block; width:100%; box-sizing:border-box;
   height:var(--ps-h); overflow:auto;
-  padding:14px 16px; border:0; border-radius:10px;
+  padding:14px 16px; border:0; border-radius:12px;   /* 与下方 composer / 下拉面板同一曲率阶 */
   background:var(--fill-field); box-shadow:inset 0 0 0 1px var(--s-edge, var(--border));
   font:13px/1.75 ui-monospace,Consolas,"Cascadia Code",monospace;
   color:var(--s-t1, var(--text));
@@ -4115,7 +4167,7 @@ iframe.pdf { width:100%; height:calc(100vh - 200px); border:1px solid var(--bord
 .ps-edit-actions .save-hint.bad { color:var(--red); }
 
 /* AI 修改稿：唯一带主色描边的块——它是「未落盘的待决内容」，值得被指出来 */
-.ps-draft { border:1px solid var(--accent); border-radius:10px; background:var(--s-paper, var(--panel)); overflow:hidden; }
+.ps-draft { border:1px solid var(--accent); border-radius:12px; background:var(--s-paper, var(--panel)); overflow:hidden; }
 .ps-draft-head {
   display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;
   padding:8px 10px 8px 14px; border-bottom:1px solid var(--s-line, var(--border));
@@ -4139,7 +4191,7 @@ iframe.pdf { width:100%; height:calc(100vh - 200px); border:1px solid var(--bord
 /* 底部 composer：需求输入 + 圆形发送钮。用内环而非 border，与其他输入一致 */
 .ps-composer {
   display:flex; align-items:center; gap:6px;
-  padding:5px 5px 5px 14px; border:0; border-radius:999px;
+  padding:5px 5px 5px 12px; border:0; border-radius:12px;
   background:var(--fill-field); box-shadow:inset 0 0 0 1px var(--s-edge, var(--border));
   transition:box-shadow .14s ease;
 }
@@ -4153,7 +4205,7 @@ iframe.pdf { width:100%; height:calc(100vh - 200px); border:1px solid var(--bord
 .ps-input:disabled { opacity:.55; }
 .ps-send {
   flex:0 0 auto; display:inline-grid; place-items:center; width:30px; height:30px;
-  border:0; border-radius:50%; background:var(--fill-primary); color:var(--on-primary); cursor:pointer;
+  border:0; border-radius:var(--ctl-r); background:var(--fill-primary); color:var(--on-primary); cursor:pointer;
   transition:background .13s ease, transform .13s ease, opacity .13s ease;
 }
 .ps-send:hover { background:var(--fill-primary-hover); }
@@ -4385,8 +4437,7 @@ iframe.pdf { width:100%; height:calc(100vh - 200px); border:1px solid var(--bord
 .task-budget { margin-top:16px; border-top:0; padding-top:0; }
 .task-budget > summary { font-size:13px; color:var(--s-t2); }
 .task-budget .hint { display:block; margin:4px 0 12px; font-size:13px; color:var(--s-t2); line-height:1.6; }
-.task-budget-grid label { font-size:13px; color:var(--s-t2); }
-.task-budget-grid input { border-color:var(--s-edge); }
+
 
 /* config.json 原值参考 */
 .config-ref { margin-top:28px; padding:12px 14px; background:var(--s-fill); border:0; border-radius:10px; }
@@ -4799,6 +4850,7 @@ html[data-theme="dark"] {
   --fill-ghost-hover:rgba(var(--ink), .07);
   --fill-secondary:rgba(var(--ink), .06);
   --fill-secondary-hover:rgba(var(--ink), .11);
+  --fill-active:rgba(var(--ink), .14);
   /* 暗色不用亮底深字（那是 Claude 的黑白体系做法）：Indigo 在深底上本来就够跳，
      用 500 号而非侧栏那支更亮的 400 号，保证白字对比度仍在 4.5 以上。 */
   --fill-primary:#6366f1;

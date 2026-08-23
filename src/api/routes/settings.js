@@ -12,6 +12,9 @@ const {
   DEFAULT_FORMULA_PROMPT,
   DEFAULT_CONCEPT_PROMPT,
   DEFAULT_CONCEPT_MAP_PROMPT,
+  DEFAULT_NOTES_PROMPT,
+  DEFAULT_CHAT_SYSTEM_PROMPT,
+  TRANSLATE_SYSTEM_PROMPT,
   applySettingsOverride,
   withGlobalAi,
 } = aiSvc;
@@ -62,6 +65,24 @@ function register(t, ctx) {
       def: () => DEFAULT_CONCEPT_MAP_PROMPT,
       note: '该提示词驱动生成单文件 HTML 概念地图（自由输出，非 JSON）。改写后必须仍要求输出完整自包含的单文件 HTML。',
     },
+    notes: {
+      label: '笔记骨架提示词',
+      get: (s) => s.notesPrompt,
+      def: () => DEFAULT_NOTES_PROMPT,
+      note: '该提示词驱动生成读书笔记骨架（Markdown），六个 ## 二级章节的标题文字被前端用来定位/分栏——改写时可增删章节，但必须保持「## 标题」这一层级结构。',
+    },
+    chat: {
+      label: '论文聊天系统提示词',
+      get: (s) => s.chatSystemPrompt,
+      def: () => DEFAULT_CHAT_SYSTEM_PROMPT,
+      note: '该提示词是论文对话的 system 角色，论文标题/摘要/全文会作为上下文另行注入。改写后不要在其中重复正文内容，也不要要求 JSON（对话是自由文本）。',
+    },
+    translate: {
+      label: '划线翻译提示词',
+      get: (s) => s.translatePrompt,
+      def: () => TRANSLATE_SYSTEM_PROMPT,
+      note: '该提示词用于 PDF 划线的 AI 翻译，目标语言由用户消息给出。改写后必须仍要求「只输出译文」——多余的解释会被整段塞进浮窗。',
+    },
     mineruNaming: {
       label: 'MinerU 公式命名提示词',
       get: (s) => (s.formulas && s.formulas.namingPrompt) || '',
@@ -92,6 +113,15 @@ function register(t, ctx) {
       // --- 概念地图提示词（v3.14 开放设置页编辑；生成任务优先级：用户当次输入 > 此覆盖 > 内置默认）---
       conceptMapPrompt: store.settings.conceptMapPrompt || '',
       defaultConceptMapPrompt: DEFAULT_CONCEPT_MAP_PROMPT,
+      // --- v3.58 新开放编辑的三条：笔记骨架 / 论文聊天 / 划线翻译 ---
+      // notes 与 chat 的三级回退后端早就有了（scanner.js），此前只是没有 API 与设置页入口；
+      // translate 原本是硬编码常量，本次一并接入同一套覆盖机制。
+      notesPrompt: store.settings.notesPrompt || '',
+      defaultNotesPrompt: DEFAULT_NOTES_PROMPT,
+      chatSystemPrompt: store.settings.chatSystemPrompt || '',
+      defaultChatSystemPrompt: DEFAULT_CHAT_SYSTEM_PROMPT,
+      translatePrompt: store.settings.translatePrompt || '',
+      defaultTranslatePrompt: TRANSLATE_SYSTEM_PROMPT,
       // --- 聊天预置 Prompt（@ 引用之外，输入框上方的快捷提问按钮，用户可自定义）---
       chatPresets: Array.isArray(store.settings.chatPresets) ? store.settings.chatPresets : [],
       // --- v3.2 保存的搜索预设（高级搜索命名预设，per-space）---
@@ -129,6 +159,9 @@ function register(t, ctx) {
         formulaPrompt: !!ov.formulaPrompt,
         conceptPrompt: !!ov.conceptPrompt,
         conceptMapPrompt: !!ov.conceptMapPrompt,
+        notesPrompt: !!ov.notesPrompt,
+        chatSystemPrompt: !!ov.chatSystemPrompt,
+        translatePrompt: !!ov.translatePrompt,
       },
       // --- 系统只读（host/port 全局；papersDir 现为当前空间绑定的文件夹，可在空间管理中修改）---
       system: {
@@ -195,6 +228,36 @@ function register(t, ctx) {
     store.settings.updatedAt = Date.now();
     await save(store);
     return ok(res, { conceptMapPrompt: store.settings.conceptMapPrompt });
+  });
+
+  // PUT /api/settings/notes-prompt  笔记骨架提示词。空串=恢复内置默认（同其它 *-prompt）。
+  t.put('/api/settings/notes-prompt', async ({ res, body, store, save }) => {
+    const op = JSON.parse(body || '{}');
+    store.settings = store.settings || {};
+    store.settings.notesPrompt = typeof op.value === 'string' ? op.value.trim() : '';
+    store.settings.updatedAt = Date.now();
+    await save(store);
+    return ok(res, { notesPrompt: store.settings.notesPrompt });
+  });
+
+  // PUT /api/settings/chat-prompt  论文聊天的 system 提示词。
+  t.put('/api/settings/chat-prompt', async ({ res, body, store, save }) => {
+    const op = JSON.parse(body || '{}');
+    store.settings = store.settings || {};
+    store.settings.chatSystemPrompt = typeof op.value === 'string' ? op.value.trim() : '';
+    store.settings.updatedAt = Date.now();
+    await save(store);
+    return ok(res, { chatSystemPrompt: store.settings.chatSystemPrompt });
+  });
+
+  // PUT /api/settings/translate-prompt  划线翻译（engine=ai）的 system 提示词。
+  t.put('/api/settings/translate-prompt', async ({ res, body, store, save }) => {
+    const op = JSON.parse(body || '{}');
+    store.settings = store.settings || {};
+    store.settings.translatePrompt = typeof op.value === 'string' ? op.value.trim() : '';
+    store.settings.updatedAt = Date.now();
+    await save(store);
+    return ok(res, { translatePrompt: store.settings.translatePrompt });
   });
 
   // POST /api/settings/prompt-refine —— AI 改写提示词（v3.55，SSE 流式）。
@@ -423,6 +486,9 @@ function register(t, ctx) {
       'formulaPrompt',
       'conceptPrompt',
       'conceptMapPrompt',
+      'notesPrompt',
+      'chatSystemPrompt',
+      'translatePrompt',
       'arxiv',
       'discover',
       'translate',

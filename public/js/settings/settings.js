@@ -118,7 +118,7 @@ export const sdRegistry = {};
 /** 在 .sd-wrap 容器挂载自定义下拉（触发按钮 + 菜单，仿 filter-status-menu/fsm-item）。
  *  options: [{value, label}]，initialValue: 初始选中值，onChange(value): 选中回调。
  *  返回控制器 { get, set }，供 loadSettings/save 读写当前值。 */
-function mountSettingDropdown(wrapId, options, initialValue, onChange) {
+export function mountSettingDropdown(wrapId, options, initialValue, onChange) {
   const wrap = $(('' + wrapId).replace(/^#/, ''));
   if (!wrap) return null;
   const opts = Array.isArray(options) ? options : [];
@@ -179,9 +179,15 @@ export async function loadSettingsData() {
       const el = $('tb-' + t);
       if (!el) continue;
       setField('tb-' + t, tb[t] == null ? '' : tb[t]);
-      el.placeholder = globalTokens ? '跟随全局 ' + globalTokens : '跟随全局';
+      el.placeholder = '跟随全局';
     }
     // 有任一任务级覆盖时展开折叠区，避免用户以为没生效
+    const tbHint = document.querySelector('#task-budget .hint');
+    if (tbHint) {
+      tbHint.textContent =
+        '不同任务需要的上下文长度差别很大：公式散布全篇，需要远大于总结的窗口；聊天要给多轮历史留位置。'
+        + '单位 tokens，留空则跟随全局' + (globalTokens ? '（当前 ' + globalTokens + '）' : '') + '。';
+    }
     const tbBox = $('task-budget');
     if (tbBox) tbBox.open = TASK_BUDGET_KEYS.some((t) => tb[t] != null);
     $('ai-config-ref').innerHTML =
@@ -200,6 +206,13 @@ export async function loadSettingsData() {
     // 概念地图提示词（v3.14）
     if ($('concept-map-prompt-edit')) $('concept-map-prompt-edit').value = data.conceptMapPrompt || '';
     if ($('concept-map-prompt-default-pre')) $('concept-map-prompt-default-pre').textContent = data.defaultConceptMapPrompt || '';
+    // v3.58 新开放编辑：笔记骨架 / 论文聊天 / 划线翻译
+    if ($('notes-prompt-edit')) $('notes-prompt-edit').value = data.notesPrompt || '';
+    if ($('notes-prompt-default-pre')) $('notes-prompt-default-pre').textContent = data.defaultNotesPrompt || '';
+    if ($('chat-prompt-edit')) $('chat-prompt-edit').value = data.chatSystemPrompt || '';
+    if ($('chat-prompt-default-pre')) $('chat-prompt-default-pre').textContent = data.defaultChatSystemPrompt || '';
+    if ($('translate-prompt-edit')) $('translate-prompt-edit').value = data.translatePrompt || '';
+    if ($('translate-prompt-default-pre')) $('translate-prompt-default-pre').textContent = data.defaultTranslatePrompt || '';
     // ---- 聊天预置 Prompt（输入框上方快捷提问按钮，store.settings.chatPresets 覆盖内置默认）----
     set_chatPresetsOverride(Array.isArray(data.chatPresets) ? data.chatPresets : null);
     // ---- v3.2 保存的搜索预设（高级搜索命名预设）----
@@ -376,6 +389,9 @@ function markOverrides(ov) {
   show('ovr-formula', !!ov.formulaPrompt);
   show('ovr-concept', !!ov.conceptPrompt);
   show('ovr-concept-map', !!ov.conceptMapPrompt);
+  show('ovr-notes', !!ov.notesPrompt);
+  show('ovr-chat', !!ov.chatSystemPrompt);
+  show('ovr-translate-prompt', !!ov.translatePrompt);
   show('ovr-scan', !!ov.scan);
   const ax = ov.arxiv || [];
   show('ovr-arxiv-enabled', ax.includes('enabled'));

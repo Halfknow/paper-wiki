@@ -13,11 +13,14 @@ import { streamPostSse } from '../core/stream.js';
 import { gotoSettingsTab, loadSettingsData } from './settings.js';
 import { saveMineruNamingPrompt } from './collect.js';
 import {
+  saveChatPrompt,
   saveConceptMapPrompt,
   saveConceptPrompt,
   saveFormulaPrompt,
+  saveNotesPrompt,
   saveSummaryPrompt,
   saveTagsPrompt,
+  saveTranslatePrompt,
 } from './prompts.js';
 
 // 每个 studio 的定义：key 对应后端 /api/settings/prompt-refine 的 key；
@@ -88,6 +91,45 @@ const DEFS = {
     label: '概念地图提示词',
     desc: '生成单文件 HTML 概念地图的设计与交互约束',
   },
+  notes: {
+    key: 'notes',
+    ta: 'notes-prompt-edit',
+    pre: 'notes-prompt-default-pre',
+    hint: 'notes-prompt-hint',
+    saveBtn: 'btn-notes-prompt-save',
+    resetBtn: 'btn-notes-prompt-default',
+    badge: 'ovr-notes',
+    save: saveNotesPrompt,
+    reset: () => PUT('/api/settings/notes-prompt', { value: '' }),
+    label: '笔记骨架提示词',
+    desc: '生成读书笔记的六段式骨架',
+  },
+  chat: {
+    key: 'chat',
+    ta: 'chat-prompt-edit',
+    pre: 'chat-prompt-default-pre',
+    hint: 'chat-prompt-hint',
+    saveBtn: 'btn-chat-prompt-save',
+    resetBtn: 'btn-chat-prompt-default',
+    badge: 'ovr-chat',
+    save: saveChatPrompt,
+    reset: () => PUT('/api/settings/chat-prompt', { value: '' }),
+    label: '论文聊天提示词',
+    desc: '论文对话的 system 角色设定',
+  },
+  translate: {
+    key: 'translate',
+    ta: 'translate-prompt-edit',
+    pre: 'translate-prompt-default-pre',
+    hint: 'translate-prompt-hint',
+    saveBtn: 'btn-translate-prompt-save',
+    resetBtn: 'btn-translate-prompt-default',
+    badge: 'ovr-translate-prompt',
+    save: saveTranslatePrompt,
+    reset: () => PUT('/api/settings/translate-prompt', { value: '' }),
+    label: '划线翻译提示词',
+    desc: 'PDF 划线的 AI 翻译（engine=ai 时生效）',
+  },
   mineruNaming: {
     key: 'mineruNaming',
     ta: 'mineru-naming-prompt-edit',
@@ -104,7 +146,7 @@ const DEFS = {
 };
 
 /** 提示词页的展示顺序（= 列表行顺序）。 */
-const ORDER = ['summary', 'tags', 'concept', 'conceptMap', 'formula', 'mineruNaming'];
+const ORDER = ['summary', 'tags', 'notes', 'concept', 'conceptMap', 'formula', 'chat', 'translate', 'mineruNaming'];
 
 const _st = {}; // key → { draft, busy, close, editing, savedValue }
 

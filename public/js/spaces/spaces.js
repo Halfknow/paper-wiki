@@ -41,8 +41,8 @@ function renderSpaceSwitcher() {
     const btn = document.createElement('button');
     btn.className = 'space-opt' + (s.id === state.space ? ' active' : '');
     btn.type = 'button';
+    // 选中标记由 .space-opt.active::after 的 SVG 勾承担（下拉内容统一规格），此处不再手写 ✓
     btn.innerHTML = `<span class="space-opt-name">${escapeHtml(s.name)}</span>`
-      + (s.id === state.space ? '<span class="space-opt-check">✓</span>' : '')
       + `<span class="space-opt-dir">${escapeHtml(s.papersDir || 'papers')}</span>`;
     btn.onclick = () => { switchSpace(s.id); closeSpaceMenu(); };
     list.appendChild(btn);

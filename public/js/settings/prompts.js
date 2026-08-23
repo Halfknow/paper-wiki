@@ -115,3 +115,44 @@ export async function saveConceptMapPrompt() {
   setBusy(btn, false);
   return okSave;
 }
+
+/** 笔记骨架提示词（v3.58 新开放编辑）。空串=恢复默认。 */
+export async function saveNotesPrompt() {
+  return savePrompt('notes-prompt', 'notes-prompt-edit', 'btn-notes-prompt-save', 'notes-prompt-hint', '笔记骨架提示词');
+}
+
+/** 论文聊天 system 提示词（v3.58 新开放编辑）。空串=恢复默认。 */
+export async function saveChatPrompt() {
+  return savePrompt('chat-prompt', 'chat-prompt-edit', 'btn-chat-prompt-save', 'chat-prompt-hint', '论文聊天提示词');
+}
+
+/** 划线翻译 system 提示词（v3.58 新开放编辑）。空串=恢复默认。 */
+export async function saveTranslatePrompt() {
+  return savePrompt('translate-prompt', 'translate-prompt-edit', 'btn-translate-prompt-save', 'translate-prompt-hint', '划线翻译提示词');
+}
+
+/** 上面三条共用的保存流程（与既有 saveXxxPrompt 行为一致：setBusy → PUT → hint + toast）。
+ *  老的五个保留各自的函数体不动，避免为了「统一」去改动已经稳定的调用链。 */
+async function savePrompt(endpoint, taId, btnId, hintId, label) {
+  const ta = $(taId);
+  const btn = $(btnId);
+  const hint = $(hintId);
+  if (btn) setBusy(btn, true, '保存中…');
+  try {
+    const r = await PUT('/api/settings/' + endpoint, { value: ta.value });
+    if (btn) setBusy(btn, false);
+    if (r.ok) {
+      if (hint) hint.textContent = '已保存 · ' + new Date().toLocaleTimeString();
+      toast(label + '已保存');
+      return true;
+    }
+    if (hint) hint.textContent = '保存失败：' + (r.error || '');
+    toast(r.error || '保存失败', 'error');
+    return false;
+  } catch (e) {
+    if (btn) setBusy(btn, false);
+    if (hint) hint.textContent = '保存失败：' + (e.message || e);
+    toast('保存失败', 'error');
+    return false;
+  }
+}

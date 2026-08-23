@@ -232,7 +232,16 @@ test('提示词页：列表点行进编辑态，返回钮回列表', async () =>
   for (let i = 0; i < 60 && view(ui) !== 'settings'; i++) await sleep(20);
   for (let i = 0; i < 60 && !ui.document.querySelector('[data-prompt-open]'); i++) await sleep(20);
   const rows = ui.document.querySelectorAll('#prompt-rows [data-prompt-open]');
-  assert.strictEqual(rows.length, 6, '6 条提示词各占一行');
+  // v3.58：笔记骨架 / 论文聊天 / 划线翻译三条从「后端有回退但页面改不了」补齐进来
+  assert.strictEqual(rows.length, 9, '9 条提示词各占一行');
+  const keys = [...rows].map((r) => r.dataset.promptOpen);
+  for (const k of ['summary', 'tags', 'notes', 'concept', 'conceptMap', 'formula', 'chat', 'translate', 'mineruNaming']) {
+    assert.ok(keys.includes(k), `提示词列表应含 ${k}`);
+    assert.ok(
+      ui.document.querySelector(`.prompt-pane[data-prompt-pane="${k}"] .ps[data-ps="${k}"]`),
+      `${k} 应有对应的编辑工作台`,
+    );
+  }
   assert.strictEqual(ui.document.getElementById('prompt-index').hidden, false, '默认停在列表');
 
   ui.document.querySelector('[data-prompt-open="tags"]').click();

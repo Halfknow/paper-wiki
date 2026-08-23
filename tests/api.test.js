@@ -2864,3 +2864,55 @@ test('PATCH /api/papers/:id 类型清洗：畸形 body 不打崩视图层与持�
   assert.ok(saved >= 4);
   server.close();
 });
+
+// v3.58：笔记骨架 / 论文聊天 / 划线翻译三条提示词开放编辑。
+// notes 与 chat 的三级回退后端早就有（scanner.js 在读 store.settings.*），但一直没有
+// PUT 端点与 GET 回显，等于「代码支持、用户改不了」；translate 此前更是写死的常量。
+
+// v3.58：笔记骨架 / 论文聊天 / 划线翻译三条提示词开放编辑。
+// notes 与 chat 的三级回退后端早就有（scanner.js 在读 store.settings.*），但一直没有
+// PUT 端点与 GET 回显，等于「代码支持、用户改不了」；translate 此前更是写死的常量。
+test('PUT /api/settings/{notes,chat,translate}-prompt：持久化 + trim + 空串恢复默认', async () => {
+  const store = { version: 2, tags: [], topics: [], folders: [], concepts: [], settings: {}, papers: {} };
+  let saved = null;
+  const router = createApiRouter(baseCtx(store, async (x) => { saved = x; }));
+  const server = await startServer(router.handle);
+  const port = server.address().port;
+  for (const [path, field] of [
+    ['/api/settings/notes-prompt', 'notesPrompt'],
+    ['/api/settings/chat-prompt', 'chatSystemPrompt'],
+    ['/api/settings/translate-prompt', 'translatePrompt'],
+  ]) {
+    const r = await call(port, 'PUT', path, { value: '  我的提示词  ' });
+    assert.strictEqual(r.status, 200, path + ' 应 200');
+    assert.strictEqual(store.settings[field], '我的提示词', path + ' 应 trim 后落 ' + field);
+    const r2 = await call(port, 'PUT', path, { value: '   ' });
+    assert.strictEqual(r2.status, 200);
+    assert.strictEqual(store.settings[field], '', path + ' 空串 = 恢复内置默认');
+  }
+  assert.ok(saved, 'save should be called');
+  server.close();
+});
+
+test('GET /api/settings 回显新三条提示词的覆盖值 + 内置默认 + 覆盖标记', async () => {
+  const store = {
+    version: 2, tags: [], topics: [], folders: [], concepts: [], papers: {},
+    settings: { notesPrompt: '自定义笔记', chatSystemPrompt: '自定义聊天' },
+  };
+  const router = createApiRouter(baseCtx(store, async () => {}));
+  const server = await startServer(router.handle);
+  const port = server.address().port;
+  const r = await call(port, 'GET', '/api/settings');
+  assert.strictEqual(r.status, 200);
+  const d = r.json.data;
+  assert.strictEqual(d.notesPrompt, '自定义笔记');
+  assert.strictEqual(d.chatSystemPrompt, '自定义聊天');
+  assert.strictEqual(d.translatePrompt, '', '未覆盖时回显空串');
+  for (const k of ['defaultNotesPrompt', 'defaultChatSystemPrompt', 'defaultTranslatePrompt']) {
+    assert.ok(d[k] && d[k].length > 20, k + ' 应回显内置默认正文');
+  }
+  assert.strictEqual(d.overrides.notesPrompt, true);
+  assert.strictEqual(d.overrides.chatSystemPrompt, true);
+  assert.strictEqual(d.overrides.translatePrompt, false);
+  server.close();
+});
