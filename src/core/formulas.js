@@ -197,6 +197,9 @@ function normalizeFormula(raw, now = Date.now()) {
     occurrences,
     paperIds: occurrences.map((o) => o.paperId),
     source: SOURCES.includes(raw.source) ? raw.source : 'ai',
+    // 待命名标记（v3.61）：AI 命名不可用时降级入库的条目，canonicalName 是 LaTeX 哈希、
+    // 不参与跨论文合并。留着这个标记，重抽/统计才能定位到它们。
+    needsNaming: !!raw.needsNaming,
     starred: !!raw.starred,
     conceptTerms: normalizeConceptTerms(raw.conceptTerms),
     // 显式 0 予以保留（否则 db 读取边界每次 load 都会拿到新 now → 假 diff）
@@ -253,10 +256,37 @@ function mergeFormulas(store, items, paperId, now = Date.now()) {
         })
       : null;
 
+    // 自愈（v3.61）：正式名进来时，吸收同 LaTeX 的降级行（fm_lat_* / needsNaming）。
+    // 背景：canonicalName 是合并 key，事故期间入库的 fm_lat_<hash> 行即便重抽拿到
+    // 正式名也不会被合并掉——两个 key，孤儿永远留在库里。这里把降级孪生行的
+    // occurrences 并进来（同 paperId 以本次新 occurrence 为准）并删除旧行，
+    // 「重新抽取」因此天然清洗历史脏数据，不需要一次性迁移脚本。
+    if (!incoming.needsNaming) {
+      // 兼容两种形态：修复后的新行带 needsNaming；历史脏行只有名字可辨——
+      // 且入库时 normalizeCanonicalName 会把 fm_lat_ 转写成 fm-lat-（下划线→连字符），
+      // 两种拼法都得认。
+      const isDegraded = (g) => g && (g.needsNaming || /^fm[-_]lat[-_]/.test(g.canonicalName || ''));
+      const twins = store.formulas.filter((g) => isDegraded(g) && g.latex && g.latex === incoming.latex);
+      for (const twin of twins) {
+        for (const o of twin.occurrences || []) {
+          if (!occ || o.paperId !== occ.paperId) incoming.occurrences.push(o);
+        }
+        store.formulas.splice(store.formulas.indexOf(twin), 1);
+        byKey.delete(twin.canonicalName);
+      }
+      // 吸收可能带回重复 paperId 的 occurrence，重收一次不变式
+      const seenPid = new Set();
+      incoming.occurrences = incoming.occurrences.filter((o) =>
+        seenPid.has(o.paperId) ? false : (seenPid.add(o.paperId), true),
+      );
+    }
+
     let f = byKey.get(incoming.canonicalName);
     if (!f) {
       f = incoming;
-      f.occurrences = [];
+      // 不能无脑清空：上面的吸收分支可能已把降级孪生行的 occurrences 并进来。
+      // 正常路径下 normalizeFormula 收到的是 occurrences:[]，本来就是空，守卫等价于原行为。
+      if (!Array.isArray(f.occurrences)) f.occurrences = [];
       f.paperIds = [];
       byKey.set(f.canonicalName, f);
       store.formulas.push(f);

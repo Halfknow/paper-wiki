@@ -378,3 +378,66 @@ test('formulasToMarkdown：渲染公式块、解读、符号表与出处论文�
   assert.match(md, /\| `z` \| 输入向量 \|/);
   assert.match(md, /论文一/);
 });
+
+// ---------------------------------------------------------------- 自愈（v3.61）
+// 生产事故善后：库里已有一批 fm_lat_<hash> 条目（canonicalName 与 name 都是哈希标识符）。
+/** 修复后重抽会产出正式名，但 canonicalName 是合并 key——fm_lat_abc 与 log-likelihood
+ *  是两个 key，旧行会作为孤儿重复项永远留在库里。合并层做 LaTeX 吸收：正式名进来时，
+ *  把同 LaTeX 的降级行（fm_lat_* / needsNaming）的 occurrences 并进来并删除旧行。
+ *  于是「重新抽取」天然清洗历史脏数据，不需要一次性迁移脚本。 */
+test('mergeFormulas：正式名吸收同 LaTeX 的 fm_lat 降级行（occurrences 并入，孤儿清除）', () => {
+  const store = { papers: {}, formulas: [] };
+  // 第一轮：AI 不可用 → 降级入库（老事故形态：name 也是 fm_lat_）
+  mergeFormulas(store, [{
+    canonicalName: 'fm_lat_abc123', name: 'fm_lat_abc123', needsNaming: true,
+    latex: 'L = \\sum_i \\log p_i', source: 'mineru',
+  }], 'p1');
+  assert.strictEqual(store.formulas.length, 1);
+
+  // 第二轮：修复后重抽，同一公式得到正式名
+  mergeFormulas(store, [{
+    canonicalName: 'log-likelihood', name: '对数似然',
+    latex: 'L = \\sum_i \\log p_i', source: 'mineru',
+  }], 'p2');
+
+  assert.strictEqual(store.formulas.length, 1, 'fm_lat 行应被吸收，只剩一条');
+  const f = store.formulas[0];
+  assert.strictEqual(f.canonicalName, 'log-likelihood');
+  assert.strictEqual(f.name, '对数似然');
+  assert.deepStrictEqual(f.paperIds.sort(), ['p1', 'p2'], '降级行的论文关系并入');
+  assert.ok(!f.needsNaming, '吸收后不再是待命名');
+});
+
+test('mergeFormulas：降级行之间不互相吸收（同 LaTeX 的 fm_lat 仍按 key 各自合并）', () => {
+  const store = { papers: {}, formulas: [] };
+  mergeFormulas(store, [{ canonicalName: 'fm_lat_x1', name: 'E = mc^2', needsNaming: true, latex: 'E = mc^2' }], 'p1');
+  // 同一 LaTeX 再次降级：哈希相同 → 同 key 正常合并，不产生新行
+  mergeFormulas(store, [{ canonicalName: 'fm_lat_x1', name: 'E = mc^2', needsNaming: true, latex: 'E = mc^2' }], 'p2');
+  assert.strictEqual(store.formulas.length, 1);
+  assert.strictEqual(store.formulas[0].paperIds.length, 2);
+});
+
+test('mergeFormulas：LaTeX 不同则不吸收（正式名不会吞掉别的公式）', () => {
+  const store = { papers: {}, formulas: [] };
+  mergeFormulas(store, [{ canonicalName: 'fm_lat_x1', name: 'E = mc^2', needsNaming: true, latex: 'E = mc^2' }], 'p1');
+  mergeFormulas(store, [{ canonicalName: 'log-likelihood', name: '对数似然', latex: 'L = \\sum p' }], 'p2');
+  assert.strictEqual(store.formulas.length, 2, 'LaTeX 不同 → 各自独立');
+});
+
+test('mergeFormulas：历史脏行（无 needsNaming，canonicalName 已被归一化成 fm-lat-）也能被吸收', () => {
+  // normalizeCanonicalName 把 fm_lat_abc 转写成 fm-lat-abc（下划线→连字符），
+  // 老事故入库的行只有这个形态可辨——判定正则必须两种拼法都认。
+  const store = {
+    papers: {},
+    formulas: [{
+      id: 'fm_legacy', canonicalName: 'fm-lat-abc123', name: 'fm_lat_abc123',
+      latex: 'E = mc^2', description: '', category: '', variables: [],
+      plottable: false, plotHint: '', conceptTerms: [], occurrences: [{ paperId: 'p1' }],
+      paperIds: ['p1'], source: 'mineru', starred: false, needsNaming: undefined,
+    }],
+  };
+  mergeFormulas(store, [{ canonicalName: 'mass-energy', name: '质能方程', latex: 'E = mc^2' }], 'p9');
+  assert.strictEqual(store.formulas.length, 1, '历史脏行被吸收');
+  assert.strictEqual(store.formulas[0].canonicalName, 'mass-energy');
+  assert.deepStrictEqual(store.formulas[0].paperIds.sort(), ['p1', 'p9']);
+});

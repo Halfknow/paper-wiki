@@ -313,3 +313,142 @@ test('extractFormulas：发给 AI 命名的列表不含记号噪声', async () =
     fs.rmdirSync(path.dirname(fp));
   }
 });
+
+// ---------------------------------------------------------------------------
+// v3.61 生产事故回归：整篇论文的公式集体变成 fm_lat_<hash>
+//
+// nameFormulasViaAi 一旦返回 null，extractFormulas 会把**整批**公式降级成哈希名
+// （既是 name 也是跨论文合并用的 canonicalName），产出一堆 fm_lat_xxx 且不可自动恢复。
+// 触发 null 的路径有三条，下面逐条锁住：
+//   ① 响应是对象而非数组——请求带 response_format:json_object，模型被强制包成对象，
+//      而解析只会 indexOf("[") 截数组；键为序号的映射形态里根本没有 "["
+//   ② 输出被 max_tokens 截断——48 条一次请求，JSON.parse 直接抛
+//   ③ 瞬时故障（超时/429/5xx）——没有任何重试
+// ---------------------------------------------------------------------------
+
+/** 假 fetch：命名响应的原始字符串由调用方给定（用于构造非数组/截断等畸形响应）。 */
+function dualFetchRaw(mdContent, rawReply, opts = {}) {
+  let n = 0;
+  return async (url, o) => {
+    if (String(url).includes("/file_parse")) {
+      return { ok: true, json: async () => ({ status: "completed", results: { fake: { md_content: mdContent } } }) };
+    }
+    if (String(url).includes("/chat/completions")) {
+      n++;
+      if (opts.onCall) opts.onCall(JSON.parse(o.body), n);
+      const body = typeof rawReply === "function" ? rawReply(n) : rawReply;
+      if (body instanceof Error) throw body;
+      return { ok: true, json: async () => ({ choices: [{ message: { content: body } }] }) };
+    }
+    throw new Error("unexpected url: " + url);
+  };
+}
+
+const MD_3 = [
+  '$$L = \\sum_i \\log p_i$$',
+  '$$E = mc^2 + \\alpha$$',
+  '$$y = \\int f(x) dx$$',
+].join('\n\n');
+
+test("命名响应是对象包裹的数组 {formulas:[…]} → 正常命名，不降级", async () => {
+  const fp = tmpPdf();
+  try {
+    const raw = JSON.stringify({ formulas: [
+      { index: 1, canonicalName: "log-likelihood", name: "对数似然", category: "loss" },
+      { index: 2, canonicalName: "mass-energy", name: "质能方程", category: "other" },
+      { index: 3, canonicalName: "integral", name: "积分", category: "other" },
+    ] });
+    const items = await extractFormulas({ filepath: fp, title: "T", config: AI_CONFIG, fetchImpl: dualFetchRaw(MD_3, raw) });
+    assert.strictEqual(items.length, 3);
+    assert.ok(items.every((it) => !it.canonicalName.startsWith("fm_lat_")), "不应降级：" + items.map((i) => i.canonicalName));
+  } finally { fs.unlinkSync(fp); fs.rmdirSync(path.dirname(fp)); }
+});
+
+test("命名响应是序号映射对象 {\"1\":{…}} → 正常命名，不降级", async () => {
+  const fp = tmpPdf();
+  try {
+    const raw = JSON.stringify({
+      1: { canonicalName: "log-likelihood", name: "对数似然", category: "loss" },
+      2: { canonicalName: "mass-energy", name: "质能方程", category: "other" },
+      3: { canonicalName: "integral", name: "积分", category: "other" },
+    });
+    const items = await extractFormulas({ filepath: fp, title: "T", config: AI_CONFIG, fetchImpl: dualFetchRaw(MD_3, raw) });
+    assert.strictEqual(items.length, 3);
+    assert.ok(items.every((it) => !it.canonicalName.startsWith("fm_lat_")), "不应降级：" + items.map((i) => i.canonicalName));
+  } finally { fs.unlinkSync(fp); fs.rmdirSync(path.dirname(fp)); }
+});
+
+test("命名响应被 max_tokens 截断 → 已完整的条目仍能救回", async () => {
+  const fp = tmpPdf();
+  try {
+    // 第 3 条写到一半就断了（真实截断长这样）
+    const raw = '[{"index":1,"canonicalName":"log-likelihood","name":"对数似然"},'
+      + '{"index":2,"canonicalName":"mass-energy","name":"质能方程"},{"index":3,"canonical';
+    const items = await extractFormulas({ filepath: fp, title: "T", config: AI_CONFIG, fetchImpl: dualFetchRaw(MD_3, raw) });
+    const named = items.filter((it) => !it.canonicalName.startsWith("fm_lat_"));
+    assert.ok(named.length >= 2, "前两条完整条目应救回，实得 " + named.length);
+  } finally { fs.unlinkSync(fp); fs.rmdirSync(path.dirname(fp)); }
+});
+
+test("命名调用瞬时失败 → 重试一次后成功，不降级", async () => {
+  const fp = tmpPdf();
+  try {
+    const good = JSON.stringify([
+      { index: 1, canonicalName: "log-likelihood", name: "对数似然" },
+      { index: 2, canonicalName: "mass-energy", name: "质能方程" },
+      { index: 3, canonicalName: "integral", name: "积分" },
+    ]);
+    let calls = 0;
+    const items = await extractFormulas({
+      filepath: fp, title: "T", config: AI_CONFIG,
+      fetchImpl: dualFetchRaw(MD_3, (n) => { calls = n; return n === 1 ? new Error("ETIMEDOUT") : good; }),
+    });
+    assert.ok(calls >= 2, "应重试，实际调用 " + calls + " 次");
+    assert.ok(items.every((it) => !it.canonicalName.startsWith("fm_lat_")), "重试成功后不应降级");
+  } finally { fs.unlinkSync(fp); fs.rmdirSync(path.dirname(fp)); }
+});
+
+test("降级项：name 是可读占位而不是 fm_lat_ 标识符，并打 needsNaming 标记", async () => {
+  const fp = tmpPdf();
+  try {
+    // 无 apiKey → 确定性降级路径
+    const items = await extractFormulas({
+      filepath: fp, title: "T", config: { formulas: {}, ai: {} }, fetchImpl: dualFetchRaw(MD_3, "[]"),
+    });
+    assert.ok(items.length >= 1);
+    for (const it of items) {
+      assert.ok(it.canonicalName.startsWith("fm_lat_"), "合并 key 仍用稳定哈希");
+      assert.ok(!/^fm_lat_/.test(it.name), "name 不该是哈希标识符，实得：" + it.name);
+      assert.strictEqual(it.needsNaming, true, "应标记待命名，便于事后重命名与统计");
+    }
+  } finally { fs.unlinkSync(fp); fs.rmdirSync(path.dirname(fp)); }
+});
+
+test("公式数超过单批上限 → 分批命名；单批失败只降级该批，其余照常命名", async () => {
+  const fp = tmpPdf();
+  try {
+    // 20 条 display 公式 → 分 2 批（12 + 8）
+    const md = Array.from({ length: 20 }, (_, i) => `$$x_{${i}} = a_{${i}} + b_{${i}}$$`)
+      .join(String.fromCharCode(10, 10));
+    const batches = [];
+    const fetchImpl = dualFetchRaw(md, (n) => {
+      if (n === 1) return "整段不是 JSON——模拟第一批被截断/畸形";
+      // 第二批正常应答：序号是全局的（13..20）
+      return JSON.stringify({ items: Array.from({ length: 8 }, (_, k) => ({
+        index: 13 + k, canonicalName: "named-" + (13 + k), name: "公式" + (13 + k),
+      })) });
+    }, { onCall: (body) => batches.push(body.messages[1].content) });
+    const items = await extractFormulas({ filepath: fp, title: "T", config: AI_CONFIG, fetchImpl });
+    assert.ok(batches.length >= 2, "应分多批调用，实际 " + batches.length + " 次");
+    const named = items.filter((it) => !it.canonicalName.startsWith("fm_lat_"));
+    const degraded = items.filter((it) => it.canonicalName.startsWith("fm_lat_"));
+    assert.ok(named.length >= 8, "第二批应正常命名，实得 " + named.length);
+    assert.ok(degraded.length > 0, "第一批降级");
+    assert.ok(degraded.length < items.length, "不应整篇降级——这正是本次要修的事故形态");
+    // 序号重基：第二批的名字必须配到第二批的公式上，不能整体错位
+    for (const it of named) {
+      const idx = Number(String(it.canonicalName).replace("named-", ""));
+      assert.ok(it.latex.includes("x_{" + (idx - 1) + "}"), "名字应配到对应 latex：" + it.canonicalName + " / " + it.latex);
+    }
+  } finally { fs.unlinkSync(fp); fs.rmdirSync(path.dirname(fp)); }
+});
