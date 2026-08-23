@@ -8,11 +8,13 @@ import '/vendor/pdfjs.js';
 import '/vendor/pdfjs-viewer.js';
 import { sp } from './js/core/api.js';
 import { runAfterSelectionRelease, selectionWithin } from './js/core/dom.js';
+import { toast } from './js/core/ui-kit.js';
 import { state } from './js/core/state.js';
 import { renderMd, renderChatMd, truncateChatTitle } from './js/core/markdown.js';
 import { NotesPanel } from './js/detail/notes-panel.js';
 import { saveQaCardToNotes } from './js/detail/detail.js';
 import { createShelfDrawer } from './js/reader/shelf-drawer.js';
+import { shelfState, shelfToggle, subscribeShelf } from './js/reader/shelf.js';
 import {
   CHAT_ROLE_ICO, chatMsgHtml, chatEmptyHtml, getChatPresets,
   getSelectedModel, toggleModelSwitcher,
@@ -45,6 +47,10 @@ const { AnnotationEditorType, AnnotationEditorParamsType, PixelsPerInch } = pdfj
 
   // 选区快捷高亮的色板（与工具栏 #reader-colors 同色）
   const HL_COLORS = ['#fde68a', '#bbf7d0', '#bfdbfe', '#ddd6fe', '#fbcfe8', '#fecdd3', '#a5f3fc'];
+
+  // 状态反馈静默清单（v3.26 setStatus 分流用）：这些成功/进度反馈在 UI 上已有可见的自证
+  // （高亮可见、🔖 按钮亮灭、批注列表变化、加载遮罩 spinner），再弹提示纯属噪音。
+  const SILENT_STATUS_RE = /^(已记录：|已就绪$|加载中|✓ 批注已|已放入阅读架|已从阅读架移除|已加入阅读架$|阅读架已清空$|已删除批注$|已高亮|已钉住|已取消钉住)/;
 
   const ICON = {
     copy: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>',
@@ -110,7 +116,7 @@ const { AnnotationEditorType, AnnotationEditorParamsType, PixelsPerInch } = pdfj
       this.elZoomIn = opts.zoomIn; this.elZoomOut = opts.zoomOut; this.elZoomLabel = opts.zoomLabel;
       this.zoomFit = opts.zoomFit;
       this.elSpread = opts.spread;
-      this.elTitle = opts.title; this.elSaved = opts.saved;
+      this.elTitle = opts.title;
       this.wrap = opts.canvasWrap;                  // 滚动容器（#reader-canvas-wrap）
       this.viewerEl = this.wrap.querySelector('#viewer'); // PDFViewer 挂载点
       this.doc = null;
@@ -135,15 +141,18 @@ const { AnnotationEditorType, AnnotationEditorParamsType, PixelsPerInch } = pdfj
       this.restorePending = null;
       this._pendingAnnotations = null;
       this._pop = null;                             // 选区浮窗
-      this._statusTimer = null;
       this.bind();
     }
 
     bind() {
-      // 返回按钮走 onBack 钩子（reader-host 注入路由感知逻辑：当前在 /reader/:id 路由时
-      // history.back() 由路由 leave 关阅读器，保证 URL 与视图同步退回去；
-      // 直接 this.close() 只关视图不动路由，URL 会停在 /reader 与页面状态脱节）。
+      // 关闭按钮（左上角 ×，v3.23 起替代「← 返回」）走 onBack 钩子（reader-host 注入路由感知
+      // 逻辑：当前在 /reader/:id 路由时 history.back() 由路由 leave 关阅读器，保证 URL 与
+      // 视图同步退回去；直接 this.close() 只关视图不动路由，URL 会停在 /reader 与页面状态脱节）。
       this.elBack.onclick = () => { if (this.onBack) { this.onBack(); return; } this.close(); };
+      // 阅读架书签按钮（左上角 🔖，v3.23）：当前论文放入/移出阅读架（显式策展，打开不再自动上架）。
+      this.elShelfToggle = document.getElementById('reader-shelf-toggle');
+      if (this.elShelfToggle) this.elShelfToggle.onclick = () => this.toggleShelfCurrent();
+      subscribeShelf(() => this.updateShelfToggleUi());   // 上架态变化（含抽屉内操作）即时同步按钮
       this.elPrev.onclick = () => this.scrollToPage(this.page - 1);
       this.elNext.onclick = () => this.scrollToPage(this.page + 1);
       this.elPageInput.onchange = () => {
@@ -174,6 +183,13 @@ const { AnnotationEditorType, AnnotationEditorParamsType, PixelsPerInch } = pdfj
             // 无划线：切换边栏开合
             this.toggleChat();
           }
+          return;
+        }
+        // Ctrl+D / Cmd+D：当前论文放入/移出阅读架（对齐浏览器「收藏书签」肌肉记忆）
+        if ((e.ctrlKey || e.metaKey) && (e.key === 'd' || e.key === 'D')) {
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          this.toggleShelfCurrent();
           return;
         }
         // Esc 分层关闭（必须放在 typing 提前 return 之前）：
@@ -254,10 +270,9 @@ const { AnnotationEditorType, AnnotationEditorParamsType, PixelsPerInch } = pdfj
       // AI 对话抽屉绑定（按钮/关闭/发送），仅当 DOM 存在时
       this.bindChat();
       // 阅读架抽屉（v3.21）：切论文走 onSwitchPaper（reader-host 注入路由导航）；
-      // 架子清空/移除当前篇时按返回语义关阅读器。
+      // v3.23 起移除/清空永不切换论文、不关阅读器（显式策展语义，见 shelf-drawer.js 头注）。
       this._shelfDrawer = createShelfDrawer({
         onSwitch: (id) => { if (this.onSwitchPaper) this.onSwitchPaper(id); },
-        onCloseReader: () => { if (this.onBack) this.onBack(); else this.close(); },
         notify: (m, err) => this.setStatus(m, err),
       });
     }
@@ -397,19 +412,37 @@ const { AnnotationEditorType, AnnotationEditorParamsType, PixelsPerInch } = pdfj
       this.elPinBtn.classList.toggle('pinned', !!this._chatPinned);
       this.elPinBtn.title = this._chatPinned ? '已钉住（点 PDF 不关闭），点击取消钉住' : '钉住抽屉（点 PDF 不再关闭）';
     }
-    /** 点击 PDF 区域关闭未钉住的抽屉。
-     *  排除：划词选区浮窗/翻译面板/框选遮罩（它们有自己的交互），以及刚完成文本选择的 click
-     *  （划线准备提问/批注时不关）。钉住（pin）时整段不生效。 */
+    /** 点击 PDF 区域 = 专注阅读：收起所有未钉住的浮层（v3.23 扩展）——
+     *  未钉住的聊天抽屉 + 阅读架抽屉（阅读架无钉住概念，开着即收）。
+     *  排除：划词选区浮窗/翻译面板（它们有自己的交互），以及刚完成文本选择的 click
+     *  （划线准备提问/批注时不收）。 */
     wirePdfClickClose() {
       if (this._pdfClickCloseWired || !this.wrap) return;
       this._pdfClickCloseWired = true;
       this.wrap.addEventListener('click', (e) => {
-        if (!this._chatOpen || this._chatPinned) return;
         if (e.target.closest('.reader-sel-pop, .reader-tr-panel')) return;
         const sel = document.getSelection();
         if (sel && !sel.isCollapsed && this.viewerEl && this.viewerEl.contains(sel.anchorNode)) return;
-        this.toggleChat(false);
+        let closed = false;
+        if (this._chatOpen && !this._chatPinned) { this.toggleChat(false); closed = true; }
+        if (this._shelfDrawer && this._shelfDrawer.isOpen()) { this._shelfDrawer.close(); closed = true; }
+        if (closed) this.setStatus('');
       });
+    }
+    /** 当前论文放入/移出阅读架（工具栏 🔖 / Ctrl+D）。 */
+    async toggleShelfCurrent() {
+      if (!this.paper) return;
+      const onShelf = await shelfToggle(this.paper);
+      this.updateShelfToggleUi();
+      this.setStatus(onShelf ? '已放入阅读架（[ / ] 可在架上切换）' : '已从阅读架移除');
+    }
+    /** 同步书签按钮态：在架上 = 实心高亮，不在 = 描边。 */
+    updateShelfToggleUi() {
+      if (!this.elShelfToggle) return;
+      const on = !!(this.paper && shelfState.ids.includes(this.paper.id));
+      this.elShelfToggle.classList.toggle('on', on);
+      this.elShelfToggle.setAttribute('aria-pressed', String(on));
+      this.elShelfToggle.title = on ? '已在阅读架——点击移出（Ctrl+D）' : '放入阅读架（Ctrl+D）';
     }
     /** 「聊天 | 笔记」切换行 + 笔记视图容器（注入 rcd-head 之后）。
      *  显隐走 CSS（.notes-mode 类）：聊天区（list/quotes/composer）隐藏，笔记视图显示。
@@ -521,7 +554,7 @@ const { AnnotationEditorType, AnnotationEditorParamsType, PixelsPerInch } = pdfj
     }
     /** 接线右上角「抽取公式」按钮：调 /formulas/candidates（跟随设置页引擎）→ 弹候选勾选浮层
      *  → 确认后 /formulas/merge 入库。 */
-    /** 接线公式/概念抽取下拉菜单（rb-right 两个按钮，每个点击弹菜单：查看本篇/追加抽取/重新抽取）。 */
+    /** 接线公式/概念抽取下拉菜单（rb-controls 工具区两个按钮，每个点击弹菜单：查看本篇/追加抽取/重新抽取）。 */
     wireExtractButton() {
       const fb = document.getElementById('reader-extract-formulas');
       const cb = document.getElementById('reader-extract-concepts');
@@ -888,7 +921,7 @@ const { AnnotationEditorType, AnnotationEditorParamsType, PixelsPerInch } = pdfj
       fab.dataset.wired = '1';
       const FAB_H = 44;                  // 按钮高度（须与 styles.css .reader-chat-fab 一致）
       const MARGIN = 8;                  // 离视口上下边的最小留白
-      const BAR_H = 54;                  // 顶栏高度（= --rdr-bar-h），FAB 不能盖到顶栏上
+      const BAR_H = 44;                  // 顶栏高度（= --rdr-bar-h，v3.25 起为 44px），FAB 不能盖到顶栏上
       const KEY = 'reader-chat-fab-top';
       // clamp：top 合法区间 [顶栏下+留白, 视口高-按钮高-留白]
       const clampTop = (t) => Math.max(BAR_H + MARGIN, Math.min(window.innerHeight - FAB_H - MARGIN, t));
@@ -1454,8 +1487,9 @@ const { AnnotationEditorType, AnnotationEditorParamsType, PixelsPerInch } = pdfj
       const switchingPaper = !this.paper || this.paper.id !== paper.id;
       this.paper = paper;
       if (switchingPaper) this._resetChatState();
-      // 阅读架徽章/列表随当前篇刷新（v3.21；shelfAddAndActivate 的订阅也会触发，此处兜底首开时机）
+      // 阅读架 UI 随当前篇刷新（v3.23：shelfActivate 只标记不自动上架；徽章/书签按钮此处兜底同步）
       if (this._shelfDrawer) this._shelfDrawer.render();
+      this.updateShelfToggleUi();
       // 文字清晰度（综合 SO 高赞方案的完整技术，核心是「过采样 + 高质量降采样」缺一不可）：
       //   ① pdf.js 的 OutputScale 直接读 window.devicePixelRatio 决定 canvas 内部分辨率。
       //     双页模式每页 CSS 显示仅 ~675px，论文密集小字若 canvas 也只 675px(1:1) 会发糊。
@@ -1476,6 +1510,7 @@ const { AnnotationEditorType, AnnotationEditorParamsType, PixelsPerInch } = pdfj
       this._suppressAnnotationDirty = false;
       this._initialFitDone = false;   // 每次打开重置（实例跨多次打开复用），保证 pagesinit/afterReady 的 fit 守卫正确
       this.elTitle.textContent = paper.title || paper.filename;
+      this.elTitle.title = paper.title || paper.filename || '';  // hover 看全名（栏内 ellipsis 截断的兜底）
       this.view.classList.add('active');
       document.body.style.overflow = 'hidden';
       // 重开前彻底拆除上一篇：清空旧画布(避免闪现上一篇PDF)+ 移除上次的监听器(避免叠加泄漏)
@@ -1970,16 +2005,16 @@ const { AnnotationEditorType, AnnotationEditorParamsType, PixelsPerInch } = pdfj
     get scale() { return this.viewer ? this.viewer.currentScale : 1.2; }
     set scale(v) { if (this.viewer) { this._fitMode = false; this.viewer.currentScaleValue = String(v); } this.updateZoomLabel(); }
 
-    // ---- 状态条（带防抖恢复，避免一直停在临时提示上）----
+    // ---- 状态反馈（v3.26：私有「状态浮岛」退役）----
+    // 旧实现：顶栏右侧文字 + 2.6s 回退「第 x / y 页」——自动反馈噪音大、信息量低（翻页/保存
+    // 本就自证），用户要求整块删除。现分流（不再有常驻元素）：
+    //   · 自证型成功与自动进度（已记录/已就绪/批注已保存/高亮/上架/钉住…）→ 静默，UI 状态本身可见
+    //   · 错误与阻断提示（sticky）→ 全局 error toast（失败不能无声吞掉）
+    //   · 其余一次性提示（已复制/抽取完成/已存入笔记…）→ 全局 info toast
     setStatus(text, sticky) {
-      if (!this.elSaved) return;
-      this.elSaved.textContent = text;
-      if (this._statusTimer) { clearTimeout(this._statusTimer); this._statusTimer = null; }
-      if (!sticky) {
-        this._statusTimer = setTimeout(() => {
-          if (this.elSaved) this.elSaved.textContent = this.paper ? '第 ' + this.page + ' / ' + this.total + ' 页' : '';
-        }, 2600);
-      }
+      const t = String(text || '').trim();
+      if (!t || SILENT_STATUS_RE.test(t)) return;
+      toast(t, sticky ? 'error' : 'info');
     }
 
     // ====================================================================
@@ -2605,7 +2640,6 @@ const { AnnotationEditorType, AnnotationEditorParamsType, PixelsPerInch } = pdfj
       const saveP = save ? this.saveAnnotations(true) : Promise.resolve();
       if (this.savingTimer) { clearTimeout(this.savingTimer); if (save) this.saveProgress(); this.savingTimer = null; }
       if (this.savingAnnotTimer) { clearTimeout(this.savingAnnotTimer); this.savingAnnotTimer = null; }
-      if (this._statusTimer) { clearTimeout(this._statusTimer); this._statusTimer = null; }
       if (this._resizeTimer) { clearTimeout(this._resizeTimer); this._resizeTimer = null; }
       if (this._annotRetry) { clearTimeout(this._annotRetry); this._annotRetry = null; }
       if (this._annotRetry2) { clearTimeout(this._annotRetry2); this._annotRetry2 = null; }

@@ -105,8 +105,15 @@ export function renderList() {
     vf.setAttribute('aria-pressed', String(!state.compact));
   }
   if (!state.papers.length) {
+    // 首次加载（数据未到）：骨架行替代空态——深链首帧不再是空白列表（R2）
+    if (state._listLoading) {
+      ul.innerHTML = Array.from({ length: 6 }, () => `<li class="paper-item skel-card" aria-hidden="true"><div class="skel skel-title"></div><div class="skel skel-meta"></div><div class="skel-chips"><i class="skel"></i><i class="skel"></i><i class="skel"></i></div><div class="skel skel-progress"></div></li>`).join('');
+      return;
+    }
     const f = state.filter;
-    const hasFilter = f.q || f.status || f.readStatus || f.tag || f.topic || f.starred || f.folder || f.mode;
+    // 注意字段名：筛选态是 tags/topics（数组）——旧的 f.tag/f.topic 恒 undefined，
+    // 仅按标签/主题筛选零命中时会误显示「欢迎来到 PaperWiki」新手引导
+    const hasFilter = f.q || f.status || f.readStatus || (f.tags && f.tags.length) || (f.topics && f.topics.length) || f.starred || f.folder || f.mode;
     if (!hasFilter) {
       // 真正的空库：给新手引导，而不是一句干巴巴的"暂无论文"
       ul.innerHTML = `<li class="paper-item empty-guide">
@@ -123,7 +130,20 @@ export function renderList() {
         </div>
       </li>`;
     } else {
-      ul.innerHTML = '<li class="paper-item empty-list">暂无匹配论文。可以调整筛选，或把 PDF 放入 papers/ 后点击「扫描」。</li>';
+      ul.innerHTML = `<li class="paper-item empty-list">
+        <div class="empty-state">
+          <div class="es-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.35-4.35"/><path d="M8 11h6"/></svg></div>
+          <p class="es-main">没有匹配的论文</p>
+          <p class="es-sub">当前筛选（搜索词 / 标签 / 主题 / 状态）过窄，试试放宽条件。</p>
+          <div class="es-actions"><button class="btn sm es-clear-filter" type="button">清除全部筛选</button></div>
+        </div>
+      </li>`;
+      ul.querySelector('.es-clear-filter').onclick = () => {
+        state.filter = { q: '', status: '', readStatus: '', tags: [], topics: [], tagOp: 'or', topicOp: 'or', starred: false, folder: '', mode: '', sort: state.filter.sort };
+        const searchBox = document.getElementById('search');
+        if (searchBox && searchBox.value) searchBox.value = '';
+        refresh();
+      };
     }
     return;
   }

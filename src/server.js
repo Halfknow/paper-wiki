@@ -76,22 +76,44 @@ async function serveStatic(req, res, filePath, extraHeaders) {
   if (st.isDirectory()) return serveStatic(req, res, path.join(filePath, 'index.html'), extraHeaders);
   const type = MIME[path.extname(filePath).toLowerCase()] || 'application/octet-stream';
   const range = req.headers.range;
+  const stream = (opts, headers) => {
+    const rs = fs.createReadStream(filePath, opts);
+    // stat 与 open 之间文件被删/被占用（Windows EBUSY）时无 error 监听会未捕获异常退进程
+    rs.on('error', () => {
+      if (!res.headersSent) res.writeHead(500);
+      res.end();
+    });
+    res.writeHead(range ? 206 : 200, headers);
+    rs.pipe(res);
+  };
   if (range) {
+    // RFC 9110：`bytes=X-`（开区间）/ `bytes=X-Y` / `bytes=-N`（末 N 字节后缀区间）。
+    // 旧实现把 -N 当 0-N 且不 clamp 上界：Content-Length 虚大 → 客户端挂等损坏响应。
     const m = /bytes=(\d*)-(\d*)/.exec(range);
-    let start = m && m[1] ? parseInt(m[1], 10) : 0;
-    let end = m && m[2] ? parseInt(m[2], 10) : st.size - 1;
-    if (start > end) [start, end] = [end, start];
-    res.writeHead(206, {
+    let start;
+    let end;
+    if (m && m[1] === '' && m[2] !== '') {
+      const n = parseInt(m[2], 10);
+      start = Math.max(0, st.size - n);
+      end = st.size - 1;
+    } else {
+      start = m && m[1] ? parseInt(m[1], 10) : 0;
+      end = m && m[2] ? parseInt(m[2], 10) : st.size - 1;
+      end = Math.min(end, st.size - 1); // 上界 clamp（越界请求按可用范围返回，非虚假长度）
+    }
+    if (!Number.isFinite(start) || !Number.isFinite(end) || start > end || start >= st.size) {
+      res.writeHead(416, { 'Content-Range': `bytes */${st.size}` });
+      return res.end();
+    }
+    stream({ start, end }, {
       'Content-Range': `bytes ${start}-${end}/${st.size}`,
       'Accept-Ranges': 'bytes',
       'Content-Length': end - start + 1,
       'Content-Type': type,
       ...extraHeaders,
     });
-    fs.createReadStream(filePath, { start, end }).pipe(res);
   } else {
-    res.writeHead(200, { 'Content-Length': st.size, 'Content-Type': type, ...extraHeaders });
-    fs.createReadStream(filePath).pipe(res);
+    stream(undefined, { 'Content-Length': st.size, 'Content-Type': type, ...extraHeaders });
   }
 }
 
@@ -194,12 +216,26 @@ async function main() {
         // katex.css 引用 fonts/...，相对 /vendor/katex.css 解析为 /vendor/fonts/...
         if (pathname.startsWith('/vendor/fonts/')) {
           const rel = pathname.slice('/vendor/fonts/'.length);
-          return serveStatic(req, res, path.join(NM, 'katex', 'dist', 'fonts', rel));
+          const base = path.join(NM, 'katex', 'dist', 'fonts');
+          const abs = path.resolve(base, rel);
+          // 路径穿越守卫：WHATWG URL 折叠裸 ../ 与 %2e%2e，但 %5C（反斜杠）不折叠——
+          // Windows 上 path 把 \ 当分隔符，不拦可越出 node_modules 读任意文件（如 config.json）
+          if (!abs.startsWith(base + path.sep)) {
+            res.writeHead(400);
+            return res.end('Bad path');
+          }
+          return serveStatic(req, res, abs);
         }
         // pdf.js viewer（pdf_viewer.css 里 url(images/...) 相对解析为 /vendor/images/...）
         if (pathname.startsWith('/vendor/images/')) {
           const rel = pathname.slice('/vendor/images/'.length);
-          return serveStatic(req, res, path.join(NM, 'pdfjs-dist', 'web', 'images', rel));
+          const base = path.join(NM, 'pdfjs-dist', 'web', 'images');
+          const abs = path.resolve(base, rel);
+          if (!abs.startsWith(base + path.sep)) {
+            res.writeHead(400);
+            return res.end('Bad path');
+          }
+          return serveStatic(req, res, abs);
         }
         res.writeHead(404);
         return res.end('Not found');

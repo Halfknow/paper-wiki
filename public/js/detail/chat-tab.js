@@ -189,23 +189,14 @@ export function renderChatTab(body, p) {
     });
   }
   /** v3.16 视觉问答：接线「图片」按钮 + 输入框粘贴图片。
-   *  - 点按钮 → 隐藏 file input（accept=image/*，多选）；
+   *  - 点按钮 → 隐藏 file input（accept=image/*，多选）——单例复用，renderChatTab 每次重建
+   *    不再往 body 堆新的隐藏 input（会话越长泄漏越多）；
    *  - 输入框 Ctrl+V 粘贴剪贴板图片。
    *  两入口都转 dataURL（长边限 1568 压缩）push 进 chatState.chatImages。 */
   function wireAttachInput(inputEl) {
     const attachBtn = $('chat-attach-btn');
-    const fileInput = document.createElement('input');
-    fileInput.type = 'file'; fileInput.accept = 'image/*'; fileInput.multiple = true; fileInput.style.display = 'none';
-    fileInput.addEventListener('change', () => {
-      const files = fileInput.files ? Array.from(fileInput.files) : [];
-      Promise.all(files.map((f) => fileToCompressedDataURL(f, 1568))).then((urls) => {
-        for (const u of urls) if (u) chatState.chatImages.push(u);
-        fileInput.value = '';
-        renderAttachRow();
-        updateSendEnabled();
-      });
-    });
-    document.body.appendChild(fileInput);
+    const fileInput = ensureChatFileInput();
+    _attachRefresh = () => { renderAttachRow(); updateSendEnabled(); };
     if (attachBtn) attachBtn.onclick = () => fileInput.click();
     if (inputEl) {
       inputEl.addEventListener('paste', (e) => {
@@ -250,6 +241,9 @@ export function renderChatTab(body, p) {
     const editMi = opts.editMi != null ? Number(opts.editMi) : null;
     const message = regenerate ? '' : (input.value || '').trim();
     if (!message && !regenerate) return;
+    // 10s 轮询会整体替换 state.detail 对象（refresh.js 展开合并出新对象）：写 chat 必须落到
+    // 「当前」对象上，否则乐观消息只改在本次渲染捕获的旧引用上，切 tab 重渲即“消失”。
+    const liveP = () => (state.detail && state.detail.id === p.id ? state.detail : p);
     // 当前引用（编辑重发时沿用被编辑 user 的 extraIds）
     const extraIds = regenerate ? [] : (editMi != null ? (extractExtraIdsFromMsg(editMi) || chatState.extraIds.slice()) : chatState.extraIds.slice());
     // v3.16 视觉问答附图（发送后清空 chip）
@@ -265,11 +259,12 @@ export function renderChatTab(body, p) {
     // 关闭上一个 EventSource（若有），再开新的。closeStream 是 streamChatFetch 返回的中止函数。
     if (chatState.closeStream) { try { chatState.closeStream(); } catch {} }
     let myClose = null;
-    // 编辑重发：截断被编辑 user 之后的历史（DOM + p.chat）
+    // 编辑重发：截断被编辑 user 之后的历史（DOM + 当前 detail 的 chat）
     if (editMi != null && !opts.skipTruncate) {
-      const cutCount = (p.chat || []).length - editMi;
+      const lp = liveP();
+      const cutCount = (lp.chat || []).length - editMi;
       if (cutCount > 0) {
-        p.chat = (p.chat || []).slice(0, editMi);
+        lp.chat = (lp.chat || []).slice(0, editMi);
         const liveList = document.getElementById('chat-list');
         if (liveList) { [...liveList.querySelectorAll('.chat-msg')].slice(-cutCount).forEach((n) => n.remove()); }
       }
@@ -279,7 +274,8 @@ export function renderChatTab(body, p) {
       const userMsg = { role: 'user', content: message };
       if (extraIds.length) userMsg.extraIds = extraIds;
       if (sendImages.length) userMsg.images = sendImages; // v3.16 视觉问答附图回显
-      p.chat = [...(p.chat || []), userMsg];
+      const lp = liveP();
+      lp.chat = [...(lp.chat || []), userMsg];
       appendChatMsgById('chat-list', userMsg);
     }
     // 流式占位 assistant 消息：先 skeleton shimmer，首个 token 后逐字 renderChatMd 重渲 + 气泡发光。
@@ -368,6 +364,7 @@ export function renderChatTab(body, p) {
     };
     myClose = streamChatFetch(p.id, message, {
       regenerate,
+      truncate: editMi != null ? editMi : undefined, // 编辑重发：后端对齐截断，防权威历史回灌复活旧消息
       extraIds: extraIds.length ? extraIds : undefined,
       images: sendImages.length ? sendImages : undefined, // v3.16 视觉问答：非空走 POST /chat/vision
       onToken: (t, kind) => {
@@ -393,18 +390,19 @@ export function renderChatTab(body, p) {
         // 用服务端权威 chat 数组替换（含完整回复 + ts）；重渲整条 assistant（补时间戳/操作按钮/重新生成）
         if (data && data.reply != null) {
           accumulated = data.reply;
-          p.chat = Array.isArray(data.chat) ? data.chat : [...(p.chat || []), { role: 'assistant', content: data.reply }];
+          const lp = liveP();
+          lp.chat = Array.isArray(data.chat) ? data.chat : [...(lp.chat || []), { role: 'assistant', content: data.reply }];
           // 重渲最后一条 assistant 为定型结构（含时间戳 + 操作工具栏）
           const liveNode = lastAssistantNode();
-          if (liveNode && p.chat.length) {
-            const lastMsg = p.chat[p.chat.length - 1];
+          if (liveNode && lp.chat.length) {
+            const lastMsg = lp.chat[lp.chat.length - 1];
             const finalizeBubble = () => {
               if (!liveNode.isConnected) return; // 已被切论文/切 tab 重建，放弃
               const tmp = document.createElement('div');
               tmp.innerHTML = chatMsgHtml(lastMsg, Number(liveNode.dataset.mi || 0), { regenerable: true });
-              if (tmp.firstElementChild) {
-                liveNode.replaceWith(tmp.firstElementChild);
-                const newNode = tmp.firstElementChild;
+              const newNode = tmp.firstElementChild;
+              if (newNode) {
+                liveNode.replaceWith(newNode);
                 // reasoning：完成后自动收起 + 显示「思考了 X 秒」（1s 延时，NewAPI 同款）
                 if (accumulatedReasoning.trim()) {
                   const newBody = newNode.querySelector('.chat-body');
@@ -467,9 +465,10 @@ export function renderChatTab(body, p) {
     const allowSend = !!(chatState && chatState.chatImages && chatState.chatImages.length);
     sharedUpdateSendEnabled(document.getElementById('chat-send'), document.getElementById('chat-input'), { busy: chatState && chatState.busy, allowSend });
   }
-  /** 从 p.chat[mi] 取 extraIds（编辑重发沿用引用）。 */
+  /** 从 p.chat[mi] 取 extraIds（编辑重发沿用引用）。读当前 detail（轮询换对象后旧引用的索引会错位）。 */
   function extractExtraIdsFromMsg(mi) {
-    const m = (p.chat || [])[mi];
+    const src = state.detail && state.detail.id === p.id ? state.detail : p;
+    const m = (src.chat || [])[mi];
     return m && Array.isArray(m.extraIds) ? m.extraIds.slice() : null;
   }
   doSendFromInput = doSend; // 供建议卡片 / 重新生成 / 编辑调用
@@ -503,14 +502,46 @@ export function renderChatTab(body, p) {
   wireChatExtras(p, list, input, doSend);
 }
 
-/** 参数浮层显隐切换（按钮点击 → toggle；点外部关闭）。 */
+/** 视觉问答隐藏 file input：模块级单例（renderChatTab 每次重建复用，不再往 body 堆节点）。
+ *  change 后的 chip 行/发送键刷新经 _attachRefresh 间接调当前渲染闭包的函数。 */
+let _chatFileInput = null;
+let _attachRefresh = null;
+function ensureChatFileInput() {
+  if (_chatFileInput && _chatFileInput.isConnected) return _chatFileInput;
+  const fi = document.createElement('input');
+  fi.type = 'file'; fi.accept = 'image/*'; fi.multiple = true; fi.style.display = 'none';
+  fi.addEventListener('change', () => {
+    const files = fi.files ? Array.from(fi.files) : [];
+    Promise.all(files.map((f) => fileToCompressedDataURL(f, 1568))).then((urls) => {
+      for (const u of urls) if (u) chatState.chatImages.push(u);
+      fi.value = '';
+      if (_attachRefresh) _attachRefresh();
+    });
+  });
+  document.body.appendChild(fi);
+  _chatFileInput = fi;
+  return fi;
+}
+
+/** 参数浮层显隐切换（按钮点击 → toggle；点外部关闭）。
+ *  document 级 closer 单例安装：renderChatTab 每次重建都重跑本函数，逐次 addEventListener
+ *  会让 document 挂上引用已脱离节点的闭包（会话越长累积越多）；单例后实时按 id 查询
+ *  当前浮层/按钮（每次渲染都是新节点，闭包捕获旧节点反而失效）。 */
+let _paramPopCloserInstalled = false;
+const PARAM_POP_IDS = ['chat-params-pop', 'chat-presets-pop'];
 function wireParamsToggle(btnId, popId) {
   const btn = document.getElementById(btnId);
   const pop = document.getElementById(popId);
   if (!btn || !pop) return;
   btn.addEventListener('click', (e) => { e.stopPropagation(); pop.hidden = !pop.hidden; });
+  if (_paramPopCloserInstalled) return;
+  _paramPopCloserInstalled = true;
   document.addEventListener('click', (e) => {
-    if (!pop.hidden && !pop.contains(e.target) && e.target !== btn && !btn.contains(e.target)) pop.hidden = true;
+    for (const id of PARAM_POP_IDS) {
+      const el = document.getElementById(id);
+      const b = el && document.getElementById(id.replace('-pop', '-btn'));
+      if (el && !el.hidden && !el.contains(e.target) && (!b || !b.contains(e.target))) el.hidden = true;
+    }
   });
 }
 

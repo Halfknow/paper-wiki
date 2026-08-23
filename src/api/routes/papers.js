@@ -128,29 +128,36 @@ function register(t, ctx) {
     const p = store.papers[params.id];
     if (!p) return fail(res, 404, 'Not found');
     const patch = JSON.parse(body || '{}');
-    const allowed = [
-      'notes',
-      'noteCards',
-      'starred',
-      'rating',
-      'readStatus',
-      'tags',
-      'title',
-      'topics',
-      'folders',
-      'readProgress',
-      'annotations',
-      'chat',
-      'summary',
-      'summaryModel',
-      'summaryAt',
-    ];
-    for (const k of allowed) if (k in patch) p[k] = patch[k];
+    // 类型清洗：PATCH 是前端唯一自由写入入口，畸形类型轻则打崩视图层（summary.slice(0,160)、
+    // sort 的 localeCompare），重则打崩 PG 写入（summaryAt 列是 DOUBLE PRECISION，'abc' 会让
+    // 该空间此后所有保存 500——坏行恒在 diff 里）。非法类型的字段静默忽略（保持原值）。
+    const asStrArr = (v) => (Array.isArray(v) ? v.filter((x) => typeof x === 'string') : undefined);
+    const asNum = (v) => {
+      const n = typeof v === 'number' ? v : Number(v);
+      return Number.isFinite(n) ? n : undefined;
+    };
+    for (const k of ['notes', 'title', 'summary', 'summaryModel']) {
+      if (k in patch && typeof patch[k] === 'string') p[k] = patch[k];
+    }
+    if ('readStatus' in patch && ['unread', 'reading', 'done'].includes(patch.readStatus)) {
+      p.readStatus = patch.readStatus;
+    }
+    if ('tags' in patch) p.tags = asStrArr(patch.tags) ?? p.tags;
+    if ('topics' in patch) p.topics = asStrArr(patch.topics) ?? p.topics;
+    if ('folders' in patch) p.folders = asStrArr(patch.folders) ?? p.folders;
+    if ('chat' in patch) p.chat = Array.isArray(patch.chat) ? patch.chat : p.chat;
+    if ('summaryAt' in patch) p.summaryAt = patch.summaryAt == null ? null : asNum(patch.summaryAt) ?? null;
+    if ('readProgress' in patch) {
+      p.readProgress =
+        patch.readProgress && typeof patch.readProgress === 'object' && !Array.isArray(patch.readProgress)
+          ? patch.readProgress
+          : null;
+    }
     // 笔记卡片：写入边界归一化（形状/限量/补 id 时间戳），防客户端写坏 jsonb
     if ('noteCards' in patch) p.noteCards = normalizeNoteCards(patch.noteCards);
     // 星级评分（0-5）与 starred 互为镜像，rating 为准；兼容旧的 starred 布尔。
     if ('rating' in patch) {
-      p.rating = Math.max(0, Math.min(5, Math.round(Number(patch.rating) || 0)));
+      p.rating = Math.max(0, Math.min(5, Math.round(asNum(patch.rating) ?? 0)));
       p.starred = p.rating > 0;
     } else if ('starred' in patch) {
       p.starred = !!patch.starred;

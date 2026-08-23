@@ -1,10 +1,14 @@
-// 阅读架状态（v3.21 多论文阅读抽屉）——浏览器多标签的学术版。
+// 阅读架状态（v3.21 多论文阅读抽屉；v3.23 改为显式策展语义）——浏览器书签 + 待读清单。
 //
 // 职责：持有有序论文 id 栈 + 当前阅读项，per-space 从 GET/PUT /api/reader-shelf 加载与持久化，
-// 状态变化后通知订阅者（阅读器内的抽屉 UI / FAB 徽章）重渲。本模块不依赖 pdf.js——
-// 常驻侧 reader-host.js（打开论文时上架）与惰性加载的 reader.js（抽屉 UI）共享同一实例。
+// 状态变化后通知订阅者（阅读器内的抽屉 UI / FAB 徽章 / 工具栏书签按钮）重渲。本模块不依赖
+// pdf.js——常驻侧 reader-host.js 与惰性加载的 reader.js（抽屉 UI）共享同一实例。
 //
-// 顺序语义：数组顺序即阅读顺序，完全由用户手动维护（抽屉拖拽）；打开/切换不重排。
+// 语义（v3.23）：
+//   · 上架是显式动作（工具栏 🔖 / Ctrl+D / 抽屉搜索），打开论文**不再自动上架**；
+//   · 顺序完全由用户手动维护（抽屉拖拽），切换/打开不重排；
+//   · 从架上移除永不切换论文、不关阅读器——架子是清单，不是「开着的东西」；
+//   · activeId = 当前打开的论文 id，**仅当它在架上**时有效（否则 ''，[/] 切换随之失效）。
 
 import { PUT, jget } from '../core/api.js';
 import { state } from '../core/state.js';
@@ -99,22 +103,48 @@ function persistShelf() {
 
 // ---- 变更操作（本地立即生效 + emit + 异步落库）----
 
-/** 打开论文时上架：已在不重复加（不重排），并设为当前阅读项。
- *  paper 传 detail/summary 均可（顺手富化 items，省一次 GET）。 */
-export async function shelfAddAndActivate(paper) {
-  if (!paper || !paper.id) return;
+/** 打开论文时标记当前篇：在架上 → activeId=id；不在 → activeId=''（不上架，[/] 随之失效）。 */
+export async function shelfActivate(id) {
+  if (!id) return;
   await ensureShelfLoaded();
-  const id = paper.id;
-  if (!shelfState.ids.includes(id)) {
-    shelfState.ids.push(id);
-    persistShelf();
-  }
-  shelfState.items[id] = itemFromPaper(paper);
-  shelfState.activeId = id;
+  shelfState.activeId = shelfState.ids.includes(id) ? id : '';
   emit();
 }
 
-/** 移除一篇。返回是否仍在架上（false = 已被移除）。 */
+/** 上架一篇（不改变当前阅读项——抽屉搜索「只上架不跳转」用）。已在架上幂等。 */
+export async function shelfAdd(paper) {
+  if (!paper || !paper.id) return;
+  await ensureShelfLoaded();
+  if (!shelfState.ids.includes(paper.id)) {
+    shelfState.ids.push(paper.id);
+    persistShelf();
+  }
+  shelfState.items[paper.id] = itemFromPaper(paper);
+  emit();
+}
+
+/** 切换当前论文的在架状态（工具栏 🔖 / Ctrl+D）。返回切换后是否在架上。 */
+export async function shelfToggle(paper) {
+  if (!paper || !paper.id) return false;
+  await ensureShelfLoaded();
+  const id = paper.id;
+  if (shelfState.ids.includes(id)) {
+    shelfState.ids.splice(shelfState.ids.indexOf(id), 1);
+    delete shelfState.items[id];
+    if (shelfState.activeId === id) shelfState.activeId = '';
+    persistShelf();
+    emit();
+    return false;
+  }
+  shelfState.ids.push(id);
+  shelfState.items[id] = itemFromPaper(paper);
+  shelfState.activeId = id;
+  persistShelf();
+  emit();
+  return true;
+}
+
+/** 移除一篇（永不切换论文/关阅读器——正在读的论文被移出后继续读）。返回是否原本在架上。 */
 export function shelfRemove(id) {
   const i = shelfState.ids.indexOf(id);
   if (i === -1) return false;
@@ -138,22 +168,17 @@ export function shelfMove(from, to) {
   return true;
 }
 
-/** 移除 id 后应切换到的邻居：优先右侧（下一篇），否则左侧，都没有则 null（架子空了）。 */
-export function shelfNeighborAfter(id) {
-  const i = shelfState.ids.indexOf(id);
-  if (i === -1) return shelfState.ids[0] || null;
-  return shelfState.ids[i + 1] || shelfState.ids[i - 1] || null;
-}
-
-/** [/] 快捷键：相对 activeId 的上/下一篇（dir=-1|+1，环形回绕）。无可切换返回 null。 */
+/** [/] 快捷键：相对 activeId 的上/下一篇（dir=-1|+1，环形回绕）。
+ *  当前篇不在架上（activeId 无效）时返回 null——架子是清单，没上架就没有「上下篇」。 */
 export function shelfStepId(dir) {
   const n = shelfState.ids.length;
   if (n < 2) return null;
-  const i = Math.max(0, shelfState.ids.indexOf(shelfState.activeId));
+  const i = shelfState.ids.indexOf(shelfState.activeId);
+  if (i === -1) return null;
   return shelfState.ids[(i + (dir > 0 ? 1 : n - 1)) % n];
 }
 
-/** 清空阅读架（不移除论文本身）。 */
+/** 清空阅读架（不移除论文本身，也不关阅读器）。 */
 export function shelfClear() {
   shelfState.ids = [];
   shelfState.items = {};

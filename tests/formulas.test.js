@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const {
   normalizeCanonicalName,
+  looksLikeFormula,
   normalizeLatex,
   formulaIdFor,
   normalizeFormula,
@@ -14,6 +15,36 @@ const {
 } = require('../src/core/formulas');
 
 // ---------------------------------------------------------------- 归一化
+
+test('looksLikeFormula：关系符/大算符/多行环境是公式，记号噪声不是（v3.27 生产噪声治理）', () => {
+  // 真公式：等式/不等式/求和/积分/期望式定义/多行环境
+  assert.ok(looksLikeFormula('E = mc^2'));
+  assert.ok(looksLikeFormula('a^2 + b^2 = c^2'));
+  assert.ok(looksLikeFormula('\\mathcal{L} \\le \\epsilon'));
+  assert.ok(looksLikeFormula('L = \\sum_{i=1}^{N} \\log p_i'));
+  assert.ok(looksLikeFormula('\\int_0^1 f(x) \\, dx')); // 大算符，无 = 也是公式
+  assert.ok(looksLikeFormula('\\begin{aligned} a &= b \\\\ c &= d \\end{aligned}'));
+  assert.ok(looksLikeFormula('x \\to y'));
+  assert.ok(looksLikeFormula('s \\in \\mathcal{S}'));
+  // 目标式算子（v3.50）：无关系符的 max/min 目标与 \mid 条件式也是公式（生产清理时曾误杀）
+  assert.ok(looksLikeFormula('\\max_{\\pi}\\;\\mathbb{E}_{s,a}[f(s,a)]'));
+  assert.ok(looksLikeFormula('\\min_{\\theta}\\; D_{\\mathrm{KL}}(p \\| q)'));
+  assert.ok(looksLikeFormula('p_\\theta(a_{t+1}\\mid v_{1:t})'));
+  // 生产实际噪声样本（v3.27 default 空间 678 条中的 mineru 记号片段）
+  assert.ok(!looksLikeFormula('\\tau'));
+  assert.ok(!looksLikeFormula('\\hat { p }'));
+  assert.ok(!looksLikeFormula('f _ { t + 1 }'));
+  assert.ok(!looksLikeFormula('f _ { 1 } , f _ { 2 } , \\cdots , f _ { t }'));
+  assert.ok(!looksLikeFormula('( \\beta _ { 1 } , \\beta _ { 2 } )'));
+  assert.ok(!looksLikeFormula('^ { 6 6 } \\mathrm { T } ^ { \\prime \\ }'));
+  assert.ok(!looksLikeFormula('p .'));
+  assert.ok(!looksLikeFormula('\\Gamma ^ { \\prime }'));
+  // 过短/纯数字
+  assert.ok(!looksLikeFormula(''));
+  assert.ok(!looksLikeFormula('ab'));
+  assert.ok(!looksLikeFormula('42'));
+  assert.ok(!looksLikeFormula('3.14'));
+});
 
 test('normalizeCanonicalName：小写 + 空白/下划线→连字符 + 折叠 + 去首尾', () => {
   assert.strictEqual(normalizeCanonicalName('Scaled Dot Product Attention'), 'scaled-dot-product-attention');
@@ -99,14 +130,23 @@ test('normalizeFormula：name 缺失时回落 canonicalName；variables 超量�
   assert.strictEqual(f.variables.length, MAX_VARIABLES);
 });
 
-test('normalizeFormula：plotHint 非法结构降级为 null', () => {
+test('normalizeFormula：plotHint 非法结构降级为 null（v3.29 起含 plotExpr 字段与白名单）', () => {
   const mk = (h) => normalizeFormula({ canonicalName: 'c', latex: 'x', plotHint: h }, 1).plotHint;
   assert.strictEqual(mk(null), null);
   assert.strictEqual(mk('x'), null);
   assert.strictEqual(mk({ range: [1, 2] }), null); // 无 variable
   assert.strictEqual(mk({ variable: 'x', range: [1] }), null); // range 长度不对
   assert.strictEqual(mk({ variable: 'x', range: ['a', 'b'] }), null); // 非数值
-  assert.deepStrictEqual(mk({ variable: 'x', range: [0, 1] }), { variable: 'x', range: [0, 1], params: {} });
+  assert.deepStrictEqual(mk({ variable: 'x', range: [0, 1] }), {
+    variable: 'x',
+    range: [0, 1],
+    params: {},
+    plotExpr: '',
+  });
+  // plotExpr：合法保留；脏字符（白名单之外）/超长 → 置空（求值期还有语义级第二道防线）
+  assert.strictEqual(mk({ variable: 'x', range: [0, 1], plotExpr: 'exp(-gamma*x)' }).plotExpr, 'exp(-gamma*x)');
+  assert.strictEqual(mk({ variable: 'x', range: [0, 1], plotExpr: 'x;bad' }).plotExpr, '', '分号等脏字符被拦');
+  assert.strictEqual(mk({ variable: 'x', range: [0, 1], plotExpr: 'x'.repeat(301) }).plotExpr, '', '超长被拦');
 });
 
 test('normalizeFormulas：过滤非法项 + 按 canonicalName 去重（先到先得）', () => {
@@ -136,6 +176,35 @@ function baseStore() {
     },
   };
 }
+
+test('conceptTerms（v3.28）：归一化去空去重 + 命中已有条目取并集封顶', () => {
+  const store = baseStore();
+  mergeFormulas(
+    store,
+    [
+      {
+        canonicalName: 'kl-divergence',
+        latex: 'A',
+        conceptTerms: ['KL Divergence', 'KL Divergence', 'Variational Inference'],
+      },
+    ],
+    'p1',
+  );
+  let f = store.formulas[0];
+  assert.deepStrictEqual(f.conceptTerms, ['KL Divergence', 'Variational Inference'], '去重');
+  // 第二篇命中同规范名：关联取并集（不同论文各连到不同概念），不丢旧关联
+  mergeFormulas(store, [{ canonicalName: 'kl-divergence', latex: 'B', conceptTerms: ['ELBO'] }], 'p2');
+  f = store.formulas[0];
+  assert.deepStrictEqual(f.conceptTerms, ['KL Divergence', 'Variational Inference', 'ELBO'], '并集');
+  // 归一化边界：非字符串/空串/超长被过滤
+  const g = normalizeFormula({ canonicalName: 'x-loss', latex: 'y', conceptTerms: [42, '', 'ok', 'x'.repeat(201)] });
+  assert.deepStrictEqual(g.conceptTerms, ['ok']);
+  // 非数组兜底空
+  assert.deepStrictEqual(
+    normalizeFormula({ canonicalName: 'z-loss', latex: 'w', conceptTerms: 'KL' }).conceptTerms,
+    [],
+  );
+});
 
 test('mergeFormulas：首次写入新建条目并回填 occurrence/paperIds', () => {
   const store = baseStore();

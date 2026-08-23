@@ -13,6 +13,9 @@
  * v3.20 概念/公式专用字段（category/freq/context/source/plottable）：仅前端客户端过滤用，
  * 后端 /api/concepts /api/formulas 不解析 DSL（数据全量在内存）。这些字段在论文页输入会
  * 被后端当成普通文本词（lib/search-query.js 不认），语义不通故实际无影响。
+ * v3.28 新增（同上前端专用）：freq:solo（仅单篇）、added:7d|30d（最近新增）、
+ * importance:core|supporting（概念核心度）、quality:nodef（缺解释/解读）。概念页的 topic:
+ * 复用论文页字段名，但语义为「概念出现的论文带该主题」。
  */
 (function () {
   const FIELD_ALIASES = { star: 'starred' };
@@ -49,6 +52,15 @@
         const rawField = chunk.slice(0, colonIdx).toLowerCase();
         const value = chunk.slice(colonIdx + 1);
         if (rawField && /^[a-z]+$/.test(rawField) && value.length > 0) { tokens.push({ type: 'field', field: rawField, value, exclude }); continue; }
+        // field:"引号短语"（与后端 search-query.js 同步）：chunk 被引号截断、value 为空时，
+        // 紧随的短语是该字段的值——否则拆成裸词 `field:` + 无字段短语，面板回填错位
+        if (rawField && /^[a-z]+$/.test(rawField) && value === '' && j < n && (s[j] === '"' || s[j] === '“' || s[j] === '”')) {
+          const q2 = s[j]; let k = j + 1; let ph = '';
+          while (k < n && s[k] !== q2 && s[k] !== '"' && s[k] !== '“' && s[k] !== '”') { ph += s[k]; k++; }
+          if (k < n && (s[k] === '"' || s[k] === '“' || s[k] === '”')) k++;
+          ph = ph.trim();
+          if (ph) { tokens.push({ type: 'field', field: rawField, value: ph, exclude }); i = k; continue; }
+        }
       }
       tokens.push({ type: 'word', value: chunk, exclude });
     }
@@ -126,15 +138,21 @@
         if (f === 'read') { if (!node.exclude) metadata.fields.readStatus = node.value.toLowerCase(); return; }
         // v3.20 概念/公式专用字段（前端客户端过滤，后端不解析）：
         //   category: 值匹配（多值，支持 -category: 排除）；概念/公式都用
-        //   freq: 枚举（shared=≥2 篇 / hot=≥4 篇）；概念专用
+        //   freq: 枚举（shared=≥2 篇 / hot=≥4 篇 / solo=仅单篇，v3.28 加 solo）；概念/公式都用
         //   context:. 有章节出处（. 占位=非空判定）；概念专用
         //   source: 枚举（ai/vision/mineru/manual）；公式专用
         //   plottable:1 可绘图（布尔，沿用 starred 语义）；公式专用
+        // v3.28 新增（概念/公式页前端专用）：
+        //   added: 7d|30d 最近新增（按 createdAt）；importance: core|supporting 概念核心度；
+        //   quality: nodef 缺解释（概念）/缺解读（公式）
         if (f === 'category') { if (!metadata.fields[f]) metadata.fields[f] = []; metadata.fields[f].push({ value: node.value, exclude: !!node.exclude }); return; }
-        if (f === 'freq') { if (!node.exclude && /^(shared|hot)$/i.test(node.value)) metadata.fields.freq = node.value.toLowerCase(); return; }
+        if (f === 'freq') { if (!node.exclude && /^(shared|hot|solo)$/i.test(node.value)) metadata.fields.freq = node.value.toLowerCase(); return; }
         if (f === 'context') { if (!node.exclude) metadata.fields.hasContext = true; return; }
         if (f === 'source') { if (!node.exclude) metadata.fields.source = node.value.toLowerCase(); return; }
         if (f === 'plottable') { if (!node.exclude && /^(1|true|yes|on)$/i.test(node.value)) metadata.fields.plottable = true; return; }
+        if (f === 'added') { if (!node.exclude && /^(7d|30d)$/i.test(node.value)) metadata.fields.added = node.value.toLowerCase(); return; }
+        if (f === 'importance') { if (!node.exclude && /^(core|supporting)$/i.test(node.value)) metadata.fields.importance = node.value.toLowerCase(); return; }
+        if (f === 'quality') { if (!node.exclude && /^nodef$/i.test(node.value)) metadata.fields.quality = 'nodef'; return; }
         if (['title', 'abstract', 'summary', 'notes', 'author', 'tag', 'topic'].includes(f)) { if (!metadata.fields[f]) metadata.fields[f] = []; metadata.fields[f].push({ value: node.value, exclude: !!node.exclude }); return; }
         metadata.text.words.push((node.field + ':' + node.value).toLowerCase());
       }
@@ -173,6 +191,9 @@
     if (panel.hasContext) parts.push('context:.');
     if (panel.source) parts.push('source:' + panel.source);
     if (panel.plottable) parts.push('plottable:1');
+    if (panel.added) parts.push('added:' + panel.added);
+    if (panel.importance) parts.push('importance:' + panel.importance);
+    if (panel.quality) parts.push('quality:' + panel.quality);
     if (panel.text && panel.text.trim()) parts.push(panel.text.trim());
     return parts.join(' ');
   }
@@ -180,7 +201,7 @@
   function parseToPanel(input) {
     const { metadata, bodyQuery } = parseSearchQuery(input);
     const f = metadata.fields;
-    const panel = { title: '', abstract: '', summary: '', notes: '', author: '', tags: [], excludeTags: [], topics: [], excludeTopics: [], yearFrom: '', yearTo: '', status: '', readStatus: '', starred: false, hasNotes: false, scope: bodyQuery !== null ? 'body' : 'metadata', bodyText: '', text: '', categories: [], excludeCategories: [], freq: '', hasContext: false, source: '', plottable: false };
+    const panel = { title: '', abstract: '', summary: '', notes: '', author: '', tags: [], excludeTags: [], topics: [], excludeTopics: [], yearFrom: '', yearTo: '', status: '', readStatus: '', starred: false, hasNotes: false, scope: bodyQuery !== null ? 'body' : 'metadata', bodyText: '', text: '', categories: [], excludeCategories: [], freq: '', hasContext: false, source: '', plottable: false, added: '', importance: '', quality: '' };
     if (f.title) panel.title = f.title.filter((e) => !e.exclude).map((e) => e.value).join(' ');
     if (f.abstract) panel.abstract = f.abstract.filter((e) => !e.exclude).map((e) => e.value).join(' ');
     if (f.summary) panel.summary = f.summary.filter((e) => !e.exclude).map((e) => e.value).join(' ');
@@ -198,6 +219,9 @@
     if (metadata.fields.hasContext === true) panel.hasContext = true;
     if (f.source) panel.source = f.source;
     if (metadata.fields.plottable === true) panel.plottable = true;
+    if (f.added) panel.added = f.added;
+    if (f.importance) panel.importance = f.importance;
+    if (f.quality) panel.quality = f.quality;
     if (bodyQuery) panel.bodyText = bodyQuery;
     if (metadata.text.words.length || metadata.text.phrases.length) panel.text = metadata.text.phrases.map((p) => '"' + p + '"').concat(metadata.text.words).join(' ');
     if (metadata.hasOr) panel.text = String(input || '').trim();

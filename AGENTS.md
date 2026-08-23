@@ -74,17 +74,52 @@ public/                零构建前端（原生 ESM，浏览器直接加载；�
                         <a href> 拦截、enter/leave 生命周期、force 重入）。单测 frontend-router.test.js
       routes.js  ★     路由表 + filterToQuery/queryToFilter（库视图筛选 ↔ query 编码）
       nav.js     ★     路由实例与导航助手：routeHandlers（各视图 enter/leave）、router、
-                        gotoPaperRoute/gotoLibraryRoute、syncFilterToUrl
+                        gotoPaperRoute/gotoPaper（v3.28 自 formulas.js 迁入）/gotoLibraryRoute、syncFilterToUrl
       api.js           sp（?space= 注入）/ jget / POST / PUT / PATCH / DEL / safeGet
       state.js         全局单例 state + notesState/chatState（含跨模块写入口 set_*）
       dom.js  format.js  markdown.js  stream.js  ui-kit.js
+      knowledge-link.js  概念↔公式跨页联动纯逻辑（v3.28）：termKey 名称匹配（'Scaled Dot-Product
+                        Attention' ≡ 'scaled-dot-product-attention'）/ formulasForConcept /
+                        conceptsForFormula（conceptTerms 显式 + 名称兜底）/ coOccurringConcepts / topicsOfConcept
+      form-dialog.js    通用表单对话框（v3.29）：text/textarea/select/checkbox/papers（论文选择器：
+                        搜索过滤 + chips 多选，attachPaperPicker 可单独复用）。Esc 取消、Enter 提交
+                        （textarea 内 Ctrl+Enter）、必填校验高亮。视觉复用 .pwdlg-* 体系。
+                        v3.30 另有 openMergeDialog（合并目标选择：相似度候选置顶标「疑似重复」）
+      pick-bar.js       知识页批量操作底栏（v3.29）：已选 N / 改分类 / 删除 / 退出，两页共用；
+                        选中集合归各页面模块持有（concepts/formulas 的 toggleXxxPickMode）
+      plot.js           公式绘图引擎（v3.29，纯函数零依赖）：plotExpr 递归下降求值器（白名单 token +
+                        无原型 scope，未知标识符解析期拒绝）→ sampleCurve（有限点过滤 / y 轴 2%~98%
+                        分位截断 / 超界断段）→ plotSvg（曲线/轴/零线）。求值失败一律 null 静默降级
+      stream.js 的 streamPostSse（v3.30）：通用 POST+SSE 流式读取（与 streamVisionFetch 同一套
+                        
+
+ 分块解析，不绑定论文聊天协议）——概念 AI 综合解读等新流式端点复用
+      command-palette.js  ⌘K 命令面板 + ? 快捷键帮助 + / 聚焦搜索（v3.32 R8）：论文/概念/
+                        公式即时跳转 + 动作；isTypingTarget 供全局快捷键让位输入态
+      theme.js           外观主题（v3.32 R10）：跟随系统/浅色/深色，html[data-theme] +
+                        localStorage('pw-theme')；<head> 内联脚本首帧应用（防深色闪白）
     library/           refresh sidebar list filters bulk folders folder-manager
                         （folder-manager = 收藏夹管理面板 v3.22：新建/行内改名换色/拖拽排序/删除，
                         入口在侧栏「收藏夹」标题行 ⚙；旧 folder-modal 与行内铅笔已退役）
     detail/            detail notes-panel tab-body chat-view chat-tab info-tab reader-host
     reader/            shelf（阅读架状态单例：有序论文栈 + GET/PUT 持久化 + subscribeShelf 订阅）
                         shelf-drawer（左下 FAB + 左侧抽屉 UI；与 pdf.js 解耦，jsdom 可直测）
-    concepts/  formulas/
+    concepts/  formulas/  （v3.28 两页知识工作台化：侧栏分面 热度/主题(概念)/来源(公式)/质量/最近新增/
+                        AI分类(降级末位) 全部写 DSL（新增 freq:solo、added:、importance:、quality:、
+                        概念页 topic: 复用）；concepts/ 下另有 detail-drawer.js（概念详情抽屉：
+                        定义/出处/出现论文(v3.29 每行带 per-paper 📍由来)/共现概念/相关公式）；
+                        formulas 卡有复制 LaTeX、出处明细表（rawLatex/符号对照直读）、函数曲线 SVG；
+                        两页互拉对方清单（缺才拉）保证深链也有联动数据。
+                        v3.29 工作流闭环：**手动新增**（工具条「+ 新增」，概念走 form-dialog /
+                        公式走 editor-drawer 创建模式，POST 合并语义）、**全字段编辑**（概念表单；
+                        formulas/editor-drawer.js 抽屉：KaTeX 实时预览/符号表行编辑/plotHint+曲线预览/
+                        conceptTerms）、**批量管理**（toggleXxxPickMode 多选 + pick-bar 底栏 +
+                        POST /api/{concepts,formulas}/bulk）。
+                        v3.30：**合并治理**（POST /api/{concepts,formulas}/merge + openMergeDialog
+                        疑似重复推荐，termSimilarity bigram Jaccard）、**starred 重点标记**（卡片☆/★ +
+                        侧栏「重点」分面 star:1）、**时间线**（抽屉出现论文按年份时间轴）、**按筛选导出**
+                        （exportXxxMd：POST ids → blob，无筛选回退全量 GET）、**AI 综合解读**
+                        （POST /api/concepts/:id/explain SSE 流式，streamPostSse 渲染，不落库））
     settings/          settings channels prompts collect taxonomy
     spaces/            spaces dir-wizard
     search/            advanced suggest help saved
@@ -94,19 +129,40 @@ public/                零构建前端（原生 ESM，浏览器直接加载；�
   reader.js  ★         pdf.js PDFViewer 阅读器（双页/批注/缩放/续读/AI 抽屉 + 阅读架抽屉
                         与 [/] 切换）。本轮未拆
   search-dsl.js ★      高级搜索 DSL 解析（classic script，非 ESM）
-  styles.css ★         Indigo 主题
+  styles.css ★         Indigo 主题（v3.31 UI 五轮迭代：R1 徽章降噪/标题提级、R2 加载骨架
+                        （refresh._listLoading + 知识页空列表时先注 skel 卡，数据到达覆盖）、
+                        R3 结构化空态（.es-* 图标+诊断+行动按钮，清除筛选/去抽取）、
+                        R4 a11y（全局 :focus-visible / prefers-reduced-motion 全局降级 /
+                        view-nav aria-current / count 对比度）、R5 卡片 stagger 入场+tabular-nums；
+                        注意 topbar-nav 的「深链首帧」测试已改为「骨架或空均可、真实卡不可」；
+                        v3.32 第二轮：R6 .md 72ch/15px 阅读排版、R7 select() 详情骨架、
+                        R8 命令面板（⌘K 升级旧「聚焦搜索」绑定，/ 承接）、R9 修复 1240 断点
+                        四列模板错配（侧栏移出 .layout 后遗留，880px 详情仅 52px 的根因）+
+                        ≤1080 窄窗档、R10 暗色 token 集 + 外观三段控件（v3.34 暗色治理：**新增表面 token
+                        --surface-raise/veil/veil-soft/hover + --border-hover**，菜单/触发器/ghost 按钮等
+                        51 处硬编码亮色面已源头 token 化——**新写 UI 勿再硬编码 #fff / rgba 白底**，
+                        用表面 token；阅读器顶栏类名是 .reader-bar 不是 .rb-bar；**chip 颜色用 format.js 的
+                        chipClass(name) → .chip-N 类**（浅/深两套 CSS，勿再内联 style 色值——内联会压过暗色覆盖）；v3.33 卡片工具按钮语言：.qbtn 微钮
+                        （参考 workitem_extract_viewer .ri-btn：静默→hover 主色、删除 hover 红）、
+                        星标 SVG 化（.on 类 + CSS fill，勿再用 textContent 切 ★/☆）、
+                        概念卡徽章下移 meta-line / 公式卡频次下移 fc-canon）
 scripts/               运维脚本：scan-once（CLI 扫描）/ migrate-json-to-pg（旧数据迁移，幂等）/
                         backfill-metadata（arXiv 元数据回填，dry-run 默认）/
                         e2e-bootstrap（e2e 种子）/ backup-pg.sh（pg_dump）/
                         verify-boot-view.mjs（真实 Chromium 核验深链首帧视图，见陷阱 0）
 tests/                 node --test 单测（全量 ~690 例，pg-mem 无需真实 PG）：
                         · 纯函数层（毫秒级，不进慢文件守卫）：api-route-table / frontend-router /
-                          spa-fallback / search-query / util / store / api-shelf（v3.21 阅读架端点）…
+                          spa-fallback / search-query / util / store / api-shelf（v3.21 阅读架端点）/
+                          plot（v3.29 公式绘图引擎：求值器优先级/安全拒绝/采样截断/SVG）…
                         · jsdom UI 层：chat-ui / notes-panel / regression-ui / search-ui / formulas-ui /
                           conceptmaps-ui / settings-channels-ui / dialog-ui / routing-ui /
                           topbar-nav（v3.17 顶栏导航与上下文搜索）/ reader-shelf-ui
                           （v3.21 阅读架抽屉，直驱 shelf+shelf-drawer 模块，无需 bootUi/pdf.js）/
-                          folder-manager-ui（v3.22 收藏夹管理面板，直驱模块 + 假后端 refresh 全链），
+                          folder-manager-ui（v3.22 收藏夹管理面板，直驱模块 + 假后端 refresh 全链）/
+                          knowledge-pages-ui（v3.28 概念/公式页联动：侧栏新分面过滤、概念详情抽屉、
+                          公式卡相关概念/出处明细；v3.29 追加：手动新增表单、多选批量删除/改分类、
+                          绘图渲染、公式编辑抽屉全链。注意假后端的 body 已预解析为对象、PWDialog
+                          是自动确认桩——详见 tests/api-knowledge.test.js 与该文件的注释），
                           共享 helpers/ui.js 的 bootUi（加载真实 index.html + app.js + 假后端）
                         · helpers/slow.js 慢文件守卫——npm test 默认跳过 >5s 文件，test:full 全量
                         · helpers/boot-loader.mjs：ESM resolve 钩子，让 `?boot=N` 沿依赖图传播，
@@ -131,6 +187,17 @@ backups/ logs/         运行时产物（gitignore）：JSON 快照与归档 / �
 > v3.6 起 `papers` 增 `note_cards` jsonb 列（migration 003）；`src/core/notes.js` 为卡片纯逻辑层（normalizeNoteCards/splitMarkdownToCards）。
 > v3.9 起 `papers` 增 `formula_ids` jsonb 列 + 新表 `formulas`（migration 004）；`src/core/formulas.js` 为公式纯逻辑层。
 > v3.10 起 `concepts` 增 `category` 列（migration 005）。**注意**：`filepath`/`fulltextPath` 是运行时派生字段，不落库（见陷阱 22）。
+> v3.27 起 `folders` 增 `position` 列（migration 007，用户手动排序持久化——folder 哈希行**并入数组下标**，
+> 重排必须触发落库，否则 hash-diff 判「无变化」重启回滚）；`concepts` 增 `context`/`source` 列（migration 008，
+> 概念出处/来源此前无列可落、重启即丢）。**注意**：`filepath`/`fulltextPath` 是运行时派生字段，不落库（见陷阱 22）。
+> v3.28 起 `concepts` 增 `importance` 列 + `formulas` 增 `concept_terms` jsonb 列（migration 009，
+> 知识联动：概念核心度 core|supporting（合并只升不降）+ 公式→概念显式关联词数组（合并取并集，
+> 前端另有 canonicalName↔term 名称匹配兜底，见 `public/js/core/knowledge-link.js`））。
+> v3.29 起 `concepts` 增 `contexts` jsonb 列（migration 010，per-paper 由来 `[{paperId, context}]`——
+> 概念级 context 只是首次的「主出处」，每篇论文各自的章节/式号落这里，同篇覆盖幂等、删论文同步清理）。
+> v3.30 起 `concepts`/`formulas` 各增 `starred` 布尔列（migration 011，重点标记——组会指派/复习清单，
+> `star:1` DSL 与论文页同语法；概念另有 `mergeConceptInto`/公式 `mergeFormulaInto` 收敛命名漂移的
+> 重复条目：paperIds/contexts/occurrences/conceptTerms 并集 + papers 反向替换）。
 > **注意**：`filepath`/`fulltextPath` 是运行时派生字段，不落库（见陷阱 22）。
 
 ```jsonc
@@ -159,8 +226,8 @@ backups/ logs/         运行时产物（gitignore）：JSON 快照与归档 / �
   "tags":     [...],                       // 全局标签字典
   "topics":   [...],                       // 全局主题字典
   "folders":  [ { "id", "name", "color", "createdAt" } ],  // 虚拟收藏夹；v3.22 起数组顺序 = 用户手动维护的顺序（PUT /api/folders/order）
-  "concepts": [ { "id", "term", "definition", "category", "paperIds", "source", "createdAt", "updatedAt" } ],
-  "formulas": [ { "id", "canonicalName", "name", "latex", "description", "category", "variables[]", "plottable", "plotHint", "occurrences[]", "paperIds", "source", "createdAt", "updatedAt" } ],  // v3.9 公式清单
+  "concepts": [ { "id", "term", "definition", "category", "context", "importance", "contexts[]", "paperIds", "source", "createdAt", "updatedAt" } ],  // v3.28：context=主出处，importance=core|supporting|''（合并 core 只升不降）；v3.29 contexts=[{paperId,context}] per-paper 由来
+  "formulas": [ { "id", "canonicalName", "name", "latex", "description", "category", "variables[]", "plottable", "plotHint", "occurrences[]", "paperIds", "source", "conceptTerms[]", "createdAt", "updatedAt" } ],  // v3.9 公式清单；v3.28 conceptTerms=相关概念 term 数组（公式↔概念联动）
   "settings": {                       // 在线编辑的设置（见陷阱 2/3/19/20）—— 运行时覆盖 config，仅存被改过的字段
     "summaryPrompt": "...",            // 总结提示词（Markdown 自由输出）
     "tagsPrompt": "...",               // 标签/主题提示词（强制 JSON）
@@ -284,9 +351,9 @@ arXiv 导入 (POST /api/import { url, meta? }):
   （全文行由 repo.saveSpaceStore 检测论文删除时连带 DELETE paper_texts）
 ```
 
-**概念增量抽取**（`scanner.extractConcepts(ids)`）：复用 textStore 里的全文，把已有 term 喂给模型只返回新概念，`mergeConcepts` 按归一化 term 去重并合并 paperIds。v3.10 起概念带 `category` 字段（11 类枚举）。
+**概念增量抽取**（`scanner.extractConcepts(ids)`）：复用 textStore 里的全文，把已有 term 喂给模型只返回新概念，`mergeConcepts` 按归一化 term 去重并合并 paperIds。v3.10 起概念带 `category` 字段（11 类枚举）；v3.42 起提示词**领域自适应**（先判领域再取命名/分类/记号惯例；category 有 theory/method/metric 等通用逃生门，前端枚举已补中文标签）。v3.28 起带 `importance`（core=本篇核心创新 / supporting=支撑技术，提示词要求判断「拿掉这个概念论文还成立吗」；**合并语义 core 只升不降**——后续论文当背景技术不应降级）；v3.29 起每次抽取的 context 同时落到该论文的 `contexts` 槽位（per-paper 由来，同篇覆盖幂等）。手动录入走 `POST /api/concepts`（source='manual'，命中已有走合并语义）。
 
-**公式抽取**（`scanner.extractFormulas(ids)` + processOne 步骤 6）：走 `extractFormulasViaEngine` dispatcher（引擎=ai 喂全文 / 引擎=mineru 喂 PDF filepath）；`mergeFormulas` 按 canonicalName 去重，命中只补空字段。阅读器右上角下拉菜单支持「查看本篇/追加抽取/重新抽取（replace）」，候选端点 `POST /api/papers/:id/{formulas,concepts}/candidates` 返回不入库，勾选后 `merge {items, mode?}` 入库（见陷阱 40）。
+**公式抽取**（`scanner.extractFormulas(ids)` + processOne 步骤 6）：走 `extractFormulasViaEngine` dispatcher（引擎=ai 喂全文 / 引擎=mineru 喂 PDF filepath）；`mergeFormulas` 按 canonicalName 去重，命中只补空字段。v3.28 起 AI 引擎的用户消息注入**本篇概念清单**，模型输出 `conceptTerms` 与概念显式关联（合并取并集封顶 6；MinerU/框选路径无此字段，前端 `knowledge-link.js` 用 canonicalName↔term 名称匹配兜底）。v3.29 起 plottable 公式的 plotHint 带 `plotExpr`（可求值表达式），前端 `core/plot.js`（递归下降求值器，白名单 token + 无原型 scope）在公式卡直接画曲线——**改 plotHint 相关逻辑勿绕过 plotSvg 的失败降级（返回 null 时静默不出图）**。手动录入/编辑走 `POST|PATCH /api/formulas`（source='manual'），批量治理走 `POST /api/formulas/bulk`。**MinerU 引擎有噪声防线（v3.27）**：md_content 的每个 $…$ 片段先过 `core/formulas.looksLikeFormula` 结构门槛（关系符/大算符/多行环境——单符号/下标/序列省略/引文标记等记号不入库，曾致生产 397 条 mineru 公式中 236 条噪声）、单篇截断 48 条（display 优先）、AI 批量命名要求回显 index 且可 `skip` 拒判（`mineru.alignNamed` 按 index 对齐；旧版 map+filter 在 AI 漏答后**名字整体错位**是生产脏数据根因之一）；存量清理用 `scripts/cleanup-formula-noise.js`（走运行中 app 的 API，防 manager 内存缓存与直写 PG 不一致）；AI 命名整体失败时的 `fm_lat_*` 降级哈希名（不可读、不跨论文归并）用 `scripts/backfill-formula-names.js` 回填（分块重命名 + 先删后并，逐块应用可断点续跑；判定看 `name` 字段——canonicalName 的下划线已被 normalizeCanonicalName 换成连字符）。阅读器右上角下拉菜单支持「查看本篇/追加抽取/重新抽取（replace）」，候选端点 `POST /api/papers/:id/{formulas,concepts}/candidates` 返回不入库，勾选后 `merge {items, mode?}` 入库（见陷阱 40）。
 
 **概念地图**（`POST /api/concepts/map`，v3.10；v3.14 起**后台任务化**）：POST/PUT 立即落库 `status:'generating'` 占位制品并返回（不挂请求等 AI），`startConceptMapJob` 在后台跑 `generateConceptMap`（**callChatStream 流式**——非流式大产出首字节前静默，会被代理空闲超时掐断；30min 预算、重试 1 次、支持 signal 取消），完成/失败更新占位再落库。切页/刷新不打断生成；前端 4s 轮询 settings 元信息，`generating→ready/error` 跳变 toast。生成中「删除」=取消任务（AbortController）；僵尸 generating（服务重启丢任务句柄）读路径解析为 error；同制品生成中重复优化 409；截断（缺 `</html>`）标 error 但保留半成品。提示词三级回退：当次自定义 > `settings.conceptMapPrompt` > 内置默认。
 制品清单是**缩略图网格**（v3.15）：制品 HTML 在 1280×800 sandboxed iframe（`allow-scripts` 无 same-origin）真实渲染后 `scale()` 缩小做 live 预览，IntersectionObserver 懒挂载；轮询只在状态/成员跳变时重渲（重渲=重挂 iframe，每轮必刷会反复重跑页内动画）。默认提示词为「**暗色骨架浅色化**」（v3.16）：v3.15 的纯浅色克制风效果不如 v3.10 暗色版，故回到 v3.10 美学骨架（鲜艳渐变主色 indigo→violet→pink + 玻璃拟态卡片 backdrop-filter blur + 氛围光晕背景 + 大胆展示字体 + 3 视图交互 + staggered 微动画），仅把深底翻成浅底（#f8fafc 冷白 + 极淡渐变光晕）。
@@ -294,7 +361,7 @@ arXiv 导入 (POST /api/import { url, meta? }):
 
 **批注持久化**（reader.js ↔ api.js ↔ annotations.js）：前端 `annotationStorage.onSetModified` → 防抖 serialize（`doc.annotationStorage.serializable.map`）→ PATCH `{annotations:{items}}` → api.js 经 `annotations.normalizeAnnotations` 归一化后存 store。回显：open 时拿 detailView.annotations → loadAnnotations 按 pageIndex 分组 → pagerendered 后 `getPageView(i).annotationEditorLayer.annotationEditorLayer.deserialize(item)`。
 
-**阅读架**（v3.21，多论文阅读抽屉）：`store.settings.readerShelf`（per-space 有序 id 数组，上限 50）。端点 `GET /api/reader-shelf`（富化条目：标题/年份/进度）/ `PUT`（整体替换；规整=去重保首现+滤死 id+截断）；删除论文时 `deletePapersCleanup` 联动剔除。前端 `public/js/reader/shelf.js`（状态单例：per-space 惰性加载 + `subscribeShelf` 订阅 + **串行 PUT 链**防乱序）与 `shelf-drawer.js`（FAB/抽屉 UI，**与 pdf.js 解耦**——常驻 reader-host 与惰性 reader.js 共享同一实例，jsdom 直测）。`openReader()` 打开论文即上架：已在不重复加、**不重排**（顺序仅抽屉内拖拽维护）；切论文走 `/reader/:id` **replace** 导航（同名路由不触发 leave，enter 重跑 openReader 整链）；`[`/`]` 环绕切换；移除当前篇自动切邻居，架子空则关阅读器。
+**阅读架**（v3.21 起；v3.23 改为**显式策展**语义——浏览器书签 + 待读清单，不是打开历史；v3.24 浮层为锚定 FAB 的**浮出卡片**「书签匣」）：`store.settings.readerShelf`（per-space 有序 id 数组，上限 50）。端点 `GET /api/reader-shelf`（富化条目：标题/年份/进度）/ `PUT`（整体替换；规整=去重保首现+滤死 id+截断）；删除论文时 `deletePapersCleanup` 联动剔除。前端 `public/js/reader/shelf.js`（状态单例：per-space 惰性加载 + `subscribeShelf` 订阅 + **串行 PUT 链**防乱序；`shelfToggle`=🔖/Ctrl+D 切换在架态、`shelfAdd`=只加不激活、`shelfActivate`=openReader 标记当前篇）与 `shelf-drawer.js`（FAB/浮层 UI，**与 pdf.js 解耦**——常驻 reader-host 与惰性 reader.js 共享同一实例，jsdom 直测；FAB 可纵向拖动、面板从按钮钻出 + 条目 stagger 浮现、按钮靠上自动翻到下方、maxHeight 按可用空间收缩）。**上架全是显式动作**（左上角 🔖 / Ctrl+D / 浮层搜索），打开论文不自动入架；移除/清空**永不**切换论文、不关阅读器；浮层搜索点结果只上架不跳转；点 PDF 收起浮层（与未钉住的聊天抽屉同语义）。切论文走 `/reader/:id` **replace** 导航（同名路由不触发 leave，enter 重跑 openReader 整链）；`[`/`]` 环绕切换（仅当前篇在架上时）。
 
 ## 关键约定 / 陷阱（改代码前必读）
 
@@ -308,10 +375,13 @@ arXiv 导入 (POST /api/import { url, meta? }):
      再拉数据 → render」。
    - **首帧视图由 CSS 决定，不由 JS 决定**（v3.17）。`<head>` 内联脚本只把 `location.pathname`
      写进 `data-boot-path`（零逻辑），映射规则全在 `styles.css` 的
-     `html[data-boot-path^="/concepts"] #concepts-view.view-hidden { display:flex !important }`
+     `html[data-boot-path^="/concepts"] #concepts-view.view-hidden { display:block !important }`
      一族里——**加新的一级视图要同时加四条规则**：显示自己的内容视图 + 显示自己的
      `.side-ctx` + 隐藏 `#library-view` + 隐藏 `.side-ctx[data-ctx="library"]`，否则该路径
-     深链刷新会闪论文页、或侧栏停在论文页那份内容上。`showView` 首次执行会
+     深链刷新会闪论文页、或侧栏停在论文页那份内容上。**boot 规则的 display 值必须与该视图
+     稳态一致**（概念/公式=block、settings=flex；v3.47 前误写 flex，`.concepts-head` 在
+     flex 行里被拉满整高、内容垂直居中——首帧「标题出现在页面中间」的根因）。
+     `showView` 首次执行会
      `removeAttribute('data-boot-path')` 交还控制权——**别删这行**，否则 boot 规则会一直把
      `#library-view` 压成 `display:none`。
    - **`.view-hidden` 必须带 `!important`**（v3.17 踩过）。它与 `.layout { display:grid }`
@@ -320,7 +390,8 @@ arXiv 导入 (POST /api/import { url, meta? }):
      配套地，首帧那几条「显出某视图」的规则也要 `!important`（都 important 时比特异性，
      `(1,2,1)` 稳赢）。运行时显隐一律切这个类，不要回到 inline `style.display`。
      验证手段：`node scripts/verify-boot-view.mjs`（需服务在跑）。它跑两遍——阻断 app.js 读
-     首帧 computed display，再放开 app.js 点导航切页后复读。**jsdom 测不了这类问题**：它不加载
+     首帧 computed display + 概念/公式标题 y 坐标（v3.47 起量几何，防「display 对了但布局错」），
+     再放开 app.js 点导航切页后复读。**jsdom 测不了这类问题**：它不加载
      外部 CSS，测试只能断言 class，而 bug 恰恰是「class 加了但 display 没变」。
    - **骨架是 `.app-shell`（侧栏 | 内容区），不是 `#library-view`**（v3.17 第二步）。侧栏与 rail
      常驻，三个内容视图在 `.app-content` 里换；`#library-view` 只剩「列表 | 分隔条 | 详情」三列。
@@ -630,6 +701,18 @@ arXiv 导入 (POST /api/import { url, meta? }):
     且无人纠正，懒加载新批次沿用错误列数。`_renderFormulaBatch` 里挂了 ResizeObserver 盯 grid 本体，
     **只认宽度变化**（高度变化是重排结果而非原因，必须过滤防反馈循环），window resize 保留作兜底。
     新增 JS 布局代码需要响应尺寸时同理：优先 ResizeObserver 盯容器本体。
+
+45. **公式必须在 marked 之前抽走（v3.53 总结红字公式根因）**：`renderMd` 旧管线先跑
+    marked/DOMPurify 再把 `$…$` 段喂 KaTeX，LaTeX 源在中间被污染——`<`/`>` 实体化成
+    `&lt;`/`&gt;`（KaTeX 见 `&` 即报错红显）、`\{`/`\_` 被 CommonMark 反斜杠转义吃掉、
+    `_` 被配成 `<em>`、多行 `$$` 被插 `<br>`；生产 177 篇总结曾因此 107 处红字公式。
+    现 `markdown.js` 的 `protectMath` 在 marked 前把公式段换成随机占位符（跳过行内码/
+    fenced code、尊重 `\$` 转义、行内公式不跨行），sanitize 后用**原始 LaTeX** 经
+    `renderTex` 回填。`renderTex` 是 LaTeX→KaTeX 单一入口（原样 → 双下标/上标自动修复
+    `h_d_i`→`h_{d_i}` → 红字降级三级尝试，`strict:false` 只关 console 噪音）。
+    **改渲染管线勿把回填挪回 sanitize 之前**（占位符会暴露给用户文本），也勿在公式
+    渲染路径手拼 HTML（KaTeX 输出以外的兜底必须走 `escapeHtml`）。单测
+    `tests/markdown-math.test.js`（快套件，DOMPurify 恒等桩）。
 
 ## 工程化
 

@@ -323,3 +323,16 @@ test('evalAst：OR 组内 -tag:moe 排除（非排除项命中即入）', () => 
   // a/b 无 moe → -tag:moe 命中；d 有 rl；c 只有 moe → 两边都不满足被排除
   assert.deepStrictEqual(out, ['a', 'b', 'd']);
 });
+
+test('parseSearchQuery: field:"引号短语" —— 字段值含空格短语（不再劣化为恒零结果）', () => {
+  // 旧 tokenizer 把 title:"all you need" 拆成裸词 `title:`（要求标题含字面冒号）+ 全局短语，
+  // AND 语义下恒零命中且不报错——用户最自然的写法直接查空
+  const r = parseSearchQuery('title:"all you need"');
+  assert.deepStrictEqual(r.metadata.fields.title, [{ value: 'all you need', exclude: false }]);
+  assert.deepStrictEqual(r.metadata.text.phrases, [], '短语归属字段，不再进全局 phrases');
+  const hit = applyMetadataQuery(LIST, r);
+  assert.deepStrictEqual(hit.map((p) => p.id), ['a'], '按标题子串命中 Attention Is All You Need');
+  // 排除形：-title:"all you need"
+  const r2 = parseSearchQuery('-title:"all you need"');
+  assert.ok(r2.metadata.fields.title[0].exclude, '排除前缀随字段短语透传');
+});

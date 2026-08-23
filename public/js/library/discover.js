@@ -62,7 +62,7 @@ function renderDiscoverResults(results) {
           <div class="discover-main">
             <div class="discover-title-line">
               <span class="discover-rank">#${i + 1}</span>
-              <a class="discover-title" href="${r.arxivUrl}" target="_blank" rel="noopener">${escapeHtml(r.title)}</a>
+              <a class="discover-title" href="${escapeHtml(r.arxivUrl || '')}" target="_blank" rel="noopener">${escapeHtml(r.title)}</a>
               ${cite}
               ${rel}
             </div>

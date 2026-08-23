@@ -287,11 +287,38 @@ function conceptIdFor(term) {
   return 'c_' + stableShortHash(normalizeTerm(term));
 }
 
+/** 概念核心度归一化：'core'（本篇核心创新）/ 'supporting'（支撑技术），其余（含空）→ ''（未知）。 */
+function normalizeImportance(v) {
+  const s = String(v || '')
+    .trim()
+    .toLowerCase();
+  return s === 'core' || s === 'supporting' ? s : '';
+}
+
+/** 概念「由来」归一化（v3.29）：contexts = [{paperId, context}]，按 paperId 去重（后者覆盖前者）、
+ *  空 context 不入列、封顶 50 条。概念级 context 仍是「主出处」（首次定义处）。 */
+function normalizeConceptContexts(raw) {
+  if (!Array.isArray(raw)) return [];
+  const byPaper = new Map();
+  for (const item of raw) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
+    const paperId = String(item.paperId || '').trim();
+    const context = String(item.context || '')
+      .trim()
+      .slice(0, 200);
+    if (!paperId || !context) continue;
+    byPaper.set(paperId, context); // 同 paperId 覆盖（重复抽取幂等）
+    if (byPaper.size >= 50) break;
+  }
+  return [...byPaper.entries()].map(([paperId, context]) => ({ paperId, context }));
+}
+
 /**
  * 把若干 {term, definition} 归并入概念清单：
  * - 已存在（按归一化 term）则补全 definition / 追加 paperId；
  * - 否则新建。
  * 返回本次新增（首次出现）的概念 id 列表。
+ * raw.source（v3.29）：'ai'（默认，抽取链路）| 'manual'（手动新增）——仅新建时生效，命中不改。
  */
 function mergeConcepts(store, items, paperId) {
   const existing = new Map((store.concepts || []).map((c) => [normalizeTerm(c.term), c]));
@@ -307,19 +334,40 @@ function mergeConcepts(store, items, paperId) {
       if (raw.definition && !c.definition) c.definition = String(raw.definition).trim();
       // category 只在原概念缺分类时补（不覆盖已有）
       if (raw.category && !c.category) c.category = String(raw.category).trim().toLowerCase();
-      // context（论文出处，如「3.2 节，式(1)」）：仅在原概念缺时补，便于回溯
+      // context（论文出处，如「3.2.1 节，式(1)」）：仅在原概念缺时补，便于回溯
       if (raw.context && !c.context) c.context = String(raw.context).trim();
-      if (paperId && !c.paperIds.includes(paperId)) c.paperIds.push(paperId);
+      // importance 只升不降：任一篇把该概念标为核心创新（core），它就是核心——
+      // 后续论文把它当背景技术（supporting）不应降级（学者找「创新点」时宁多勿漏）
+      const imp = normalizeImportance(raw && raw.importance);
+      if (imp === 'core') c.importance = 'core';
+      else if (imp && !c.importance) c.importance = imp;
+      if (paperId) {
+        if (!c.paperIds.includes(paperId)) c.paperIds.push(paperId);
+        // per-paper 由来（v3.29）：本篇的 context 记到该论文槽位（同篇覆盖，重复抽取幂等）
+        if (raw && raw.context) {
+          const ctxList = normalizeConceptContexts(c.contexts);
+          const next = ctxList.filter((x) => x.paperId !== paperId);
+          next.push({ paperId, context: String(raw.context).trim().slice(0, 200) });
+          c.contexts = next;
+        }
+      }
       c.updatedAt = Date.now();
     } else {
+      const src = raw && raw.source === 'manual' ? 'manual' : 'ai';
       c = {
         id,
         term,
         definition: String((raw && raw.definition) || '').trim(),
-        category: String((raw && raw.category) || '').trim().toLowerCase() || 'other',
+        category:
+          String((raw && raw.category) || '')
+            .trim()
+            .toLowerCase() || 'other',
         context: String((raw && raw.context) || '').trim(),
-        source: 'ai',
+        importance: normalizeImportance(raw && raw.importance),
+        starred: !!(raw && raw.starred),
+        source: src,
         paperIds: paperId ? [paperId] : [],
+        contexts: paperId && raw && raw.context ? normalizeConceptContexts([{ paperId, context: raw.context }]) : [],
         createdAt: Date.now(),
         updatedAt: Date.now(),
       };
@@ -346,8 +394,46 @@ function removePaperFromConcepts(store, paperId) {
   if (!Array.isArray(store.concepts)) return;
   for (const c of store.concepts) {
     if (Array.isArray(c.paperIds)) c.paperIds = c.paperIds.filter((x) => x !== paperId);
+    if (Array.isArray(c.contexts)) c.contexts = c.contexts.filter((x) => x.paperId !== paperId);
   }
   store.concepts = store.concepts.filter((c) => (c.paperIds || []).length > 0);
+}
+
+/** 把 source 概念并入 target（v3.30 治理：命名漂移产生的重复条目收敛）。
+ *  并集语义：paperIds 合并去重；contexts 按 paperId 合并（target 已有的槽位保留）；
+ *  definition/category/context/importance 只在 target 缺时补（importance 遵循 core 只升不降）；
+ *  starred 取或；papers[].conceptIds 里的 sourceId 全部替换为 targetId；删除 source。
+ *  返回合并后的 target（概念不存在/自并时返回 null）。 */
+function mergeConceptInto(store, sourceId, targetId) {
+  if (!sourceId || !targetId || sourceId === targetId) return null;
+  const source = (store.concepts || []).find((c) => c.id === sourceId);
+  const target = (store.concepts || []).find((c) => c.id === targetId);
+  if (!source || !target) return null;
+  // paperIds 并集（保持 target 原有的在前）
+  const ids = new Set(target.paperIds || []);
+  for (const pid of source.paperIds || []) ids.add(pid);
+  target.paperIds = [...ids];
+  // contexts 按 paperId 并集（target 槽位优先——已有的是该篇的准确由来）
+  const ctxBy = new Map((target.contexts || []).map((x) => [x.paperId, x]));
+  for (const x of source.contexts || []) if (!ctxBy.has(x.paperId)) ctxBy.set(x.paperId, x);
+  target.contexts = [...ctxBy.values()];
+  // 空缺补齐（同 mergeConcepts 命中语义）
+  if (!target.definition && source.definition) target.definition = source.definition;
+  if (!target.category && source.category) target.category = source.category;
+  if (!target.context && source.context) target.context = source.context;
+  if (source.importance === 'core') target.importance = 'core';
+  else if (!target.importance && source.importance) target.importance = source.importance;
+  target.starred = !!(target.starred || source.starred);
+  target.updatedAt = Date.now();
+  // 删 source + papers 反向替换
+  store.concepts = store.concepts.filter((c) => c.id !== sourceId);
+  for (const p of Object.values(store.papers || {})) {
+    if (Array.isArray(p.conceptIds)) {
+      const set = new Set(p.conceptIds.map((x) => (x === sourceId ? targetId : x)));
+      p.conceptIds = [...set];
+    }
+  }
+  return target;
 }
 
 /** 创建虚拟收藏夹 */
@@ -371,9 +457,12 @@ function deleteFolder(store, id) {
   return true;
 }
 
-/** 把概念清单渲染为分类 Markdown 文档，便于导出/外部查看 */
-function conceptsToMarkdown(store) {
-  const items = store.concepts || [];
+/** 把概念清单渲染为分类 Markdown 文档，便于导出/外部查看。
+ *  opts.ids（v3.30）：限定导出子集（「按当前筛选导出」，备课/综述场景）。 */
+function conceptsToMarkdown(store, opts = {}) {
+  const ids = Array.isArray(opts && opts.ids) && opts.ids.length ? new Set(opts.ids) : null;
+  let items = store.concepts || [];
+  if (ids) items = items.filter((c) => ids.has(c.id));
   if (!items.length) return '# 概念清单\n\n_（暂无概念，运行 AI 总结或在论文页「追加概念」即可生成）_\n';
   const byFirst = new Map();
   for (const c of items) {
@@ -385,10 +474,16 @@ function conceptsToMarkdown(store) {
   for (const ch of [...byFirst.keys()].sort()) {
     lines.push(`## ${ch}`);
     for (const c of byFirst.get(ch)) {
-      lines.push(`### ${c.term}`);
-      if (c.category) lines.push('', `_分类：${c.category}_`);
+      lines.push(`### ${c.starred ? '⭐ ' : ''}${c.term}`);
+      const meta = [
+        c.category ? `分类：${c.category}` : '',
+        c.importance === 'core' ? '核心创新' : '',
+        c.context ? `出处：${c.context}` : '',
+      ].filter(Boolean);
+      if (meta.length) lines.push('', `_${meta.join(' · ')}_`);
       if (c.definition) lines.push('', c.definition);
       if (c.paperIds && c.paperIds.length) {
+        const ctxOf = new Map((c.contexts || []).map((x) => [x.paperId, x.context]));
         const names = c.paperIds.map((id) => {
           const p = store.papers && store.papers[id];
           return p ? p.title || p.filename || id : id;
@@ -397,6 +492,11 @@ function conceptsToMarkdown(store) {
           '',
           `_出现于 ${c.paperIds.length} 篇：${names.slice(0, 3).join(' / ')}${names.length > 3 ? ' 等' : ''}_`,
         );
+        // per-paper 由来（v3.29）：每篇各自出现在哪一节哪个式号
+        for (const [pid, ctx] of ctxOf.entries()) {
+          const p = store.papers && store.papers[pid];
+          if (p) lines.push(`- ${p.title || p.filename || pid}：${ctx}`);
+        }
       }
       lines.push('');
     }
@@ -419,6 +519,9 @@ module.exports = {
   mergeTopics,
   normalizeTopic,
   normalizeTerm,
+  normalizeImportance,
+  normalizeConceptContexts,
+  mergeConceptInto,
   stableShortHash,
   conceptIdFor,
   mergeConcepts,

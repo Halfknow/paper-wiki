@@ -2822,3 +2822,45 @@ test('PUT /api/settings/concept-map-prompt：保存/回显/重置', async () => 
   assert.strictEqual(s.json.data.conceptMapPrompt, '');
   server.close();
 });
+
+test('PATCH /api/papers/:id 类型清洗：畸形 body 不打崩视图层与持久化', async () => {
+  const store = {
+    version: 1,
+    tags: [],
+    papers: {
+      a: { id: 'a', title: '原标题', summary: '原总结', summaryAt: 123, tags: ['t1'], status: 'ready', updatedAt: 0 },
+    },
+  };
+  let saved = 0;
+  const router = createApiRouter(
+    baseCtx(store, async () => {
+      saved++;
+    }),
+  );
+  const server = await startServer(router.handle);
+  const port = server.address().port;
+
+  // summary 非字符串：忽略（旧版会让 GET /api/papers 的 p.summary.slice 抛 500）
+  let r = await call(port, 'PATCH', '/api/papers/a', { summary: 12345 });
+  assert.strictEqual(r.status, 200);
+  assert.strictEqual(store.papers.a.summary, '原总结', '非字符串 summary 被忽略');
+  // summaryAt 非数字：归 null（旧版 'abc' 会让 DOUBLE PRECISION 列写入恒失败、卡死空间保存）
+  r = await call(port, 'PATCH', '/api/papers/a', { summaryAt: 'abcd' });
+  assert.strictEqual(r.status, 200);
+  assert.strictEqual(store.papers.a.summaryAt, null, '非数字 summaryAt 归 null');
+  // tags 字符串：忽略（旧版按字符迭代出单字标签）
+  r = await call(port, 'PATCH', '/api/papers/a', { tags: 'xyz' });
+  assert.strictEqual(r.status, 200);
+  assert.deepStrictEqual(store.papers.a.tags, ['t1'], '非数组 tags 被忽略');
+  // 合法写不受影响
+  r = await call(port, 'PATCH', '/api/papers/a', { summary: '新总结', summaryAt: 456, tags: ['t1', 't2'] });
+  assert.strictEqual(r.status, 200);
+  assert.strictEqual(store.papers.a.summary, '新总结');
+  assert.strictEqual(store.papers.a.summaryAt, 456);
+  assert.deepStrictEqual(store.papers.a.tags, ['t1', 't2']);
+  // 清洗后 GET 仍正常（detailView 的 summary.slice 不炸）
+  const g = await call(port, 'GET', '/api/papers/a');
+  assert.strictEqual(g.status, 200);
+  assert.ok(saved >= 4);
+  server.close();
+});

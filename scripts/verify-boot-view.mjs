@@ -42,10 +42,21 @@ for (const { path, expected, ctx, overlay } of [
   const want = overlay ? [expected, 'settings-view'] : [expected];
   const viewOk = shown.length === want.length && want.every((w) => shown.some((s) => s.startsWith(w)));
   const ctxOk = ctxShown.length === 1 && ctxShown[0] === ctx;
-  const ok = viewOk && ctxOk;
+  // 首帧几何（v3.47）：概念/公式视图的标题必须在顶部，不许停在页面垂直中部。
+  // 根因曾是把 boot 规则写成 display:flex（稳态是 block）——flex 行里 .concepts-head
+  // 被 align-items:stretch 拉满整高、内容垂直居中，「标题出现在中间」。display 值对了
+  // 但布局还可能错，这里直接量标题 y 坐标兜底。
+  let geoNote = '';
+  let geoOk = true;
+  if (expected === 'concepts-view' || expected === 'formulas-view') {
+    const geo = await page.$eval('#' + expected + ' .concepts-head h2', (el) => el.getBoundingClientRect().y);
+    geoOk = geo >= 0 && geo < 150;
+    geoNote = ` | 标题y=${Math.round(geo)}${geoOk ? '' : '（应在顶部 <150）'}`;
+  }
+  const ok = viewOk && ctxOk && geoOk;
   if (!ok) failed++;
   console.log(
-    `${ok ? 'OK  ' : 'FAIL'} ${path.padEnd(18)} 视图: ${shown.join(', ') || '(无)'} | 侧栏: ${ctxShown.join(', ') || '(无)'}` +
+    `${ok ? 'OK  ' : 'FAIL'} ${path.padEnd(18)} 视图: ${shown.join(', ') || '(无)'} | 侧栏: ${ctxShown.join(', ') || '(无)'}${geoNote}` +
     (ok ? '' : `  期望视图 ${want.join(' + ')} / 侧栏 ${ctx}`),
   );
 }

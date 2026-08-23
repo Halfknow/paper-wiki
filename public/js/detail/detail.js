@@ -20,6 +20,20 @@ import { refresh } from '../library/refresh.js';
 export async function select(id, tab) {
   await flushPendingNotes(); // 切论文前，先把旧论文的待存笔记落盘，避免丢失最后 800ms 输入
   state.current = id;
+  // 切换论文的加载反馈（R7）：详情 fetch 期间旧内容一直挂着且无指示——先出与
+  // renderDetail 同构的骨架（标题/元数据/tab 条/正文行），数据到达后整体替换。
+  if (state.detail && state.detail.id !== id) {
+    $('detail').innerHTML = `
+      <div class="detail-skel" aria-busy="true" aria-label="正在加载论文详情">
+        <div class="skel ds-title"></div>
+        <div class="skel ds-meta"></div>
+        <div class="ds-tabs"><i class="skel"></i><i class="skel"></i><i class="skel"></i><i class="skel"></i></div>
+        <div class="skel ds-line"></div>
+        <div class="skel ds-line" style="width:92%"></div>
+        <div class="skel ds-line" style="width:86%"></div>
+        <div class="skel ds-line" style="width:64%"></div>
+      </div>`;
+  }
   const { data: p } = await jget('/api/papers/' + encodeURIComponent(id));
   state.detail = p;
   // tab 由路由决定（/paper/:id/:tab）；直接调用时仍默认总结页

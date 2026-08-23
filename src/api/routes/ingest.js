@@ -27,7 +27,10 @@ function register(t, ctx) {
     const meta = op.meta && typeof op.meta === 'object' ? op.meta : {};
     const mTitle = typeof meta.title === 'string' ? meta.title.trim() : '';
     const mAuthors = Array.isArray(meta.authors) ? meta.authors.filter((a) => typeof a === 'string' && a.trim()) : [];
-    const mYear = meta.year != null && String(meta.year).trim() ? String(meta.year).slice(0, 4) : null;
+    // year 列是 DOUBLE PRECISION：非数字字符串（如 'abcd'）会让该论文行的保存事务恒失败，
+    // 进而卡死整个空间的持久化（坏行恒在 hash-diff 里）——只接受纯数字
+    const mYearRaw = meta.year != null && String(meta.year).trim() ? String(meta.year).trim().slice(0, 4) : '';
+    const mYear = /^\d{1,4}$/.test(mYearRaw) ? mYearRaw : null;
     const mAbstract = typeof meta.abstract === 'string' ? meta.abstract : '';
     const mCategory = typeof meta.primaryCategory === 'string' ? meta.primaryCategory : null;
 

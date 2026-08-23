@@ -2,17 +2,21 @@
 //
 // 自 public/app.js 拆出（v3.15 模块化重构）——声明体原样迁移，仅补 import/export。
 
-import { _conceptLayout, _conceptSort, _conceptView, generateConceptMap, openConceptFilterPop, renderConcepts, set_conceptLayout, set_conceptSort } from './concepts/concepts.js';
+import { _conceptLayout, _conceptSort, _conceptView, createConcept, exportConceptsMd, generateConceptMap, renderConcepts, set_conceptLayout, set_conceptSort, toggleConceptPickMode } from './concepts/concepts.js';
 import { POST, sp } from './core/api.js';
 import { $ } from './core/dom.js';
+import { isTypingTarget, openCommandPalette, openShortcutsHelp } from './core/command-palette.js';
+import { wireTheme } from './core/theme.js';
 import { escapeHtml } from './core/format.js';
 import { gotoPaperRoute, router, syncPageQueryToUrl } from './core/nav.js';
 import { buildPath } from './core/router.js';
+import { filterToQuery } from './core/routes.js';
 import { state } from './core/state.js';
 import { setBusy, toast } from './core/ui-kit.js';
 import { select } from './detail/detail.js';
 import { patch, reader } from './detail/info-tab.js';
-import { _formulaLayout, _formulaSort, renderFormulas, resetFormulaFacet, set_formulaLayout, set_formulaSort } from './formulas/formulas.js';
+import { _formulaLayout, _formulaSort, exportFormulasMd, renderFormulas, resetFormulaFacet, set_formulaLayout, set_formulaSort, toggleFormulaPickMode } from './formulas/formulas.js';
+import { openFormulaEditor } from './formulas/editor-drawer.js';
 import { closeBulkMenu, setBulkBusy, syncPickUI, toggleBulkMenu, togglePickMode, updateBulkProgress } from './library/bulk.js';
 import { closeStatusMenu, openFilterPop, renderStatusMenu, toggleStatusMenu } from './library/filters.js';
 import { goHome } from './library/folders.js';
@@ -242,14 +246,43 @@ export function bind() {
       if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
       e.preventDefault();
       const v = a.dataset.view;
+      if (v === 'library') {
+        // 论文页筛选以 state.filter 显式还原（v3.51 修）：此前 keepQuery 会把概念/公式页
+        // 的 ?q= DSL 一并带进 /library，论文列表被别页的筛选条件清空。
+        router.navigate('/library', { force: true, query: filterToQuery(state.filter) });
+        return;
+      }
       const to = v === 'concepts'
         ? (_conceptView === 'maps' ? '/concepts/maps' : '/concepts')
         : a.getAttribute('href');
-      router.navigate(to, { force: true, keepQuery: v === 'library' });
+      router.navigate(to, { force: true });
     };
   });
-  // 概念筛选漏斗按钮（分类/频次/出处面板）
-  $('concept-filter-btn').onclick = (e) => { e.stopPropagation(); openConceptFilterPop(); };
+  // 概念筛选漏斗已退役（v3.28）：热度/主题/质量/时间/分类分面全部在侧栏（renderConceptSidebar 自行接线）。
+  // 手动新增 + 多选批量（v3.29）：pick 按钮 active/title 态在下一帧按「卡片是否带 pickable」回读同步。
+  $('btn-concept-add').onclick = () => createConcept();
+  $('btn-concepts-md').onclick = () => exportConceptsMd(); // v3.30：有筛选导出子集
+  const cPick = $('btn-concept-pick');
+  cPick.onclick = () => {
+    toggleConceptPickMode();
+    requestAnimationFrame(() => {
+      const on = document.querySelector('#concepts-grid .concept-card.pickable') != null;
+      cPick.classList.toggle('active', on);
+      cPick.title = on ? '退出多选' : '多选概念以批量删除 / 改分类';
+    });
+  };
+  $('btn-formula-add').onclick = () => openFormulaEditor(null);
+  const fMd = $('btn-formulas-md');
+  if (fMd) fMd.onclick = () => exportFormulasMd(); // v3.30：有筛选导出子集
+  const fPick = $('btn-formula-pick');
+  fPick.onclick = () => {
+    toggleFormulaPickMode();
+    requestAnimationFrame(() => {
+      const on = document.querySelector('#formulas-grid .formula-card.pickable') != null;
+      fPick.classList.toggle('active', on);
+      fPick.title = on ? '退出多选' : '多选公式以批量删除 / 改分类';
+    });
+  };
   document.querySelectorAll('#formula-layout button').forEach((b) => {
     b.onclick = () => {
       set_formulaLayout(b.dataset.layout);
@@ -580,13 +613,30 @@ export function bind() {
   // 一处收口（旧 folder-modal 与行内铅笔退役）。面板内部事件由 folder-manager.js 自行接线。
   $('btn-manage-folders').onclick = () => openFolderManager();
 
+  // 主题外观（v3.32 R10）：分段控件 + 系统主题跟随
+  wireTheme();
+
   // ESC 关闭阅读器/模态
   document.addEventListener('keydown', (e) => {
+    // Ctrl/Cmd+K：命令面板（v3.32 R8）——沿业界惯例升级旧「聚焦搜索」绑定
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
       e.preventDefault();
-      $('search').focus();
-      $('search').select();
+      openCommandPalette();
       return;
+    }
+    // '/'：聚焦搜索（不打断输入态）；'?'：快捷键帮助（Shift+/）
+    if (!isTypingTarget(e.target)) {
+      if (e.key === '/') {
+        e.preventDefault();
+        $('search').focus();
+        $('search').select();
+        return;
+      }
+      if (e.key === '?') {
+        e.preventDefault();
+        openShortcutsHelp();
+        return;
+      }
     }
     if ($('reader-view').classList.contains('active') && reader && !['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName)) {
       if (e.key === 'ArrowLeft') { e.preventDefault(); reader.scrollToPage(Math.max(1, reader.page - 1)); return; }

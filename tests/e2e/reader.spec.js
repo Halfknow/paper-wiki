@@ -57,7 +57,7 @@ test.describe('PDF 阅读器', () => {
     await page.waitForTimeout(2000);
 
     // 关闭阅读器触发保存（返回按钮）
-    await page.locator('#reader-back').click();
+    await page.locator('#reader-close').click();
     await page.waitForTimeout(1500);
 
     // 校验：后端 papers.json 的 sample.annotations.items 非空（覆盖 quadPoints 往返）

@@ -82,6 +82,7 @@ function createSpaceManager({ repo, papersRoot, globalConfig }) {
 
   let registry = null; // { activeSpaceId, spaces: [...] } 内存态，源于 PG
   const storeCache = new Map(); // spaceId -> store 内存引用（与 scanner/api 共享）
+  const storeLoads = new Map(); // spaceId -> 进行中的 getSpaceStore Promise（并发去重）
 
   function normalizeSpace(s) {
     return {
@@ -211,14 +212,25 @@ function createSpaceManager({ repo, papersRoot, globalConfig }) {
   }
 
   /** 懒加载并缓存某空间的 store（首次从 PG 组装，之后返回内存引用）。
-   *  每篇 paper 的 filepath 在此派生（papersDir+filename），不落库。 */
+   *  每篇 paper 的 filepath 在此派生（papersDir+filename），不落库。
+   *  in-flight 去重：启动首扫与首个 API 请求常并发加载同一空间，无去重会各自 load 出
+   *  两个 store 对象、cache 只留一个——后拿到旧对象的请求保存时把先到的修改静默回滚。 */
   async function getSpaceStore(id) {
     if (!getSpace(id)) return null;
     if (storeCache.has(id)) return storeCache.get(id);
-    const store = await repo.loadSpaceStore(id);
-    deriveFilepaths(id, store);
-    storeCache.set(id, store);
-    return store;
+    if (storeLoads.has(id)) return storeLoads.get(id);
+    const p = (async () => {
+      const store = await repo.loadSpaceStore(id);
+      deriveFilepaths(id, store);
+      storeCache.set(id, store);
+      return store;
+    })();
+    storeLoads.set(id, p);
+    try {
+      return await p;
+    } finally {
+      storeLoads.delete(id);
+    }
   }
 
   function deriveFilepaths(id, store) {
@@ -532,6 +544,7 @@ function createSpaceManager({ repo, papersRoot, globalConfig }) {
     _reloadFromDisk: async () => {
       registry = null;
       storeCache.clear();
+      storeLoads.clear();
       globalAiCache = undefined;
       await ensureRegistry();
     },

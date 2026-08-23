@@ -5,34 +5,57 @@
 import { DEL, PATCH, POST, PUT, jget, sp } from '../core/api.js';
 import { $ } from '../core/dom.js';
 import { escapeHtml } from '../core/format.js';
+import { openFormDialog } from '../core/form-dialog.js';
+import { gotoPaper, router, syncPageQueryToUrl } from '../core/nav.js';
+import { createPickBar } from '../core/pick-bar.js';
 import { state } from '../core/state.js';
 import { toast } from '../core/ui-kit.js';
-import { gotoPaper, renderConceptAlphaBar } from '../formulas/formulas.js';
-import { router, syncPageQueryToUrl } from '../core/nav.js';
+import { renderConceptAlphaBar } from '../formulas/formulas.js';
 import { setSidebarCollapsed } from '../views/layout.js';
 import { showView } from '../views/view-switch.js';
+import { openConceptDetail } from './detail-drawer.js';
 
 // ---- 概念清单视图 ----
+// 标题头 sticky 的滚动态（v3.36）：>4px 挂 .scrolled 驱动底边阴影；一次性接线
+function _wireConceptHeadScrolled() {
+  const v = $('concepts-view');
+  if (!v || v.dataset.headWired) return;
+  v.dataset.headWired = '1';
+  v.addEventListener('scroll', () => v.classList.toggle('scrolled', v.scrollTop > 4), { passive: true });
+}
 export async function showConcepts(view) {
   // showView 必须先于所有 await（v3.17）：它排在三个网络请求之后时，深链 /concepts 刷新
   // 会先停在论文页几百毫秒再跳走。先切视图出骨架，数据到了再 render。
   showView('concepts');
+  _wireConceptHeadScrolled();
   switchConceptView(view || _conceptView); // 路由指定的视图优先于 localStorage 记忆的上次选择
 
   // state.papers 只由 refresh()（库视图 / 10s 轮询）填充——v3.15 深链 /concepts 时为空，
   // 概念卡片 paperIds 全解析不到 → 误显示「独立条目」（同 formulas 的深链 bug，一并修）。
+  // v3.28：详情抽屉的「相关公式」要 state.formulas（conceptTerms/名称匹配），缺则补拉一次
+  //（公式页 showFormulas 对称地补拉 concepts——两页知识互为上下文）。
+  // 深链首帧骨架（R2）：概念还没拉过时先出网格骨架，数据到达由 renderConcepts 覆盖
+  if (!(state.concepts || []).length) {
+    $('concepts-grid').innerHTML = Array.from({ length: 8 }, (_, i) => `<div class="skel-kcard masonry-item" aria-hidden="true"><div class="skel skel-title" style="width:${58 + ((i * 13) % 30)}%"></div><div class="skel skel-line"></div><div class="skel skel-line"></div><div class="skel skel-foot"></div></div>`).join('');
+  }
   const needPapers = !(state.papers || []).length;
-  const [{ data }, pr] = await Promise.all([jget('/api/concepts'), needPapers ? jget('/api/papers') : null]);
+  const needFormulas = !(state.formulas || []).length;
+  const [{ data }, pr, fr] = await Promise.all([
+    jget('/api/concepts'),
+    needPapers ? jget('/api/papers') : null,
+    needFormulas ? jget('/api/formulas') : null,
+  ]);
   state.concepts = data || [];
   if (pr && Array.isArray(pr.data)) state.papers = pr.data;
-  // 概念 Markdown 下载链接带当前空间（静态 <a href> 不经 sp()，这里手动注入）
-  const dl = document.querySelector('a[href="/api/concepts.md"]');
-  if (dl) dl.href = sp('/api/concepts.md');
+  if (fr && Array.isArray(fr.data)) state.formulas = fr.data;
   // 概念地图制品元信息（从 settings 回显，html 按需 GET 单个）
   try { const s = await jget('/api/settings'); state.conceptMaps = (s && s.data && s.data.conceptMaps) || []; } catch { state.conceptMaps = []; }
   renderConceptSidebar(); // 分类计数与地图制品数要等数据到位
   renderConcepts();
-  if (_conceptView === 'maps') renderConceptMaps(); // 首屏 switchConceptView 时制品元信息还没到，数据到位后补渲一次
+  if (_conceptView === 'maps') {
+    renderConceptMaps(); // 首屏 switchConceptView 时制品元信息还没到，数据到位后补渲一次
+    _syncConceptHead(_conceptView); // 制品计数此刻才准
+  }
   // 有生成中的制品 → 继续轮询（比如上次生成中切走了页面，后台任务仍在跑）
   if ((state.conceptMaps || []).some((m) => m.status === 'generating')) _startConceptMapPolling();
 }
@@ -103,9 +126,21 @@ export async function generateConceptMap() {
     toast('已开始后台生成（大产出需数分钟~数十分钟），可随时离开本页，完成后会通知', 'info');
     state.conceptMaps = [r.data].concat(state.conceptMaps || []);
     renderConceptMaps();
+    if (_conceptView === 'maps') _syncConceptHead(_conceptView); // 新制品入列，计数同步
     _startConceptMapPolling();
   } else toast((r && r.error) || '提交失败', 'error');
 }
+
+// 制品卡工具按钮（v3.41）：与概念/公式卡同款 qbtn 语言（图标+短标签，hover 浮现，
+// 删除红），图标与 data 属性保持既有委托接线不变。
+const _CM_ICON = {
+  view: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>',
+  opt: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.36 6.36l-.7-.7M6.34 6.34l-.7-.7m12.72 0l-.7.7M6.34 17.66l-.7.7"/><circle cx="12" cy="12" r="4"/></svg>',
+  tab: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>',
+  del: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>',
+};
+const _cmBtn = (kind, label, title, attr, danger) =>
+  `<button class="qbtn${danger ? ' danger' : ''}" ${attr} title="${title}">${_CM_ICON[kind]}<span>${label}</span></button>`;
 
 /** 渲染制品缩略图网格（元信息从 state.conceptMaps）。
  *  缩略图 = 制品 HTML 在 1280×800 iframe 里真实渲染后 CSS scale 缩小（live preview），
@@ -122,23 +157,23 @@ function renderConceptMaps() {
     if (m.status === 'generating') {
       thumbHtml = '<div class="cms-thumb-status"><span class="cms-spinner"></span><span>后台生成中…<br>可随时离开本页</span></div>';
       metaHtml = '<span class="cms-item-time cms-generating">生成中</span>';
-      actions = '<button class="btn ghost sm danger" data-cm-del="' + m.id + '" title="取消生成并删除">取消</button>';
+      actions = _cmBtn('del', '取消', '取消生成并删除', 'data-cm-del="' + m.id + '"', true);
     } else if (m.status === 'error') {
       thumbHtml = m.hasHtml
         ? '<div class="cms-thumb" data-cm-thumb="' + m.id + '"></div><div class="cms-thumb-badge err">不完整</div>'
         : '<div class="cms-thumb-status cms-err">生成失败</div>';
       metaHtml = '<span class="cms-item-time cms-error" title="' + escapeHtml(m.error || '') + '">' + escapeHtml(m.error || '生成失败') + '</span>';
       actions =
-        (m.hasHtml ? '<button class="btn ghost sm" data-cm-view="' + m.id + '">查看</button>' : '') +
-        '<button class="btn ghost sm" data-cm-opt="' + m.id + '">优化</button>' +
-        '<button class="btn ghost sm danger" data-cm-del="' + m.id + '">删除</button>';
+        (m.hasHtml ? _cmBtn('view', '查看', '查看半成品', 'data-cm-view="' + m.id + '"') : '') +
+        _cmBtn('opt', '优化', '基于本制品再次生成（可输入优化要求）', 'data-cm-opt="' + m.id + '"') +
+        _cmBtn('del', '删除', '删除制品', 'data-cm-del="' + m.id + '"', true);
     } else {
       thumbHtml = '<div class="cms-thumb" data-cm-thumb="' + m.id + '" data-cm-view-thumb="' + m.id + '" title="点击查看"></div>';
       metaHtml = '<span class="cms-item-time">' + t + '</span>';
       actions =
-        '<button class="btn ghost sm" data-cm-opt="' + m.id + '">优化</button>' +
-        '<button class="btn ghost sm" data-cm-newtab="' + m.id + '">新标签页</button>' +
-        '<button class="btn ghost sm danger" data-cm-del="' + m.id + '">删除</button>';
+        _cmBtn('opt', '优化', '基于本制品再次生成（可输入优化要求）', 'data-cm-opt="' + m.id + '"') +
+        _cmBtn('tab', '新标签页', '在新标签页打开', 'data-cm-newtab="' + m.id + '"') +
+        _cmBtn('del', '删除', '删除制品', 'data-cm-del="' + m.id + '"', true);
     }
     return '<div class="cms-card' + (m.status === 'generating' ? ' is-generating' : '') + '" data-id="' + m.id + '">' +
       '<div class="cms-thumb-wrap">' + thumbHtml + '</div>' +
@@ -282,14 +317,21 @@ export let _conceptLayout = localStorage.getItem('pw-concept-layout') || 'masonr
 // 概念页视图：list（概念清单，默认）/ maps（概念地图制品）
 export let _conceptView = localStorage.getItem('pw-concept-view') || 'list';
 
-// ---- 概念筛选（v3.16 → v3.20 改 DSL 驱动）----
+// ---- 概念筛选（v3.16 → v3.20 DSL 驱动 → v3.28 分面扩容）----
 // v3.20 起 DSL 是单一事实源：搜索框里的 category:/freq:/context: 决定筛选。
-// 漏斗、侧栏分类、高级面板都改写搜索框 DSL；_conceptFilter 降级为 renderConcepts
-// 解析 DSL 后的派生缓存（供 _updateConceptFilterBadge 读计数、漏斗/侧栏读当前态回填）。
+// v3.28 侧栏分面扩容：freq:solo / topic:（按论文主题）/ added:7d|30d（最近新增）/
+// importance:core|supporting（核心度）/ quality:nodef（缺解释）。漏斗弹层退役——
+// 全部「怎么筛」都长在侧栏，与「看什么」（视图）同一入口。
+// _conceptFilter 是 renderConcepts 解析 DSL 后的派生缓存（供侧栏读当前态回填）。
 let _conceptFilter = {
   categories: [],   // 从 DSL category: 派生（多选，空=不限）
-  freq: '',         // 从 DSL freq: 派生（'' 全部 | 'shared' | 'hot'）
+  freq: '',         // 从 DSL freq: 派生（'' 全部 | 'shared' | 'hot' | 'solo'）
   hasContext: false, // 从 DSL context:. 派生
+  topics: [],       // 从 DSL topic: 派生（多选，概念出现论文的主题，ANY 命中）
+  added: '',        // 从 DSL added: 派生（'' | '7d' | '30d'）
+  importance: '',   // 从 DSL importance: 派生（'' | 'core' | 'supporting'）
+  quality: '',      // 从 DSL quality: 派生（'' | 'nodef'）
+  starred: false,   // 从 DSL star:1 派生（v3.30 重点标记，与论文页同语法）
 };
 
 /** 从搜索框 DSL 解析派生 _conceptFilter（renderConcepts 每次调用前刷新）。 */
@@ -298,7 +340,7 @@ function _refreshConceptFilterFromDsl() {
   const dsl = (($('search') || {}).value || '').trim();
   if (!S) {
     // search-dsl.js 未加载（极端兜底）：把整串当关键词，无结构化筛选
-    _conceptFilter = { categories: [], freq: '', hasContext: false };
+    _conceptFilter = { categories: [], freq: '', hasContext: false, topics: [], added: '', importance: '', quality: '', starred: false };
     return { words: dsl ? [dsl.toLowerCase()] : [], phrases: [], excludeWords: [], excludePhrases: [] };
   }
   const { metadata } = S.parseSearchQuery(dsl);
@@ -306,6 +348,11 @@ function _refreshConceptFilterFromDsl() {
     categories: (metadata.fields.category || []).filter((e) => !e.exclude).map((e) => e.value),
     freq: metadata.fields.freq || '',
     hasContext: metadata.fields.hasContext === true,
+    topics: (metadata.fields.topic || []).filter((e) => !e.exclude).map((e) => e.value),
+    added: metadata.fields.added || '',
+    importance: metadata.fields.importance || '',
+    quality: metadata.fields.quality || '',
+    starred: metadata.fields.starred === true,
   };
   return {
     words: metadata.text.words,
@@ -315,46 +362,26 @@ function _refreshConceptFilterFromDsl() {
   };
 }
 
-/** 把分类/频次/出处合并进搜索框 DSL（保留裸词/文本部分）。
- *  parts = { categories?, freq?, hasContext? }，缺省的键不动（undefined=保留现状）。 */
+/** 把侧栏分面状态合并进搜索框 DSL（保留裸词/文本部分）。
+ *  parts 中缺省的键不动（undefined=保留现状）。 */
 function _mergeConceptDsl(parts) {
   const S = window.PaperWikiSearch;
   const inp = $('search');
   if (!inp || !S) return;
   const cur = S.parseToPanel(inp.value);
-  // 合并：显式传入的键覆盖，未传的保留
   const merged = {
     text: cur.text,
     categories: parts.categories !== undefined ? parts.categories : cur.categories,
     freq: parts.freq !== undefined ? parts.freq : cur.freq,
     hasContext: parts.hasContext !== undefined ? parts.hasContext : cur.hasContext,
+    topics: parts.topics !== undefined ? parts.topics : cur.topics,
+    added: parts.added !== undefined ? parts.added : cur.added,
+    importance: parts.importance !== undefined ? parts.importance : cur.importance,
+    quality: parts.quality !== undefined ? parts.quality : cur.quality,
+    starred: parts.starred !== undefined ? parts.starred : cur.starred,
   };
   inp.value = S.buildDslFromPanel(merged);
   syncPageQueryToUrl();
-}
-
-/** 是否有激活的筛选条件（非默认态）。 */
-function _conceptFilterActive() {
-  return _conceptFilter.categories.length > 0 || _conceptFilter.freq !== '' || _conceptFilter.hasContext;
-}
-
-/** 筛选条件个数（用于徽标计数）。 */
-function _conceptFilterCount() {
-  let n = _conceptFilter.categories.length;
-  if (_conceptFilter.freq !== '') n++;
-  if (_conceptFilter.hasContext) n++;
-  return n;
-}
-
-/** 更新漏斗按钮激活态徽标（有筛选时显示计数）。 */
-function _updateConceptFilterBadge() {
-  const badge = $('concept-filter-badge');
-  const btn = $('concept-filter-btn');
-  if (!badge || !btn) return;
-  const n = _conceptFilterCount();
-  badge.hidden = n === 0;
-  badge.textContent = n;
-  btn.classList.toggle('active', n > 0);
 }
 
 // 概念分类枚举（与提示词一致）+ 中文标签（面板显示用）
@@ -369,8 +396,193 @@ const _CONCEPT_CATEGORIES = [
   { key: 'training', label: '训练' },
   { key: 'evaluation', label: '评估' },
   { key: 'inference', label: '推理' },
+  // 通用领域类别（v3.42 提示词领域自适应的逃生门：非 AI/ML 论文可能产出这些）
+  { key: 'theory', label: '定理/理论' },
+  { key: 'method', label: '方法' },
+  { key: 'metric', label: '度量' },
+  { key: 'phenomenon', label: '现象' },
+  { key: 'task', label: '任务' },
+  { key: 'dataset', label: '数据/对象' },
+  { key: 'protocol', label: '协议/流程' },
   { key: 'other', label: '其他' },
 ];
+
+// 表单下拉选项（新增/编辑/批量改分类共用）
+const _CAT_OPTIONS = _CONCEPT_CATEGORIES.map((c) => ({ value: c.key, label: c.label }));
+const _IMPORTANCE_OPTIONS = [
+  { value: '', label: '未知' },
+  { value: 'core', label: '核心创新' },
+  { value: 'supporting', label: '支撑技术' },
+];
+
+// ---- 新增 / 编辑（v3.29：手动录入 + 全字段编辑走表单对话框）----
+
+/** 手动新增概念：纸面/组会/其它来源的术语补进知识库（source='manual'）。
+ *  term 命中已有概念时后端按合并语义处理（补关联论文与空缺字段），toast 区分提示。 */
+export async function createConcept() {
+  const values = await openFormDialog({
+    title: '新增概念',
+    fields: [
+      { key: 'term', label: '术语 *', required: true, placeholder: '如 Scaled Dot-Product Attention（规范学术名）' },
+      { key: 'definition', label: '解释', type: 'textarea', rows: 4, placeholder: '是什么 + 解决什么问题 + 在论文中的作用' },
+      { key: 'category', label: '分类', type: 'select', options: _CAT_OPTIONS, value: 'other' },
+      { key: 'importance', label: '核心度', type: 'select', options: _IMPORTANCE_OPTIONS, value: '' },
+      { key: 'paperIds', label: '关联论文', type: 'papers', value: [], hint: '不挂论文则成为独立条目' },
+    ],
+  });
+  if (!values) return;
+  let r;
+  try {
+    r = await POST('/api/concepts', values);
+  } catch (e) {
+    toast('网络错误：' + (e && e.message ? e.message : e), 'error');
+    return;
+  }
+  if (r && r.ok && r.data && r.data.concept) {
+    toast(r.data.merged ? `已并入已有概念「${r.data.concept.term}」（补关联与空缺字段）` : '概念已新增');
+    const c = r.data.concept;
+    const idx = (state.concepts || []).findIndex((x) => x.id === c.id);
+    if (idx >= 0) state.concepts[idx] = c;
+    else state.concepts = [...(state.concepts || []), c];
+    renderConceptSidebar();
+    renderConcepts();
+  } else toast((r && r.error) || '新增失败', 'error');
+}
+
+/** 编辑概念（全字段：术语/解释/分类/核心度）。抽屉与卡片编辑按钮共用。 */
+export async function editConceptDialog(c) {
+  if (!c) return;
+  const values = await openFormDialog({
+    title: '编辑概念',
+    fields: [
+      { key: 'term', label: '术语 *', required: true, value: c.term, hint: '跨论文合并 key，慎改' },
+      { key: 'definition', label: '解释', type: 'textarea', rows: 5, value: c.definition || '' },
+      { key: 'category', label: '分类', type: 'select', options: _CAT_OPTIONS, value: c.category || 'other' },
+      { key: 'importance', label: '核心度', type: 'select', options: _IMPORTANCE_OPTIONS, value: c.importance || '' },
+    ],
+  });
+  if (!values) return;
+  const r = await PATCH('/api/concepts/' + c.id, values);
+  if (r && r.ok) {
+    toast('概念已更新');
+    const idx = (state.concepts || []).findIndex((x) => x.id === c.id);
+    if (idx >= 0) state.concepts[idx] = r.data;
+    renderConcepts();
+  } else toast((r && r.error) || '保存失败', 'error');
+}
+
+/** 导出概念清单 Markdown（v3.30）：有激活筛选时导出当前筛选子集（POST ids → blob 下载），
+ *  无筛选维持全量（原 GET /api/concepts.md 直链）。备课/综述做讲义素材的主路径。 */
+export async function exportConceptsMd() {
+  const total = (state.concepts || []).length;
+  const filtered = _conceptList.length;
+  if (filtered && filtered < total) {
+    try {
+      const res = await fetch(sp('/api/concepts.md'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: _conceptList.map((c) => c.id) }),
+      });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const blob = await res.blob();
+      _downloadTextBlob(blob, `concepts-${filtered}.md`);
+      toast(`已导出当前筛选的 ${filtered} 个概念`);
+      return;
+    } catch (e) {
+      toast('筛选集导出失败：' + (e && e.message ? e.message : e) + '，改为导出全量', 'error');
+    }
+  }
+  window.open(sp('/api/concepts.md'), '_blank');
+}
+
+/** Blob 文件下载 helper（POST 导出用；GET 直链不需要）。 */
+function _downloadTextBlob(blob, filename) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => {
+    URL.revokeObjectURL(a.href);
+    a.remove();
+  }, 1000);
+}
+
+// ---- 多选 + 批量管理（v3.29）----
+
+let _conceptPickMode = false;
+const _conceptPicked = new Set();
+let _conceptPickBar = null;
+
+export function isConceptPickMode() {
+  return _conceptPickMode;
+}
+
+/** 切换概念页多选模式（工具条按钮触发）。选中集合为本模块持有，底栏动作走 bulk 端点。 */
+export function toggleConceptPickMode(on) {
+  const next = typeof on === 'boolean' ? on : !_conceptPickMode;
+  if (next === _conceptPickMode) return;
+  _conceptPickMode = next;
+  if (_conceptPickMode) {
+    if (!_conceptPickBar) {
+      _conceptPickBar = createPickBar({
+        itemsLabel: '概念',
+        categories: _CAT_OPTIONS,
+        onDelete: async () => {
+          const ids = [..._conceptPicked];
+          try {
+            const r = await POST('/api/concepts/bulk', { ids, delete: true });
+            if (r && r.ok) {
+              toast(`已删除 ${r.data.updated} 个概念`);
+              const del = new Set(ids);
+              state.concepts = (state.concepts || []).filter((c) => !del.has(c.id));
+              toggleConceptPickMode(false);
+              renderConceptSidebar();
+              renderConcepts();
+            } else toast((r && r.error) || '删除失败', 'error');
+          } catch {
+            toast('网络中断，批量删除未完成', 'error');
+          }
+        },
+        onCategorize: async (category) => {
+          const ids = [..._conceptPicked];
+          try {
+            const r = await POST('/api/concepts/bulk', { ids, category });
+            if (r && r.ok) {
+              toast(`已把 ${r.data.updated} 个概念归入「${category}」`);
+              const hit = new Set(ids);
+              for (const c of state.concepts || []) if (hit.has(c.id)) c.category = category;
+              toggleConceptPickMode(false);
+              renderConceptSidebar();
+              renderConcepts();
+            } else toast((r && r.error) || '操作失败', 'error');
+          } catch {
+            toast('网络中断，批量归类未完成', 'error');
+          }
+        },
+        onExit: () => toggleConceptPickMode(false),
+      });
+    }
+    _conceptPickBar.open();
+    _conceptPickBar.setCount(_conceptPicked.size);
+  } else {
+    _conceptPicked.clear();
+    if (_conceptPickBar) _conceptPickBar.close();
+  }
+  renderConcepts();
+}
+
+/** 多选模式内点击卡片：切换选中（就地改 class + 计数，不整页重渲）。 */
+function _toggleConceptPick(id, cardEl) {
+  if (_conceptPicked.has(id)) {
+    _conceptPicked.delete(id);
+    cardEl.classList.remove('picked');
+  } else {
+    _conceptPicked.add(id);
+    cardEl.classList.add('picked');
+  }
+  if (_conceptPickBar) _conceptPickBar.setCount(_conceptPicked.size);
+}
 
 // 懒加载：概念清单可能数百条（一次抽取就 700+），一次性 innerHTML 会卡顿。复用公式清单的分批
 // 渲染模式——保留全量排序后的 list，分批渲染（首批 _CONCEPT_FIRST_BATCH，之后每批 _CONCEPT_NEXT_BATCH），
@@ -399,6 +611,24 @@ let _conceptGridROW = 0;
 
 let _conceptResizeWired = false;
 
+/** document.fonts.ready 只挂一次（字体到位后重排）。 */
+let _conceptFontsWired = false;
+
+/** 头部标题随视图切换（v3.40）：地图视图不再顶着「概念清单」的标题——两个视图各有
+ *  自己的标题/副文案；计数徽章在地图态显示制品数（清单态由 renderConcepts 权威写回）。 */
+function _syncConceptHead(view) {
+  const h2 = document.querySelector('#concepts-view .concepts-head h2');
+  const sub = document.querySelector('#concepts-view .concepts-head-text p');
+  const badge = $('concepts-count');
+  if (!h2 || !sub) return;
+  const isMaps = view === 'maps';
+  if (h2.firstChild && h2.firstChild.nodeType === 3) h2.firstChild.nodeValue = isMaps ? '概念地图' : '概念清单';
+  sub.textContent = isMaps
+    ? '基于概念清单生成的可视化全览图（后台生成，切页不打断），点击缩略图查看。'
+    : '跨论文归并的术语与解释。点击卡片看全貌：出处论文、共现概念、相关公式。';
+  if (badge && isMaps) badge.textContent = (state.conceptMaps || []).length;
+}
+
 /** 切换概念页视图（清单 / 地图），持久化用户选择，控制两个 pane 显隐 + 工具栏控件可见性。 */
 function switchConceptView(view) {
   _conceptView = view;
@@ -408,8 +638,10 @@ function switchConceptView(view) {
   const mapsPane = $('concept-maps-pane');
   if (listPane) listPane.hidden = isMaps;
   if (mapsPane) mapsPane.hidden = !isMaps;
-  // 地图视图下隐藏筛选/布局/排序/下载（它们只对清单有意义）
-  document.querySelectorAll('#concept-filter-btn, #concept-layout, #concept-sort, #btn-concepts-md').forEach((el) => {
+  _syncConceptHead(view); // v3.40：标题/副文案/计数随视图切换
+  // 地图视图下隐藏新增/多选/排序/布局/下载（它们只对清单有意义；v3.28 漏斗按钮已退役——
+  // 筛全面归侧栏；v3.29 新增/多选按钮也属清单态）
+  document.querySelectorAll('#btn-concept-add, #btn-concept-pick, #concept-layout, #concept-sort, #btn-concepts-md').forEach((el) => {
     el.style.display = isMaps ? 'none' : '';
   });
   document.querySelectorAll('#side-concepts .side-item[data-cview]').forEach((el) => {
@@ -428,35 +660,68 @@ function switchConceptView(view) {
   }
 }
 
-/** 渲染概念页侧栏（v3.17 第二步）：视图（清单 / 地图）+ 分类分面。
+/** 渲染概念页侧栏（v3.28 重设计）：视图（清单 / 地图）+ 热度 + 主题 + 质量 + 时间 + 分类。
  *
- *  分类从漏斗面板搬到这里 —— 分类是「决定看哪一批概念」的分面导航，和论文页的收藏夹同性质，
- *  属于侧栏；漏斗只留「怎么筛」的次级条件（共享频次 / 章节出处）。同一状态只有一处入口。
- *  分类项点击是**多选切换**（同 Zotero 标签选择器），与 _conceptFilter.categories 直接对应。 */
+ *  设计动机（学者/博士视角）：AI 打的方法论分类语义重叠、边界模糊，导航价值有限。侧栏改为
+ *  承载研究者真实的检索心智——「什么重要」（热度 / 核心度）×「我在研究什么」（论文主题，
+ *  从论文 topics 现算而非模型打标）×「最近有什么」（新增时间）×「哪些要补」（质量分面，
+ *  可行动）。分类保留但降级到末位。所有分面写搜索框 DSL（v3.20 单一事实源不变），
+ *  renderConcepts/renderConceptSidebar 均从 DSL 派生当前态。 */
 export function renderConceptSidebar() {
   const host = $('side-concepts');
   if (!host) return;
-  // 先刷新 _conceptFilter（从 DSL 派生），保证侧栏 active 态与搜索框 DSL 一致
   _refreshConceptFilterFromDsl();
-  _updateConceptFilterBadge();
-  const counts = {};
-  for (const c of state.concepts || []) {
+  const concepts = state.concepts || [];
+  const paperById = new Map((state.papers || []).map((p) => [p.id, p]));
+  const now = Date.now();
+
+  // ---- 全量计数（与分类分面同口径：不受其它分面影响）----
+  const cnt = (fn) => concepts.filter(fn).length;
+  const freqCounts = {
+    hot: cnt((c) => (c.paperIds || []).length >= 4),
+    shared: cnt((c) => (c.paperIds || []).length >= 2),
+    solo: cnt((c) => (c.paperIds || []).length === 1),
+  };
+  const coreCount = cnt((c) => c.importance === 'core');
+  const nodefCount = cnt((c) => !(c.definition || '').trim());
+  const ctxCount = cnt((c) => !!(c.context && String(c.context).trim()));
+  const starCount = cnt((c) => !!c.starred); // v3.30 重点标记（组会指派/复习清单）
+  const added7 = cnt((c) => now - (c.createdAt || 0) < 7 * 86400e3);
+  const added30 = cnt((c) => now - (c.createdAt || 0) < 30 * 86400e3);
+
+  // ---- 主题分面：概念出现论文的 topics 聚合（论文自己的主题字典，非模型现打）----
+  const topicCounts = new Map();
+  for (const c of concepts) {
+    const seen = new Set();
+    for (const pid of c.paperIds || []) {
+      for (const t of (paperById.get(pid) || {}).topics || []) seen.add(t);
+    }
+    for (const t of seen) topicCounts.set(t, (topicCounts.get(t) || 0) + 1);
+  }
+  const topics = [...topicCounts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, 16);
+  const selTopics = new Set(_conceptFilter.topics);
+
+  // ---- 分类分面（从数据现算；枚举只提供中文标签与顺序）----
+  const catCounts = {};
+  for (const c of concepts) {
     const k = c.category || 'other';
-    counts[k] = (counts[k] || 0) + 1;
+    catCounts[k] = (catCounts[k] || 0) + 1;
   }
   const sel = new Set(_conceptFilter.categories);
-  const total = (state.concepts || []).length;
+  const total = concepts.length;
   const mapCount = (state.conceptMaps || []).length;
-  // 分类清单**从数据现算**，不是照着 _CONCEPT_CATEGORIES 枚举列——提示词里的枚举只是建议，
-  // 模型完全可能返回枚举外的值；照枚举过滤会让那些概念在分面里彻底消失（旧漏斗面板就是这个毛病）。
-  // 枚举在这里只用来提供中文标签，顺带定义已知分类的展示顺序。
   const label = Object.fromEntries(_CONCEPT_CATEGORIES.map((c) => [c.key, c.label]));
   const order = _CONCEPT_CATEGORIES.map((c) => c.key);
-  const cats = Object.keys(counts).sort((a, b) => {
+  const cats = Object.keys(catCounts).sort((a, b) => {
     const ia = order.indexOf(a), ib = order.indexOf(b);
-    if (ia !== ib) return (ia < 0 ? 999 : ia) - (ib < 0 ? 999 : ib); // 枚举外的排到最后
+    if (ia !== ib) return (ia < 0 ? 999 : ia) - (ib < 0 ? 999 : ib);
     return a.localeCompare(b);
   }).map((k) => ({ key: k, label: label[k] || k }));
+
+  const anyFacet =
+    sel.size > 0 || selTopics.size > 0 || _conceptFilter.freq !== '' || _conceptFilter.hasContext ||
+    _conceptFilter.added !== '' || _conceptFilter.importance !== '' || _conceptFilter.quality !== '' ||
+    _conceptFilter.starred;
 
   host.innerHTML = `
     <div class="side-section">
@@ -469,40 +734,106 @@ export function renderConceptSidebar() {
       <div class="side-item" data-cview="list"><span class="ico"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg></span><span>概念清单</span><span class="count">${total || ''}</span></div>
       <div class="side-item" data-cview="maps"><span class="ico"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 4.5a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0z"/><path d="M18 19.5a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0z"/><path d="M9 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0z"/><path d="M21 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0z"/><path d="M9 12h6"/><path d="M7.5 6.5L9 12"/><path d="M16.5 17.5L15 12"/></svg></span><span>概念地图</span><span class="count">${mapCount || ''}</span></div>
     </div>
+    <div class="side-section">
+      <div class="side-title"><span>热度</span>${anyFacet ? '<button class="side-clear" id="side-all-clear" type="button">全部清除</button>' : ''}</div>
+      <div class="side-item${_conceptFilter.freq === 'hot' ? ' active' : ''}" data-freq="hot"><span class="ico"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2c1 4-4 6-4 10a4 4 0 0 0 8 0c0-1.5-.7-2.5-1.5-3.5C13 11 12 9 12 2z" transform="translate(2 4) scale(.9)"/></svg></span><span>高频（≥4 篇）</span><span class="count">${freqCounts.hot || ''}</span></div>
+      <div class="side-item${_conceptFilter.freq === 'shared' ? ' active' : ''}" data-freq="shared"><span class="ico"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span><span>多篇共享（≥2 篇）</span><span class="count">${freqCounts.shared || ''}</span></div>
+      <div class="side-item${_conceptFilter.freq === 'solo' ? ' active' : ''}" data-freq="solo"><span class="ico"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v4"/><path d="M12 16h.01"/></svg></span><span>仅单篇</span><span class="count">${freqCounts.solo || ''}</span></div>
+    </div>
+    ${topics.length ? `<div class="side-section">
+      <div class="side-title"><span>主题</span>${selTopics.size ? '<button class="side-clear" id="side-topic-clear" type="button">清除</button>' : ''}</div>
+      ${topics.map(([t, n]) => `<div class="side-item${selTopics.has(t) ? ' active' : ''}" data-topic="${escapeHtml(t)}"><span class="cat-dot"></span><span class="side-ellipsis" title="概念出现论文的主题：${escapeHtml(t)}">${escapeHtml(t)}</span><span class="count">${n}</span></div>`).join('')}
+    </div>` : ''}
+    <div class="side-section">
+      <div class="side-title"><span>质量</span></div>
+      <div class="side-item${_conceptFilter.starred ? ' active' : ''}" data-quality="star"><span class="ico"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg></span><span>重点</span><span class="count">${starCount || ''}</span></div>
+      <div class="side-item${_conceptFilter.importance === 'core' ? ' active' : ''}" data-quality="core"><span class="ico"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg></span><span>核心创新</span><span class="count">${coreCount || ''}</span></div>
+      <div class="side-item${_conceptFilter.quality === 'nodef' ? ' active' : ''}" data-quality="nodef"><span class="ico"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg></span><span>缺解释</span><span class="count">${nodefCount || ''}</span></div>
+      <div class="side-item${_conceptFilter.hasContext ? ' active' : ''}" data-quality="ctx"><span class="ico"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg></span><span>有章节出处</span><span class="count">${ctxCount || ''}</span></div>
+    </div>
+    ${(added7 || added30) ? `<div class="side-section">
+      <div class="side-title"><span>最近新增</span></div>
+      ${added7 ? `<div class="side-item${_conceptFilter.added === '7d' ? ' active' : ''}" data-added="7d"><span class="ico"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg></span><span>7 天内</span><span class="count">${added7}</span></div>` : ''}
+      ${added30 ? `<div class="side-item${_conceptFilter.added === '30d' ? ' active' : ''}" data-added="30d"><span class="ico"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4"/><path d="M8 2v4"/><path d="M3 10h18"/></svg></span><span>30 天内</span><span class="count">${added30}</span></div>` : ''}
+    </div>` : ''}
     <div class="side-section" id="side-concept-cats">
       <div class="side-title">
-        <span>分类</span>
+        <span>AI 分类</span>
         ${sel.size ? '<button class="side-clear" id="side-cat-clear" type="button">清除</button>' : ''}
       </div>
       ${cats.length
-    ? cats.map((c) => `<div class="side-item${sel.has(c.key) ? ' active' : ''}" data-cat="${c.key}" title="${c.key}"><span class="cat-dot"></span><span>${escapeHtml(c.label)}</span><span class="count">${counts[c.key]}</span></div>`).join('')
+    ? cats.map((c) => `<div class="side-item${sel.has(c.key) ? ' active' : ''}" data-cat="${escapeHtml(c.key)}" title="${escapeHtml(c.key)}"><span class="cat-dot"></span><span>${escapeHtml(c.label)}</span><span class="count">${catCounts[c.key]}</span></div>`).join('')
     : '<div class="side-item" style="color:var(--muted2);cursor:default;">（暂无分类）</div>'}
     </div>`;
 
+  // ---- 接线 ----
   host.querySelectorAll('.side-item[data-cview]').forEach((el) => {
     el.onclick = () => router.navigate(el.dataset.cview === 'maps' ? '/concepts/maps' : '/concepts', { keepQuery: true });
   });
+  // 热度单选（再点取消回全部）
+  host.querySelectorAll('.side-item[data-freq]').forEach((el) => {
+    el.onclick = () => {
+      const next = _conceptFilter.freq === el.dataset.freq ? '' : el.dataset.freq;
+      _mergeConceptDsl({ freq: next });
+      renderConceptSidebar();
+      renderConcepts();
+    };
+  });
+  // 主题多选（ANY 命中）
+  host.querySelectorAll('.side-item[data-topic]').forEach((el) => {
+    el.onclick = () => {
+      const next = new Set(_conceptFilter.topics);
+      if (next.has(el.dataset.topic)) next.delete(el.dataset.topic);
+      else next.add(el.dataset.topic);
+      _mergeConceptDsl({ topics: [...next] });
+      renderConceptSidebar();
+      renderConcepts();
+    };
+  });
+  // 质量四项（各自独立开关；star 为 v3.30 重点标记）
+  host.querySelectorAll('.side-item[data-quality]').forEach((el) => {
+    el.onclick = () => {
+      const k = el.dataset.quality;
+      if (k === 'core') _mergeConceptDsl({ importance: _conceptFilter.importance === 'core' ? '' : 'core' });
+      else if (k === 'nodef') _mergeConceptDsl({ quality: _conceptFilter.quality === 'nodef' ? '' : 'nodef' });
+      else if (k === 'star') _mergeConceptDsl({ starred: !_conceptFilter.starred });
+      else _mergeConceptDsl({ hasContext: !_conceptFilter.hasContext });
+      renderConceptSidebar();
+      renderConcepts();
+    };
+  });
+  // 最近新增单选（再点取消）
+  host.querySelectorAll('.side-item[data-added]').forEach((el) => {
+    el.onclick = () => {
+      const next = _conceptFilter.added === el.dataset.added ? '' : el.dataset.added;
+      _mergeConceptDsl({ added: next });
+      renderConceptSidebar();
+      renderConcepts();
+    };
+  });
+  // 分类多选（保持既有语义）
   host.querySelectorAll('.side-item[data-cat]').forEach((el) => {
     el.onclick = () => {
       const k = el.dataset.cat;
       const next = new Set(_conceptFilter.categories);
       if (next.has(k)) next.delete(k); else next.add(k);
-      // 写 DSL（单一事实源），renderConcepts/renderConceptSidebar 从 DSL 派生
       _mergeConceptDsl({ categories: [...next] });
       renderConceptSidebar();
       renderConcepts();
     };
   });
-  const clear = $('side-cat-clear');
-  if (clear) clear.onclick = () => {
-    _mergeConceptDsl({ categories: [] });
+  const wireClear = (id, fn) => { const b = $(id); if (b) b.onclick = fn; };
+  wireClear('side-all-clear', () => {
+    _mergeConceptDsl({ categories: [], freq: '', hasContext: false, topics: [], added: '', importance: '', quality: '', starred: false });
     renderConceptSidebar();
     renderConcepts();
-  };
+  });
+  wireClear('side-topic-clear', () => { _mergeConceptDsl({ topics: [] }); renderConceptSidebar(); renderConcepts(); });
+  wireClear('side-cat-clear', () => { _mergeConceptDsl({ categories: [] }); renderConceptSidebar(); renderConcepts(); });
   const collapse = $('btn-collapse-concepts');
   if (collapse) collapse.onclick = () => setSidebarCollapsed(true);
   // 只同步 active 态，不走 switchConceptView——后者在地图视图下会 renderConceptMaps()，
-  // 而那等于卸载重挂全部缩略图 iframe（重跑页内动画），点一下分类不该付这个代价。
+  // 而那等于卸载重挂全部缩略图 iframe（重跑页内动画），点一下分面不该付这个代价。
   host.querySelectorAll('.side-item[data-cview]').forEach((el) => {
     el.classList.toggle('active', el.dataset.cview === _conceptView);
   });
@@ -512,91 +843,28 @@ export function renderConceptSidebar() {
   });
 }
 
-/** 打开概念筛选面板（漏斗按钮触发）：频次单选 + 出处复选（分类分面已移到侧栏）。
- *  复用 filter-pop 模式（遮罩 + 面板，点外部/Esc 关闭）。
- *  v3.20：确定后写搜索框 DSL（freq:/context:），renderConcepts 从 DSL 派生态。 */
-export function openConceptFilterPop() {
-  closeConceptFilterPop();
-  const btn = $('concept-filter-btn');
-  if (!btn) return;
-  _refreshConceptFilterFromDsl();
-  // 本地暂存（面板内交互态，确定时才提交到 DSL）
-  let pickFreq = _conceptFilter.freq; // '' | 'shared' | 'hot'
-  let pickCtx = _conceptFilter.hasContext;
-  const mask = document.createElement('div');
-  mask.className = 'filter-pop-mask';
-  const pop = document.createElement('div');
-  pop.className = 'filter-pop concept-filter-pop';
-  pop.setAttribute('role', 'dialog');
-  pop.setAttribute('aria-label', '概念筛选');
-  const freqOpt = (k, label) => `<button class="cf-freq-opt${(k || 'all') === (pickFreq || 'all') ? ' on' : ''}" data-freq="${k}" type="button">${label}</button>`;
-  pop.innerHTML = `
-    <div class="cf-section"><div class="cf-label">共享频次</div><div class="cf-freq-opts">${freqOpt('', '全部')}${freqOpt('shared', '多篇共享 ≥2')}${freqOpt('hot', '高频 ≥4')}</div></div>
-    <div class="cf-section cf-row">
-      <label class="cf-check"><input type="checkbox" id="cf-ctx" ${pickCtx ? 'checked' : ''} /><span>有章节出处</span></label>
-    </div>
-    <div class="cf-foot">
-      <button class="btn ghost sm" id="cf-clear" type="button">清除</button>
-      <span class="cf-sel"></span>
-      <button class="btn sm" id="cf-ok" type="button">确定</button>
-    </div>`;
-  mask.appendChild(pop);
-  mask.onclick = (e) => { if (e.target === mask) closeConceptFilterPop(); };
-  pop.onclick = (e) => e.stopPropagation();
-  document.body.appendChild(mask);
-  // 定位：面板贴在按钮下方
-  const r = btn.getBoundingClientRect();
-  pop.style.top = (r.bottom + window.scrollY + 4) + 'px';
-  pop.style.left = Math.max(8, r.left + window.scrollX - 240) + 'px'; // 右对齐按钮，防溢出
-  // 频次单选（本地暂存，确定时才提交）
-  pop.querySelectorAll('.cf-freq-opt').forEach((opt) => {
-    opt.onclick = () => {
-      pickFreq = opt.dataset.freq;
-      pop.querySelectorAll('.cf-freq-opt').forEach((o) => o.classList.toggle('on', o === opt));
-    };
-  });
-  // 清除（只清本面板管的两项——分类分面归侧栏，不在这里连带清掉）
-  pop.querySelector('#cf-clear').onclick = () => {
-    _mergeConceptDsl({ freq: '', hasContext: false });
-    closeConceptFilterPop();
-    renderConceptSidebar();
-    renderConcepts();
-  };
-  // 确定：提交到 DSL
-  pop.querySelector('#cf-ok').onclick = () => {
-    pickCtx = !!pop.querySelector('#cf-ctx').checked;
-    _mergeConceptDsl({ freq: pickFreq, hasContext: pickCtx });
-    closeConceptFilterPop();
-    renderConceptSidebar();
-    renderConcepts();
-  };
-  btn.setAttribute('aria-expanded', 'true');
-  // Esc 关闭
-  document.addEventListener('keydown', onConceptFilterPopKey);
-}
-
-function closeConceptFilterPop() {
-  const existing = document.querySelector('.filter-pop-mask');
-  if (existing) existing.remove();
-  const btn = $('concept-filter-btn');
-  if (btn) btn.setAttribute('aria-expanded', 'false');
-  document.removeEventListener('keydown', onConceptFilterPopKey);
-}
-
-function onConceptFilterPopKey(e) {
-  if (e.key === 'Escape') { e.preventDefault(); closeConceptFilterPop(); }
-}
-
 export function renderConcepts() {
   // 查询词来自顶栏那个上下文搜索框（v3.17，页内 #concept-q 已退役）。
   // v3.20：解析 DSL——裸词/短语匹配 term+definition（AND），category:/freq:/context: 结构化筛选。
+  // v3.28：新增 topic:（论文主题，ANY 命中）/ freq:solo / added: / importance: / quality:。
   const { words, phrases, excludeWords, excludePhrases } = _refreshConceptFilterFromDsl();
   const hasText = words.length > 0 || phrases.length > 0;
   const sort = _conceptSort;
   const layout = _conceptLayout;
-  // 筛选：裸词/短语（term+definition 子串，AND）+ 分类 + 频次 + 出处
+  const F = _conceptFilter;
+  const paperById = new Map((state.papers || []).map((p) => [p.id, p]));
+  const now = Date.now();
+  // 筛选：裸词/短语（term+definition 子串，AND）+ 分类 + 频次 + 主题 + 质量 + 新近 + 出处
   let list = state.concepts.filter((c) => {
-    const hay = (c.term + ' ' + (c.definition || '')).toLowerCase();
+    // 由来（context/contexts）也参与裸词搜索——「3.2 节」「式(1)」这类定位信息可直查
+    const hay = [
+      c.term,
+      c.definition || '',
+      c.context || '',
+      (c.contexts || []).map((x) => x.context).join(' '),
+    ]
+      .join(' ')
+      .toLowerCase();
     if (hasText) {
       for (const w of words) if (!hay.includes(w)) return false;
       for (const p of phrases) if (!hay.includes(p)) return false;
@@ -605,12 +873,29 @@ export function renderConcepts() {
     for (const p of excludePhrases) if (hay.includes(p)) return false;
     return true;
   });
-  if (_conceptFilter.categories.length) {
-    list = list.filter((c) => _conceptFilter.categories.includes(c.category || 'other'));
+  if (F.categories.length) {
+    list = list.filter((c) => F.categories.includes(c.category || 'other'));
   }
-  if (_conceptFilter.freq === 'shared') list = list.filter((c) => (c.paperIds || []).length >= 2);
-  else if (_conceptFilter.freq === 'hot') list = list.filter((c) => (c.paperIds || []).length >= 4);
-  if (_conceptFilter.hasContext) list = list.filter((c) => !!(c.context && String(c.context).trim()));
+  if (F.freq === 'shared') list = list.filter((c) => (c.paperIds || []).length >= 2);
+  else if (F.freq === 'hot') list = list.filter((c) => (c.paperIds || []).length >= 4);
+  else if (F.freq === 'solo') list = list.filter((c) => (c.paperIds || []).length === 1);
+  if (F.topics.length) {
+    // 主题匹配：概念出现论文的 topics 与所选主题**任一**命中即通过（导航语义，非交集）
+    list = list.filter((c) => {
+      for (const pid of c.paperIds || []) {
+        const topics = (paperById.get(pid) || {}).topics || [];
+        if (topics.some((t) => F.topics.includes(t))) return true;
+      }
+      return false;
+    });
+  }
+  if (F.importance === 'core') list = list.filter((c) => c.importance === 'core');
+  else if (F.importance === 'supporting') list = list.filter((c) => c.importance === 'supporting');
+  if (F.quality === 'nodef') list = list.filter((c) => !(c.definition || '').trim());
+  if (F.starred) list = list.filter((c) => !!c.starred);
+  if (F.added === '7d') list = list.filter((c) => now - (c.createdAt || 0) < 7 * 86400e3);
+  else if (F.added === '30d') list = list.filter((c) => now - (c.createdAt || 0) < 30 * 86400e3);
+  if (F.hasContext) list = list.filter((c) => !!(c.context && String(c.context).trim()));
   // 排序
   if (sort === 'freq') {
     list = list.slice().sort((a, b) => {
@@ -618,6 +903,8 @@ export function renderConcepts() {
       if (d !== 0) return d;
       return String(a.term || '').localeCompare(String(b.term || '')); // 频次相同按字母
     });
+  } else if (sort === 'recent') {
+    list = list.slice().sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
   } else {
     list = list.slice().sort((a, b) => String(a.term || '').localeCompare(String(b.term || ''), 'zh-Hans-CN-u-co-pinyin'));
   }
@@ -638,7 +925,24 @@ export function renderConcepts() {
   g.innerHTML = '';
   _wireConceptGridOnce(g); // grid 级事件委托（一次性，懒加载追加批次不重复绑）
   if (!list.length) {
-    g.innerHTML = '<div class="empty-state">' + (q ? '没有匹配「' + escapeHtml(q) + '」的概念' : '无概念。在论文详情「信息」tab 点「重新抽取并追加」，或多选论文后批量抽取。') + '</div>';
+    // 结构化空态（R3）：真空给「去抽取」行动；筛选无匹配给「清除筛选」
+    const hasAny = (state.concepts || []).length > 0;
+    g.innerHTML = `<div class="empty-state">
+      <div class="es-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.35-4.35"/><path d="M8 11h6"/></svg></div>
+      <p class="es-main">${hasAny ? '没有匹配的概念' : '概念清单还是空的'}</p>
+      <p class="es-sub">${hasAny ? '当前搜索 / 分面筛选过窄，试试放宽条件。' : '概念在扫描时自动抽取——去论文库多选论文批量抽取，或在详情「信息」tab 里单篇追加。'}</p>
+      <div class="es-actions">${hasAny ? '<button class="btn sm es-clear" type="button">清除筛选</button>' : '<button class="btn sm es-goto" type="button">去论文库抽取</button>'}</div>
+    </div>`;
+    const clearBtn = g.querySelector('.es-clear');
+    if (clearBtn) clearBtn.onclick = () => {
+      const inp = $('search');
+      if (inp) inp.value = '';
+      _mergeConceptDsl({ categories: [], freq: '', hasContext: false, topics: [], added: '', importance: '', quality: '', starred: false });
+      renderConceptSidebar();
+      renderConcepts();
+    };
+    const gotoBtn = g.querySelector('.es-goto');
+    if (gotoBtn) gotoBtn.onclick = () => router.navigate('/library', { keepQuery: false });
     return;
   }
   _conceptList = list;
@@ -646,10 +950,16 @@ export function renderConcepts() {
   _renderConceptBatch(_CONCEPT_FIRST_BATCH);
 }
 
-/** 构造单张概念卡 DOM（masonry / list 两布局）。论文胶囊 + 频次徽章 + 编辑/删除按钮。 */
+/** 构造单张概念卡 DOM（masonry / list 两布局）。论文胶囊 + 频次徽章 + 出处徽章 + 编辑/删除按钮。
+ *  v3.28：卡体（非按钮区）点击打开概念详情抽屉；核心创新/章节出处直接上卡（此前抽了不展示）。 */
 function _buildConceptCard(c, layout) {
   const card = document.createElement('div');
   card.className = 'concept-card';
+  card.dataset.detail = c.id; // 点击卡片（除按钮/胶囊）打开详情抽屉
+  if (_conceptPickMode) {
+    card.classList.add('pickable');
+    if (_conceptPicked.has(c.id)) card.classList.add('picked');
+  }
   const freq = (c.paperIds || []).length;
   // 论文胶囊：最多平铺 3 个，其余折叠为「+N」（点击展开）；已不在库内的 id 跳过
   const gotoable = (c.paperIds || [])
@@ -677,9 +987,15 @@ function _buildConceptCard(c, layout) {
           })
           .join('')
       : '';
+  const ctxHtml =
+    c.context && String(c.context).trim()
+      ? `<span class="ctx-badge" title="出处：${escapeHtml(c.context)}">${escapeHtml(String(c.context).slice(0, 40))}</span>`
+      : '';
+  const metaBadges = `${c.category && c.category !== 'other' ? `<span class="cat-badge" title="AI 分类">${escapeHtml(c.category)}</span>` : ''}${c.source === 'manual' ? '<span class="src-badge" title="手动录入">人工</span>' : ''}${freq ? `<span class="freq-badge" data-freq="${freq}" title="出现在 ${freq} 篇论文中">${freq} 篇</span>` : ''}`;
   const metaHtml = gotoable.length
-    ? `<span class="meta-label">出现于</span>${chipsHtml}${moreHtml}${restHtml}`
-    : '<span class="meta-label">（独立条目）</span>';
+    ? `<span class="meta-label">出现于</span>${chipsHtml}${moreHtml}${restHtml}${metaBadges}`
+    : `<span class="meta-label">（独立条目）</span>${metaBadges}`;
+  const starBtn = `<button class="card-star${c.starred ? ' on' : ''}" data-star="${c.id}" title="${c.starred ? '取消重点' : '标记为重点（组会讨论 / 复习清单）'}" aria-label="星标" aria-pressed="${!!c.starred}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg></button>`;
   if (layout === 'list') {
     // 清单视图：单行紧凑——频次徽章 + 术语 + 解释摘要（一行省略）+ 论文数
     card.innerHTML = `
@@ -688,18 +1004,19 @@ function _buildConceptCard(c, layout) {
       <span class="lc-def" title="${escapeHtml(c.definition || '')}">${escapeHtml(c.definition || '（无解释）')}</span>
       <span class="lc-count">${gotoable.length} 篇</span>
       <div class="row-actions">
-        <button class="btn ghost sm" data-edit="${c.id}" title="编辑解释">编辑</button>
-        <button class="btn ghost sm danger" data-del="${c.id}" title="删除概念">删除</button>
-      </div>`;
+        <button class="qbtn icon" data-edit="${c.id}" title="编辑概念（术语/解释/分类/核心度）" aria-label="编辑"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg></button>
+        <button class="qbtn icon danger" data-del="${c.id}" title="删除概念" aria-label="删除"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>
+      </div>${starBtn}`;
   } else {
     card.innerHTML = `
-      <div class="ct"><h3>${escapeHtml(c.term)}</h3>${c.category && c.category !== 'other' ? `<span class="cat-badge" title="分类">${escapeHtml(c.category)}</span>` : ''}${freq ? `<span class="freq-badge" data-freq="${freq}" title="出现在 ${freq} 篇论文中">${freq} 篇</span>` : ''}
+      <div class="ct"><h3>${escapeHtml(c.term)}</h3>${c.importance === 'core' ? '<span class="imp-badge" title="至少一篇论文将其列为核心创新">核心</span>' : ''}
         <div class="row-actions">
-          <button class="btn ghost sm" data-edit="${c.id}" title="编辑解释">编辑</button>
-          <button class="btn ghost sm danger" data-del="${c.id}" title="删除概念">删除</button>
-        </div>
+          <button class="qbtn icon" data-edit="${c.id}" title="编辑概念（术语/解释/分类/核心度）" aria-label="编辑"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg></button>
+          <button class="qbtn icon danger" data-del="${c.id}" title="删除概念" aria-label="删除"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>
+        </div>${starBtn}
       </div>
-      <div class="cd">${escapeHtml(c.definition || '（无解释）')}</div>
+      <div class="cd" title="${escapeHtml((c.definition || '（无解释）').slice(0, 300))}">${escapeHtml(c.definition || '（无解释）')}</div>
+      ${ctxHtml ? `<div class="ctx-line">${ctxHtml}</div>` : ''}
       <div class="meta-line">${metaHtml}</div>`;
   }
   return card;
@@ -765,11 +1082,21 @@ function _renderConceptBatch(count) {
   const layout = _conceptLayout;
   const end = Math.min(_conceptShown + count, _conceptList.length);
   const frag = document.createDocumentFragment();
-  for (let i = _conceptShown; i < end; i++) frag.appendChild(_buildConceptCard(_conceptList[i], layout));
+  const built = [];
+  for (let i = _conceptShown; i < end; i++) {
+    const card = _buildConceptCard(_conceptList[i], layout);
+    frag.appendChild(card);
+    built.push(card);
+  }
   // 移除上一批的 sentinel（若有）
   const oldSentinel = g.querySelector('.lazy-sentinel');
   if (oldSentinel) oldSentinel.remove();
   g.appendChild(frag);
+  // 定义 3 行截断检测在挂载后跑（detached 元素 scrollHeight 恒 0，检测会误判「不超长」）
+  for (const c of built) {
+    const cdEl = c.querySelector('.cd');
+    if (cdEl && cdEl.scrollHeight > cdEl.clientHeight + 4) cdEl.classList.add('clampable');
+  }
   _conceptShown = end;
   // 瀑布流定位（masonry 布局才跑；list 不动）+ wire resize/RO 一次性
   if (layout === 'masonry') {
@@ -787,6 +1114,11 @@ function _renderConceptBatch(count) {
       _conceptGridRO.observe(g);
     }
     _layoutConceptMasonry();
+    // 字体异步到位后重排（概念卡主要是文本，行高微变同样会让卡片压到下方——同公式页 v3.51 修）
+    if (typeof document !== 'undefined' && document.fonts && document.fonts.ready && !_conceptFontsWired) {
+      _conceptFontsWired = true;
+      document.fonts.ready.then(() => { _scheduleConceptMasonryRelayout(); }).catch(() => {});
+    }
   }
   // 还有剩余：插 sentinel + observer 触发下批
   if (_conceptShown < _conceptList.length) {
@@ -824,6 +1156,31 @@ function _wireConceptGridOnce(g) {
   if (g.dataset.wired) return;
   g.dataset.wired = '1';
   g.addEventListener('click', async (e) => {
+    // 星标切换（v3.30）：就地翻转 + 侧栏计数联动，不打断浏览（多选模式下让位给选中）
+    const starBtn = e.target.closest('[data-star]');
+    if (starBtn && !_conceptPickMode) {
+      const c = state.concepts.find((x) => x.id === starBtn.dataset.star);
+      if (!c) return;
+      const next = !c.starred;
+      const r = await PATCH('/api/concepts/' + c.id, { starred: next });
+      if (r && r.ok) {
+        c.starred = next;
+        starBtn.classList.toggle('on', next);
+        starBtn.title = next ? '取消重点' : '标记为重点（组会讨论 / 复习清单）';
+        starBtn.setAttribute('aria-pressed', String(next));
+        renderConceptSidebar();
+      } else toast((r && r.error) || '操作失败', 'error');
+      return;
+    }
+    // 多选模式优先（v3.29）：点卡片=切换选中，其余动作让位
+    if (_conceptPickMode) {
+      const pickCard = e.target.closest('.concept-card[data-detail]');
+      if (pickCard) {
+        e.preventDefault();
+        _toggleConceptPick(pickCard.dataset.detail, pickCard);
+        return;
+      }
+    }
     // 论文胶囊跳转：回论文库 → 选中该论文
     const goto = e.target.closest('[data-goto]');
     if (goto) { gotoPaper(goto.dataset.goto); return; }
@@ -840,23 +1197,28 @@ function _wireConceptGridOnce(g) {
       const c = state.concepts.find((x) => x.id === del.dataset.del);
       if (!(await PWDialog.confirm(`删除概念「${c ? c.term : del.dataset.del}」？`, { title: '删除概念', danger: true, okText: '删除' }))) return;
       const r = await DEL('/api/concepts/' + del.dataset.del);
-      if (r.ok) toast('概念已删除');
-      else toast(r.error || '删除失败', 'error');
-      showConcepts();
+      if (r.ok) {
+        toast('概念已删除');
+        state.concepts = (state.concepts || []).filter((x) => x.id !== del.dataset.del);
+        renderConceptSidebar();
+        renderConcepts();
+      } else toast(r.error || '删除失败', 'error');
       return;
     }
-    // 编辑解释
+    // 编辑概念（v3.29：全字段表单——术语/解释/分类/核心度）
     const edit = e.target.closest('[data-edit]');
     if (edit) {
       const c = state.concepts.find((x) => x.id === edit.dataset.edit);
-      if (!c) return;
-      const def = await PWDialog.prompt('编辑「' + c.term + '」的解释：', { title: '编辑概念解释', value: c.definition || '', multiline: true, okText: '保存' });
-      if (def != null) {
-        const r = await PATCH('/api/concepts/' + c.id, { definition: def });
-        if (r.ok) toast('概念解释已更新');
-        else toast(r.error || '保存失败', 'error');
-        showConcepts();
-      }
+      if (c) await editConceptDialog(c);
+      return;
+    }
+    // 卡片本体点击 → 概念详情抽屉（v3.28）。卡内有活动文本选区时不开——
+    // 拖选结束的 mouseup 紧跟 click，开抽屉重渲会摧毁选区（同陷阱 32 的语义）。
+    const cardEl = e.target.closest('.concept-card[data-detail]');
+    if (cardEl) {
+      const sel = typeof window.getSelection === 'function' ? window.getSelection() : null;
+      if (sel && sel.toString() && cardEl.contains(sel.anchorNode)) return;
+      openConceptDetail(cardEl.dataset.detail);
     }
   });
 }

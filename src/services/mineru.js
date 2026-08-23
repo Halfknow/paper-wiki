@@ -17,6 +17,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { callChat } = require('./ai');
+const { looksLikeFormula } = require('../core/formulas');
 
 /** 字符串 → sha1 hex（core/util 只有 sha1OfFile，这里要字符串哈希作降级 canonicalName） */
 function sha1(str) {
@@ -25,18 +26,25 @@ function sha1(str) {
 
 const DEFAULT_MINERU_URL = 'http://127.0.0.1:8000/file_parse';
 const DEFAULT_TIMEOUT_MS = 300000; // MinerU 解析一篇 PDF 实测约 1-3 分钟，给 5 分钟兜底
+/** 单篇公式上限：一篇论文的 $…$ 片段动辄上百，全量喂 AI 命名会超输出 token（JSON 截断→整批降级）
+ *  且产出大量记号噪声。display 段先入（几乎都是真公式），超出截断。 */
+const MAX_FORMULAS_PER_PAPER = 48;
 
 /** MinerU 命名提示词默认值（可在设置页 formulas.namingPrompt 覆盖）。
- *  MinerU 只产出高保真 LaTeX，不给 canonicalName（跨论文合并 key），故需 AI 补命名/解读。 */
+ *  MinerU 只产出高保真 LaTeX，不给 canonicalName（跨论文合并 key），故需 AI 补命名/解读。
+ *  v3.27：要求回显 index（防漏答错位）+ 允许 skip 拒判记号噪声（单符号/下标/序列/引文标记）。
+ *  旧自定义提示词（无 index/skip 语义）按位置对齐兼容。 */
 const DEFAULT_MINERU_NAMING_PROMPT =
-  '你是公式规范化助手。给定一组 LaTeX 公式，为每个输出规范的 canonicalName（小写连字符英文，' +
-  '如 scaled-dot-product-attention、kl-divergence、cross-entropy-loss）、中文 name、简短 description、' +
-  'category（attention/loss/optimization/normalization/activation/embedding/distance/regularization/bayesian/other）。' +
-  '相同数学结构的公式（如同一公式的不同写法）给同一 canonicalName。只输出 JSON 数组，' +
-  '元素顺序与输入一致：[{"canonicalName":"...","name":"...","description":"...","category":"..."}]';
+  '你是公式规范化助手。给定一组带序号的 LaTeX 片段，为每个序号输出一个 JSON 对象，组成数组：\n' +
+  '[{"index":1,"canonicalName":"小写连字符英文","name":"中文名","description":"简短解读（1-2 句）","category":"attention/loss/optimization/normalization/activation/embedding/distance/regularization/bayesian/other"}]\n' +
+  '规则：\n' +
+  '- canonicalName 用学界通用名（如 scaled-dot-product-attention、kl-divergence、cross-entropy-loss），相同数学结构给同一名字。\n' +
+  '- **不是公式的片段**（单个符号、上下标记号、逗号/省略号序列、引文标记、残缺片段）输出 {"index":<序号>,"skip":true}，不要硬起名。\n' +
+  '- 每个输入序号恰好输出一次。只输出 JSON 数组，不要输出其它内容。';
 
 /** 从 MinerU 返回的 md_content 提取 LaTeX 公式（display $$…$$ 优先，inline $…$ 次之）。
- *  去重 + 去过短噪声（单字符变量之类）。返回 [{ latex, rawLatex, context }]。 */
+ *  去重 + looksLikeFormula 结构过滤（单符号/下标/序列省略/引文标记等记号噪声不入清单）。
+ *  返回 [{ latex, rawLatex, context }]，最多 MAX_FORMULAS_PER_PAPER 条（display 优先）。 */
 function extractLatexFromMarkdown(md) {
   if (!md || typeof md !== 'string') return [];
   const out = [];
@@ -45,6 +53,9 @@ function extractLatexFromMarkdown(md) {
     const s = String(latex || '').trim();
     // 过滤空、过短（<3 字符基本是单变量噪声）、明显非公式（纯数字）
     if (s.length < 3 || /^\d+(\.\d+)?$/.test(s)) return;
+    // 结构门槛：无关系符/大算符的是记号不是公式（display 段统一适用——MinerU 也会把
+    // 残缺片段/裸符号放进 $$…$$）
+    if (!looksLikeFormula(s)) return;
     if (seen.has(s)) return;
     seen.add(s);
     out.push({ latex: s, rawLatex: s, context: (ctx || '').slice(0, 500) });
@@ -67,7 +78,7 @@ function extractLatexFromMarkdown(md) {
     const ctx = stripped.slice(start, m.index);
     push(m[1], ctx);
   }
-  return out;
+  return out.slice(0, MAX_FORMULAS_PER_PAPER);
 }
 
 /** 取 md_content：MinerU 同步返回 results.<name>.md_content，name = 文件名去扩展。
@@ -89,16 +100,42 @@ function pickMdContent(body, fileBaseName) {
   return '';
 }
 
+/** 把 AI 返回的命名数组对齐回 latexList（等长，skip/漏答处为 null）。
+ *  - 元素带合法 index（1 基）→ 按 index 对齐（漏答/乱序不错位）；
+ *  - 都没有 index（旧自定义提示词）→ 按位置对齐，但**不 filter**（历史上 map+filter 移位
+ *    会让 AI 漏答后所有名字错配到下一条 latex——v3.27 生产数据错位根因之一）。
+ *  - skip:true 的元素对齐为 null（调用方丢弃该项）。 */
+function alignNamed(latexList, arr) {
+  const aligned = new Array(latexList.length).fill(null);
+  let hasIndex = false;
+  for (const e of arr) {
+    if (!e || typeof e !== 'object' || Array.isArray(e)) continue;
+    const idx = Number(e.index);
+    if (Number.isInteger(idx) && idx >= 1 && idx <= latexList.length) {
+      hasIndex = true;
+      if (!e.skip) aligned[idx - 1] = e;
+    }
+  }
+  if (!hasIndex) {
+    for (let i = 0; i < latexList.length && i < arr.length; i++) {
+      const e = arr[i];
+      if (e && typeof e === 'object' && !Array.isArray(e) && !e.skip) aligned[i] = e;
+    }
+  }
+  return aligned;
+}
+
 /** 把 MinerU 的 LaTeX 列表批量喂给 AI，产出归一化命名 + 解读（canonicalName 是合并 key）。
- *  一次调用处理全篇所有公式（而非逐个），省请求数。AI 不可用时返回 null（由调用方降级）。 */
+ *  一次调用处理全篇所有公式（而非逐个），省请求数。AI 不可用时返回 null（由调用方降级）。
+ *  返回数组与 latexList 等长：skip/漏答处为 null（该项丢弃，不入库）。 */
 async function nameFormulasViaAi(latexList, { title, config, fetchImpl, prompt }) {
   if (!latexList.length) return [];
   // 没 apiKey 直接降级，不浪费一次注定 401 的请求
   if (!config || !config.ai || !config.ai.apiKey) return null;
   const list = latexList.map((x, i) => `${i + 1}. $${x.latex}$`).join('\n');
   // 提示词三级回退：传参（config.formulas.namingPrompt）> 内置默认
-  const sys = (prompt && String(prompt).trim()) ? String(prompt).trim() : DEFAULT_MINERU_NAMING_PROMPT;
-  const user = `论文标题：${title || '（未知）'}\n\n公式列表：\n${list}\n\n请为每个公式输出归一化信息。`;
+  const sys = prompt && String(prompt).trim() ? String(prompt).trim() : DEFAULT_MINERU_NAMING_PROMPT;
+  const user = `论文标题：${title || '（未知）'}\n\n公式列表：\n${list}\n\n请为每个序号输出归一化信息（不是公式的输出 skip）。`;
   try {
     const text = await callChat({
       messages: [
@@ -120,8 +157,7 @@ async function nameFormulasViaAi(latexList, { title, config, fetchImpl, prompt }
       } catch {}
     }
     if (!arr) return null;
-    // 按输入顺序对齐（AI 可能漏/多，按 index 取）
-    return latexList.map((_, i) => arr[i]).filter(Boolean);
+    return alignNamed(latexList, arr);
   } catch {
     return null;
   }
@@ -150,7 +186,7 @@ async function extractFormulas({ filepath, title, config, fetchImpl = fetch }) {
     res = await fetchImpl(url, { method: 'POST', body: form, signal: ctrl.signal });
   } catch (e) {
     clearTimeout(timer);
-    throw new Error('MinerU 服务不可达：' + (e && e.name === 'AbortError' ? `超时(${timeoutMs}ms)` : (e && e.message)));
+    throw new Error('MinerU 服务不可达：' + (e && e.name === 'AbortError' ? `超时(${timeoutMs}ms)` : e && e.message));
   }
   clearTimeout(timer);
   if (!res.ok) {
@@ -173,10 +209,14 @@ async function extractFormulas({ filepath, title, config, fetchImpl = fetch }) {
   // AI 批量命名（可选；失败降级哈希 canonicalName）。提示词从 config.formulas.namingPrompt 取（设置页可改）
   const namingPrompt = config && config.formulas && config.formulas.namingPrompt;
   const named = await nameFormulasViaAi(latexList, { title, config, fetchImpl, prompt: namingPrompt });
-  const items = latexList.map((x, i) => {
+  const items = [];
+  latexList.forEach((x, i) => {
     const n = named && named[i];
+    // AI 已应答但该项被 skip/漏答 → 丢弃（记号噪声不入库）；
+    // AI 整体不可用（named === null）→ 降级哈希 canonicalName（能入库但不跨论文合并）
+    if (named && !n) return;
     if (n && n.canonicalName) {
-      return {
+      items.push({
         canonicalName: n.canonicalName,
         name: n.name || n.canonicalName,
         latex: x.latex,
@@ -186,21 +226,21 @@ async function extractFormulas({ filepath, title, config, fetchImpl = fetch }) {
         rawLatex: x.rawLatex,
         context: x.context,
         source: 'mineru',
-      };
+      });
+    } else {
+      const hash = sha1(x.latex).slice(0, 10);
+      items.push({
+        canonicalName: 'fm_lat_' + hash,
+        name: 'fm_lat_' + hash,
+        latex: x.latex,
+        description: '',
+        category: '',
+        variables: [],
+        rawLatex: x.rawLatex,
+        context: x.context,
+        source: 'mineru',
+      });
     }
-    // 降级：LaTeX 哈希作 canonicalName（能入库但不跨论文合并）
-    const hash = sha1(x.latex).slice(0, 10);
-    return {
-      canonicalName: 'fm_lat_' + hash,
-      name: 'fm_lat_' + hash,
-      latex: x.latex,
-      description: '',
-      category: '',
-      variables: [],
-      rawLatex: x.rawLatex,
-      context: x.context,
-      source: 'mineru',
-    };
   });
   return items;
 }
@@ -208,7 +248,9 @@ async function extractFormulas({ filepath, title, config, fetchImpl = fetch }) {
 module.exports = {
   extractFormulas,
   extractLatexFromMarkdown,
+  alignNamed,
   pickMdContent,
   DEFAULT_MINERU_URL,
   DEFAULT_MINERU_NAMING_PROMPT,
+  MAX_FORMULAS_PER_PAPER,
 };

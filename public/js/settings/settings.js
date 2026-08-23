@@ -240,8 +240,8 @@ function renderOverview(data) {
     .join(' · ');
   // [key, value, tone, icon, goto?].goto 为可跳转的设置 tab；无 goto 不可点。
   const cards = [
-    ['当前模型', data.ai.model || '（未设置）', '', OV_ICON.model, 'ai'],
-    ['API 端点', data.ai.baseURL || '（未设置）', '', OV_ICON.endpoint, 'ai'],
+    ['当前模型', escapeHtml(data.ai.model || '（未设置）'), '', OV_ICON.model, 'ai'],
+    ['API 端点', escapeHtml(data.ai.baseURL || '（未设置）'), '', OV_ICON.endpoint, 'ai'],
     ['扫描间隔', data.scan.scanIntervalMinutes ? data.scan.scanIntervalMinutes + ' 分钟' : '已关闭', '', OV_ICON.scan, 'scan'],
     ['arXiv 自动补全', arxivOn ? '开启' : '关闭', arxivOn ? 'good' : 'muted', OV_ICON.arxiv, 'arxiv'],
     ['发现来源', sources || '（无）', '', OV_ICON.discover, 'discover'],

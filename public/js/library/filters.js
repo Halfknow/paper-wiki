@@ -3,7 +3,7 @@
 // 自 public/app.js 拆出（v3.15 模块化重构）——声明体原样迁移，仅补 import/export。
 
 import { $ } from '../core/dom.js';
-import { chipOf, escapeHtml } from '../core/format.js';
+import { chipClass, escapeHtml } from '../core/format.js';
 import { state } from '../core/state.js';
 import { toast } from '../core/ui-kit.js';
 import { renderList } from './list.js';
@@ -136,8 +136,8 @@ export function openFilterPop(kind) {
     if (!matched.length) html += '<div class="fp-empty">无匹配</div>';
     for (const it of matched) {
       const on = selected.has(it.name);
-      const p = chipOf(it.name);
-      html += `<div class="check-row${on ? ' on' : ''}" data-name="${escapeHtml(it.name)}"><span class="fp-check">${on ? CHECK_SVG : UNCHECK_SVG}</span><span class="fp-name" style="background:${p.s};color:${p.c};border-color:${p.b}">${escapeHtml(it.name)}</span><span class="fp-count">${it.count}</span></div>`;
+      const cc = chipClass(it.name);
+      html += `<div class="check-row${on ? ' on' : ''}" data-name="${escapeHtml(it.name)}"><span class="fp-check">${on ? CHECK_SVG : UNCHECK_SVG}</span><span class="fp-name ${cc}">${escapeHtml(it.name)}</span><span class="fp-count">${it.count}</span></div>`;
     }
     html += '</div>';
     html += `<div class="fp-foot"><span class="fp-sel-count">已选 ${selected.size}</span><button class="btn ghost sm" id="fp-cancel">取消</button><button class="btn sm" id="fp-ok">确定</button></div>`;
@@ -190,8 +190,8 @@ export function openFilterPop(kind) {
     if (!matched.length) { listEl.innerHTML = '<div class="fp-empty">无匹配</div>'; return; }
     for (const it of matched) {
       const on = selected.has(it.name);
-      const p = chipOf(it.name);
-      html += `<div class="check-row${on ? ' on' : ''}" data-name="${escapeHtml(it.name)}"><span class="fp-check">${on ? CHECK_SVG : UNCHECK_SVG}</span><span class="fp-name" style="background:${p.s};color:${p.c};border-color:${p.b}">${escapeHtml(it.name)}</span><span class="fp-count">${it.count}</span></div>`;
+      const cc = chipClass(it.name);
+      html += `<div class="check-row${on ? ' on' : ''}" data-name="${escapeHtml(it.name)}"><span class="fp-check">${on ? CHECK_SVG : UNCHECK_SVG}</span><span class="fp-name ${cc}">${escapeHtml(it.name)}</span><span class="fp-count">${it.count}</span></div>`;
     }
     listEl.innerHTML = html;
   };

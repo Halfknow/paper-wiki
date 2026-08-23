@@ -115,6 +115,24 @@ function tokenize(input) {
         tokens.push({ type: 'field', field: rawField, value, exclude });
         continue;
       }
+      // field:"引号短语"：chunk 读到引号截断（value 为空），后跟的短语其实是该字段的值——
+      // 不处理会被拆成裸词 `field:`（要求正文含字面冒号 → 恒零命中）+ 无字段短语
+      if (rawField && /^[a-z]+$/.test(rawField) && value === '' && j < n && (s[j] === '"' || s[j] === '“' || s[j] === '”')) {
+        const quote = s[j];
+        let k = j + 1;
+        let phrase = '';
+        while (k < n && s[k] !== quote && s[k] !== '"' && s[k] !== '“' && s[k] !== '”') {
+          phrase += s[k];
+          k++;
+        }
+        if (k < n && (s[k] === '"' || s[k] === '“' || s[k] === '”')) k++;
+        phrase = phrase.trim();
+        if (phrase) {
+          tokens.push({ type: 'field', field: rawField, value: phrase, exclude, phrase: true });
+          i = k;
+          continue;
+        }
+      }
     }
     // 裸词
     tokens.push({ type: 'word', value: chunk, exclude });

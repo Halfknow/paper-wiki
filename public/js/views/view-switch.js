@@ -47,9 +47,12 @@ export function showView(name) {
     el.classList.toggle('view-hidden', el.dataset.ctx !== name);
   });
 
-  // 一级导航 active 态
+  // 一级导航 active 态 + aria-current（R4 a11y：屏幕阅读器需要知道「当前页」）
   document.querySelectorAll('#view-nav .vn-item').forEach((a) => {
-    a.classList.toggle('active', a.dataset.view === name);
+    const on = a.dataset.view === name;
+    a.classList.toggle('active', on);
+    if (on) a.setAttribute('aria-current', 'page');
+    else a.removeAttribute('aria-current');
   });
 
   // 顶栏搜索上下文：placeholder + 论文页专属附属控件。切页不清空输入框——

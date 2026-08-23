@@ -1809,3 +1809,136 @@ test('processOne 方括号 arXiv ID 文件名 → id: 精确查 + 规范改名�
   scanner.stop();
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+test('chatPaper truncate（编辑重发）：截断被编辑 user 之后的历史，新问答接在截断处', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pwtrunc-'));
+  const store = {
+    version: 2,
+    tags: [],
+    settings: {},
+    papers: {
+      a: {
+        id: 'a',
+        title: '主论文',
+        abstract: '主摘要',
+        status: 'ready',
+        chat: [
+          { role: 'user', content: '第一问', ts: 1 },
+          { role: 'assistant', content: '第一答', ts: 2 },
+          { role: 'user', content: '第二问（将被编辑）', ts: 3 },
+          { role: 'assistant', content: '第二答', ts: 4 },
+        ],
+      },
+    },
+  };
+  let captured = null;
+  const deps = {
+    parser: { extractText: async () => ({ text: '', charCount: 0, numPages: 1 }) },
+    ai: {
+      chatPaper: async (args) => {
+        captured = args;
+        return '编辑后的答';
+      },
+      applySettingsOverride: (c) => c,
+      buildSummaryMarkdown: (md) => md,
+    },
+    arxiv: {},
+    rateLimitArxiv: async () => {},
+    config: { ai: {}, arxiv: { enabled: false } },
+    saveStore: async () => {},
+    mergeTags: () => {},
+    mergeTopics: () => {},
+  };
+  const scanner = createScanner({ store, textStore: memTextStore(), papersDir: dir, deps });
+  const r = await scanner.chatPaper('a', '改后的问题', { truncate: 2 });
+  assert.strictEqual(r.reply, '编辑后的答');
+  assert.strictEqual(captured.message, '改后的问题');
+  assert.deepStrictEqual(
+    captured.history,
+    [
+      { role: 'user', content: '第一问' },
+      { role: 'assistant', content: '第一答' },
+    ],
+    'history 从截断处开始（不含被编辑的旧轮）',
+  );
+  const chat = store.papers.a.chat;
+  assert.strictEqual(chat.length, 4, '截断后追加新对，总长不变');
+  assert.strictEqual(chat[2].content, '改后的问题', '旧 user 已被替换');
+  assert.strictEqual(chat[3].content, '编辑后的答');
+  assert.ok(!chat.some((m) => m.content === '第二问（将被编辑）'), '被编辑的旧轮不复活');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('scan() 中断残留自愈：无实质总结的中间态论文重新入队（不再永久卡死）', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pwstuck-'));
+  const content = Buffer.from('%PDF-1.4\n%stuck-pipeline\n');
+  fs.writeFileSync(path.join(dir, 'stuck.pdf'), content);
+  const { sha1OfFile } = require('../src/core/util');
+  const id = (await sha1OfFile(path.join(dir, 'stuck.pdf'))).slice(0, 16);
+  const store = {
+    version: 2,
+    tags: [],
+    settings: {},
+    papers: {
+      // 模拟流水线中途被杀：status 停在 summarizing 且无 summaryAt（旧版重启后永卡中间态）
+      [id]: {
+        id,
+        filename: 'stuck.pdf',
+        filepath: path.join(dir, 'stuck.pdf'),
+        fileMtime: 0,
+        fileSize: content.length,
+        addedAt: 1,
+        title: '',
+        authors: [],
+        year: null,
+        abstract: '',
+        arxivId: null,
+        fulltextChars: 0,
+        summary: '',
+        summaryModel: null,
+        summaryAt: null,
+        tags: [],
+        topics: [],
+        conceptIds: [],
+        formulaIds: [],
+        folders: [],
+        notes: '',
+        noteCards: [],
+        starred: false,
+        rating: 0,
+        readStatus: 'unread',
+        chat: [],
+        status: 'summarizing',
+        error: null,
+        updatedAt: 0,
+      },
+    },
+  };
+  let summarized = 0;
+  const deps = {
+    parser: { extractText: async () => ({ text: '全文', charCount: 2, numPages: 1 }) },
+    ai: {
+      summarize: async () => {
+        summarized++;
+        return '## TL;DR\n' + '补完成的总结内容。'.repeat(10);
+      },
+      extractTagsTopics: async () => ({ tags: [], topics: [], metadata: {} }),
+      buildSummaryMarkdown: (md) => md,
+      applySettingsOverride: (c) => c,
+    },
+    arxiv: {},
+    rateLimitArxiv: async () => {},
+    config: { ai: { model: 'm' }, arxiv: { enabled: false } },
+    saveStore: async () => {},
+    mergeTags: () => {},
+    mergeTopics: () => {},
+  };
+  const scanner = createScanner({ store, textStore: memTextStore({ [id]: '全文' }), papersDir: dir, deps, scanIntervalMs: 0 });
+  const r = await scanner.scan();
+  assert.strictEqual(r.requeued, 1, '中断残留被重新入队');
+  await new Promise((res) => setTimeout(res, 150));
+  assert.strictEqual(store.papers[id].status, 'ready', '重新跑完整流水线后转 ready');
+  assert.ok(summarized >= 1, 'AI 总结被重新调用');
+  scanner.stop();
+  fs.rmSync(dir, { recursive: true, force: true });
+});

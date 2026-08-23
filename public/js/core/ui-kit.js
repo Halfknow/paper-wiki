@@ -3,7 +3,7 @@
 // 自 public/app.js 拆出（v3.15 模块化重构）——声明体原样迁移，仅补 import/export。
 
 import { $ } from './dom.js';
-import { chipOf, escapeHtml } from './format.js';
+import { chipClass, escapeHtml } from './format.js';
 import { state } from './state.js';
 
 export function toast(message, type = 'info') {
@@ -65,8 +65,7 @@ export function chipList(items, cls, limit = 4, clsFor) {
   // 统一内联配色：主题/标签按名 hash 落到同一套柔和 8 色，告别单调灰标签。
   return shown.map((t) => {
     const extra = clsFor ? ' ' + clsFor(t) : '';
-    const p = chipOf(t);
-    return `<span class="${cls}${extra}" style="background:${p.s};color:${p.c};border-color:${p.b}">${escapeHtml(t)}</span>`;
+    return `<span class="${cls}${extra} ${chipClass(t)}">${escapeHtml(t)}</span>`;
   }).join('') +
     (rest ? `<span class="tag muted">+${rest}</span>` : '');
 }
@@ -79,8 +78,7 @@ export function compactChipList(p, limit = 4) {
   const shown = items.slice(0, limit);
   const rest = Math.max(0, items.length - shown.length);
   return shown.map((it) => {
-    const p = chipOf(it.name);
-    return `<span class="${it.cls}" style="background:${p.s};color:${p.c};border-color:${p.b}">${escapeHtml(it.name)}</span>`;
+    return `<span class="${it.cls} ${chipClass(it.name)}">${escapeHtml(it.name)}</span>`;
   }).join('') +
     (rest ? `<span class="tag muted compact-more">+${rest}</span>` : '');
 }

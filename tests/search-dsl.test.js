@@ -86,9 +86,20 @@ test('镜像 parseToPanel 与后端一致（DSL → 面板回填）', () => {
     'year:2020',
     '(tag:a OR tag:b)',
   ];
-  // v3.20：前端 parseToPanel 比后端多 6 个概念/公式专用键（categories/excludeCategories/
+  // v3.20：前端 parseToPanel 比后端多概念/公式专用键（categories/excludeCategories/
   // freq/hasContext/source/plottable，前端客户端过滤专用，后端不解析）。比较时剥离这些键。
-  const FE_ONLY = ['categories', 'excludeCategories', 'freq', 'hasContext', 'source', 'plottable'];
+  // v3.28 追加：added/importance/quality（同前端专用）。
+  const FE_ONLY = [
+    'categories',
+    'excludeCategories',
+    'freq',
+    'hasContext',
+    'source',
+    'plottable',
+    'added',
+    'importance',
+    'quality',
+  ];
   const stripFe = (p) => {
     const o = { ...p };
     for (const k of FE_ONLY) delete o[k];
@@ -97,6 +108,30 @@ test('镜像 parseToPanel 与后端一致（DSL → 面板回填）', () => {
   for (const d of dsls) {
     assert.deepStrictEqual(norm(stripFe(FE.parseToPanel(d))), norm(BE.parseToPanel(d)), `回填不一致: ${d}`);
   }
+});
+
+// v3.28 概念/公式页新字段：freq:solo / added:7d|30d / importance:core|supporting / quality:nodef
+// （前端客户端过滤专用，后端不解析——后端把它们当普通文本词，见搜索 help 的页面语义分派）。
+test('v3.28 前端专用字段：解析 + 面板往返', () => {
+  const f = (q) => FE.parseSearchQuery(q).metadata.fields;
+  assert.strictEqual(f('freq:solo').freq, 'solo');
+  assert.strictEqual(f('freq:SOLO').freq, 'solo', '大小写不敏感');
+  assert.strictEqual(f('freq:whatever').freq, undefined, '非法枚举不落字段');
+  assert.strictEqual(f('-freq:shared').freq, undefined, '排除前缀不落字段');
+  assert.strictEqual(f('added:7d').added, '7d');
+  assert.strictEqual(f('added:30d').added, '30d');
+  assert.strictEqual(f('added:7').added, undefined, '缺 d 后缀非法');
+  assert.strictEqual(f('importance:core').importance, 'core');
+  assert.strictEqual(f('importance:supporting').importance, 'supporting');
+  assert.strictEqual(f('quality:nodef').quality, 'nodef');
+  // 面板往返：DSL → panel → DSL 字段全保留（buildDslFromPanel 固定字段在前、裸词在后的规范序）
+  const round = FE.buildDslFromPanel(FE.parseToPanel('attention freq:solo added:30d importance:core quality:nodef'));
+  assert.strictEqual(round, 'freq:solo added:30d importance:core quality:nodef attention');
+  // 组合既有字段不冲突（vm 沙箱数组的原型与宿主不同，deepStrictEqual 会误报——用序列化比较）
+  const p = FE.parseToPanel('topic:推理 freq:hot category:attention');
+  assert.strictEqual(JSON.stringify(p.topics), '["推理"]');
+  assert.strictEqual(JSON.stringify(p.categories), '["attention"]');
+  assert.strictEqual(p.freq, 'hot');
 });
 
 test('镜像 isBodySearch：含 body:/in:body 判定与后端口径一致', () => {

@@ -34,6 +34,13 @@ export async function refresh() {
   // 避免在十几个筛选控件里各写一遍。refresh 尾部有多个 early return，故放在这里。
   syncFilterToUrl();
 
+  // 首次加载（库里还没数据）：先出列表骨架，数据到达后由 renderList 覆盖（R2）。
+  // 已有数据的一般刷新（轮询/改筛选）不出骨架——原地保留旧列表更稳。
+  if (!(state.papers || []).length) {
+    state._listLoading = true;
+    renderList();
+  }
+
   // 接口级降级：每个请求独立成功/失败，单个接口（尤其 papers 列表）失败时保留旧数据，
   // 而不是整页清空或卡死。safeGet 把网络错误吞成 {ok:false}，这里再据分派。
   const results = await Promise.all([
@@ -43,6 +50,7 @@ export async function refresh() {
   const [papers, tags, topics, folders, stats] = results;
   const failed = results.filter((x) => !x.ok);
   // 仅在各自成功时更新对应 state；失败的保留旧值，UI 不清空
+  state._listLoading = false; // 骨架让位（无论成败——失败走降级提示）
   const listPane = document.querySelector('.list-pane');
   if (papers.ok) {
     state.papers = papers.data || [];

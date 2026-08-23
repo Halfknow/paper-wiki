@@ -9,7 +9,7 @@ import { router } from '../core/nav.js';
 import { flushPendingNotes, state } from '../core/state.js';
 import { toast } from '../core/ui-kit.js';
 import { reader, set_reader, syncLocalAnnotations } from './info-tab.js';
-import { shelfAddAndActivate } from '../reader/shelf.js';
+import { shelfActivate } from '../reader/shelf.js';
 import { refresh } from '../library/refresh.js';
 // PaperReader 改为首次打开时动态 import（下方 openReader 内）——reader.js 顶层静态引入
 // pdfjs.js + pdfjs-viewer.js（合计 ~770KB），静态 import 会让首屏无条件背上这份成本。
@@ -23,15 +23,15 @@ export async function openReader(paper) {
       if (state.detail && state.detail.id === paper.id) state.detail = { ...state.detail, ...full };
     }
   } catch (e) { /* 拉取失败不阻塞阅读，只是可能无法回显最新批注 */ }
-  // 上架阅读架（v3.21）：已在不重复加、不重排；不 await——本地态在链内同步就绪，
-  // PDF 打开不该等这次网络往返（徽章经订阅自动追平）。
-  shelfAddAndActivate(paper);
+  // 标记阅读架当前篇（v3.23）：只在架上时激活；打开论文**不再自动上架**——
+  // 上架是显式动作（工具栏 🔖 / Ctrl+D / 抽屉搜索）。不 await：PDF 打开不等这次网络往返。
+  shelfActivate(paper.id);
   if (!reader) {
     const { PaperReader } = await import('../../reader.js'); // 惰性加载 pdf.js（模块map缓存，二次打开零成本）
     set_reader(new PaperReader({
       view: $('reader-view'),
       canvasWrap: $('reader-canvas-wrap'),
-      back: $('reader-back'),
+      back: $('reader-close'),
       prev: $('reader-prev'), next: $('reader-next'),
       pageInput: $('reader-page-input'), pageTotal: $('reader-page-total'),
       zoomIn: $('reader-zoom-in'), zoomOut: $('reader-zoom-out'), zoomLabel: $('reader-zoom-label'),
@@ -41,9 +41,9 @@ export async function openReader(paper) {
       toolNote: $('reader-tool-note'), toolInk: $('reader-tool-ink'),
       toolDelete: $('reader-tool-delete'),
       colorsEl: $('reader-colors'),
-      title: $('reader-title'), saved: $('reader-saved'),
-      // 返回按钮（左上角 ←）：与全局 Esc 同语义——当前在 /reader/:id 路由时 history.back()
-      // （路由 leave 钩子负责关阅读器，URL 同步退回）；否则（异常态）直接关视图。
+      title: $('reader-title'),
+      // 关闭按钮（左上角 ×，v3.23 替代「← 返回」）：与全局 Esc 同语义——当前在 /reader/:id
+      // 路由时 history.back()（路由 leave 钩子负责关阅读器，URL 同步退回）；否则（异常态）直接关视图。
       onBack: () => {
         const r = router.current && router.current();
         if (r && r.name === 'reader') window.history.back();

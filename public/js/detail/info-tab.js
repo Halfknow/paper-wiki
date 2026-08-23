@@ -4,7 +4,7 @@
 
 import { PATCH, POST, api, jget } from '../core/api.js';
 import { $ } from '../core/dom.js';
-import { chipOf, escapeHtml } from '../core/format.js';
+import { chipClass, escapeHtml } from '../core/format.js';
 import { state } from '../core/state.js';
 import { setBusy, toast } from '../core/ui-kit.js';
 import { renderDetail } from './detail.js';
@@ -38,7 +38,7 @@ export function renderInfoTab(body, p) {
       </div>
       <div class="field field-wide">
         <label>主题（点 × 移除，Enter 添加）</label>
-        <div class="chip-row" id="topic-row">${(p.topics || []).map((t) => { const p = chipOf(t); return `<span class="topic" style="background:${p.s};color:${p.c};border-color:${p.b}">${escapeHtml(t)} <span class="x" data-topic-del="${escapeHtml(t)}">×</span></span>`; }).join(' ') || '<span class="save-hint">无</span>'}
+        <div class="chip-row" id="topic-row">${(p.topics || []).map((t) => `<span class="topic ${chipClass(t)}">${escapeHtml(t)} <span class="x" data-topic-del="${escapeHtml(t)}">×</span></span>`).join(' ') || '<span class="save-hint">无</span>'}
         <input type="text" id="topic-add" class="chip-input" placeholder="+ 主题" /></div>
       </div>
       <div class="field">

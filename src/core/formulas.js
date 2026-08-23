@@ -17,6 +17,27 @@ const SOURCES = ['ai', 'mineru', 'vision', 'manual'];
 const MAX_VARIABLES = 24;
 const MAX_LATEX_CHARS = 2000;
 const MAX_DESC_CHARS = 4000;
+const MAX_CONCEPT_TERMS = 6; // 公式 ↔ 概念关联词上限（提示词要求 ≤3，合并并集后封顶防膨胀）
+
+/** 关系符（含裸 = < >）与大算符/多行环境——判定一段 LaTeX 是「公式」还是「记号」。
+ *  MinerU 的 md_content 里行内 $…$ 绝大多数是单符号/下标/序列省略/引文标记（v3.27 生产数据
+ *  97% 为单篇噪声），靠这条结构门槛在入库前拦掉；纯表达式无关系符的损失（如 softmax 写法）偶被
+ *  误杀，可接受——噪声治理优先。注意 (?![a-zA-Z]) 防 \left 命中 \le、\infty 命中 \in 这类前缀误报。 */
+const RELATION_RE =
+  /=|<|>|\\(?:approx|equiv|simeq|sim|propto|leq|geq|ll|gg|neq|subset|subseteq|supset|supseteq|cong|doteq|rightarrow|longrightarrow|leftarrow|mapsto|to|in|ge|le|ne)(?![a-zA-Z])/;
+/** 注意 (?![a-zA-Z])（而非 \b）：\sum_{i=1} 的下划线是词字符，\b 会漏配；同时防 \limits 命中 \lim */
+const BIGOP_RE = /\\(?:sum|int|oint|prod|lim|bigcup|bigcap|bigoplus|bigotimes|begin)(?![a-zA-Z])/;
+/** 目标式算子（v3.50）：\max_{\pi} E[…] / \min_{\theta} D_KL[…] 这类优化目标没有关系符，
+ *  但显然是公式——生产清理时曾按纯关系符误杀。\mid 同理（条件概率 p(x\mid y)）。 */
+const OBJECTIVE_RE = /\\(?:max|min|arg|mid)(?![a-zA-Z])/;
+
+/** 结构判定：含关系符（= ≤ ≥ → ∈ …）、大算符（∑ ∫ ∏ lim）、目标式算子（max/min/arg/mid）
+ *  或多行环境（aligned/cases…）才视为公式；单符号、上下标记号、逗号序列、引文上标等记号噪声返回 false。 */
+function looksLikeFormula(latex) {
+  const s = String(latex == null ? '' : latex).trim();
+  if (s.length < 3 || /^\d+(\.\d+)?$/.test(s)) return false;
+  return RELATION_RE.test(s) || BIGOP_RE.test(s) || OBJECTIVE_RE.test(s);
+}
 
 /** 规范名归一化：小写 + 空白/下划线→连字符 + 折叠重复连字符 + 去首尾连字符。 */
 function normalizeCanonicalName(s) {
@@ -74,7 +95,12 @@ function normalizeVariables(raw) {
   return out;
 }
 
-/** plotHint 结构校验：必须有 variable + 二元数值 range，否则降级 null（宁缺勿错，画图功能才好接）。 */
+/** plotHint 结构校验：必须有 variable + 二元数值 range，否则降级 null（宁缺勿错，画图功能才好接）。
+ *  plotExpr（v3.29）：可直接求值的数学表达式字符串（变量 x，plotHint.params 里的符号可用），
+ *  白名单字符集校验（数字/字母/运算符/括号/逗号/空白/小数点）——真正的安全防线在前端求值器
+ *  （core/plot.js 只认白名单 token，未知标识符解析期拒绝），这里只拦明显脏数据 + 限长。 */
+const PLOT_EXPR_RE = /^[A-Za-z0-9+\-*/^().,\s]*$/;
+
 function normalizePlotHint(raw) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
   const variable = String(raw.variable || '').trim();
@@ -91,7 +117,25 @@ function normalizePlotHint(raw) {
       if (Number.isFinite(n)) params[k] = n;
     }
   }
-  return { variable: variable.slice(0, 60), range: [lo, hi], params };
+  const plotExprRaw = String(raw.plotExpr || '').trim();
+  const plotExpr = plotExprRaw && plotExprRaw.length <= 300 && PLOT_EXPR_RE.test(plotExprRaw) ? plotExprRaw : '';
+  return { variable: variable.slice(0, 60), range: [lo, hi], params, plotExpr };
+}
+
+/** 公式 ↔ 概念关联词归一化：字符串数组 → 去空/去重/截长，封顶 MAX_CONCEPT_TERMS。
+ *  只认字符串（模型 JSON 输出的 term 应为字符串，数字/对象属脏数据直接丢）。
+ *  值应与概念清单的 term 写法一致（提示词把本篇概念清单喂给模型供其挑选）。 */
+function normalizeConceptTerms(raw) {
+  if (!Array.isArray(raw)) return [];
+  const out = [];
+  for (const t of raw) {
+    if (typeof t !== 'string') continue;
+    const s = t.trim();
+    if (!s || s.length > 200) continue;
+    if (!out.includes(s)) out.push(s);
+    if (out.length >= MAX_CONCEPT_TERMS) break;
+  }
+  return out;
 }
 
 function normalizeOccurrence(raw) {
@@ -153,6 +197,8 @@ function normalizeFormula(raw, now = Date.now()) {
     occurrences,
     paperIds: occurrences.map((o) => o.paperId),
     source: SOURCES.includes(raw.source) ? raw.source : 'ai',
+    starred: !!raw.starred,
+    conceptTerms: normalizeConceptTerms(raw.conceptTerms),
     // 显式 0 予以保留（否则 db 读取边界每次 load 都会拿到新 now → 假 diff）
     createdAt: Number.isFinite(Number(raw.createdAt)) ? Number(raw.createdAt) : now,
     updatedAt: Number.isFinite(Number(raw.updatedAt)) ? Number(raw.updatedAt) : now,
@@ -183,8 +229,9 @@ function normalizeFormulas(raw, now = Date.now()) {
  *
  * 入参 item 形状（AI 层直接产出）：
  *   { canonicalName, name, latex, description, category, variables, plottable, plotHint,
- *     rawLatex, context, symbolMap }
- * 其中后三个是「本篇的 occurrence 属性」，会被折进 occurrences。
+ *     rawLatex, context, symbolMap, conceptTerms }
+ * 其中后三个是「本篇的 occurrence 属性」，会被折进 occurrences；conceptTerms 是公式级
+ * 的概念关联（与本篇概念清单的 term 对齐），命中已有条目时取并集。
  */
 function mergeFormulas(store, items, paperId, now = Date.now()) {
   if (!Array.isArray(items) || !items.length) return [];
@@ -223,6 +270,15 @@ function mergeFormulas(store, items, paperId, now = Date.now()) {
       if (!f.variables.length) f.variables = incoming.variables;
       if (!f.plotHint) f.plotHint = incoming.plotHint;
       if (incoming.plottable) f.plottable = true;
+      // 概念关联取并集（不同论文可能各连到不同概念），封顶防膨胀
+      if (incoming.conceptTerms.length) {
+        const merged = [...(f.conceptTerms || [])];
+        for (const t of incoming.conceptTerms) {
+          if (!merged.includes(t)) merged.push(t);
+          if (merged.length >= MAX_CONCEPT_TERMS) break;
+        }
+        f.conceptTerms = merged.slice(0, MAX_CONCEPT_TERMS);
+      }
     }
 
     if (occ) {
@@ -260,17 +316,64 @@ function removePaperFromFormulas(store, paperId) {
   store.formulas = store.formulas.filter((f) => f.occurrences.length > 0);
 }
 
-/** 把公式清单渲染为 Markdown 文档，便于导出/外部查看（KaTeX 语法，Obsidian 可直接渲染）。 */
-function formulasToMarkdown(store) {
-  const items = store.formulas || [];
+/** 把 source 公式并入 target（v3.30 治理：canonicalName 漂移产生的重复条目收敛）。
+ *  并集语义：occurrences 按 paperId 合并（target 已有的槽位保留）并重算 paperIds 不变式；
+ *  name/latex/description/category/variables/plotHint 只在 target 缺时补；
+ *  conceptTerms 并集封顶；plottable/starred 取或；papers[].formulaIds 反向替换；删除 source。
+ *  返回合并后的 target（不存在/自并时 null）。 */
+function mergeFormulaInto(store, sourceId, targetId) {
+  if (!sourceId || !targetId || sourceId === targetId) return null;
+  const source = (store.formulas || []).find((f) => f.id === sourceId);
+  const target = (store.formulas || []).find((f) => f.id === targetId);
+  if (!source || !target) return null;
+  const occBy = new Map((target.occurrences || []).map((o) => [o.paperId, o]));
+  for (const o of source.occurrences || []) if (!occBy.has(o.paperId)) occBy.set(o.paperId, o);
+  target.occurrences = [...occBy.values()];
+  target.paperIds = target.occurrences.map((o) => o.paperId); // 不变式单点维护
+  if ((!target.name || target.name === target.canonicalName) && source.name) target.name = source.name;
+  if (!target.description && source.description) target.description = source.description;
+  if (!target.category && source.category) target.category = source.category;
+  if (!target.variables.length && source.variables.length) target.variables = source.variables;
+  if (!target.plotHint && source.plotHint) target.plotHint = source.plotHint;
+  if (source.plottable) target.plottable = true;
+  if (source.starred) target.starred = true;
+  const terms = [...(target.conceptTerms || [])];
+  for (const t of source.conceptTerms || []) {
+    if (!terms.includes(t)) terms.push(t);
+    if (terms.length >= MAX_CONCEPT_TERMS) break;
+  }
+  target.conceptTerms = terms.slice(0, MAX_CONCEPT_TERMS);
+  target.updatedAt = Date.now();
+  store.formulas = store.formulas.filter((f) => f.id !== sourceId);
+  for (const p of Object.values(store.papers || {})) {
+    if (Array.isArray(p.formulaIds)) {
+      const set = new Set(p.formulaIds.map((x) => (x === sourceId ? targetId : x)));
+      p.formulaIds = [...set];
+    }
+  }
+  return target;
+}
+
+/** 把公式清单渲染为 Markdown 文档，便于导出/外部查看（KaTeX 语法，Obsidian 可直接渲染）。
+ *  opts.ids（v3.30）：限定导出子集（「按当前筛选导出」）。 */
+function formulasToMarkdown(store, opts = {}) {
+  const ids = Array.isArray(opts && opts.ids) && opts.ids.length ? new Set(opts.ids) : null;
+  let items = store.formulas || [];
+  if (ids) items = items.filter((f) => ids.has(f.id));
   if (!items.length) {
     return '# 公式清单\n\n_（暂无公式，运行 AI 扫描或在论文页「抽取并追加公式」即可生成）_\n';
   }
   const lines = ['# 公式清单', '', `> 共 ${items.length} 个公式，由 PaperWiki 自动归一化整理。`, ''];
   for (const f of items) {
-    lines.push(`## ${f.name}`, '', `\`${f.canonicalName}\`${f.category ? ` · 分类：\`${f.category}\`` : ''}`, '');
+    lines.push(
+      `## ${f.starred ? '⭐ ' : ''}${f.name}`,
+      '',
+      `\`${f.canonicalName}\`${f.category ? ` · 分类：\`${f.category}\`` : ''}`,
+      '',
+    );
     lines.push('$$', f.latex, '$$', '');
     if (f.description) lines.push(f.description, '');
+    if (f.conceptTerms && f.conceptTerms.length) lines.push(`**相关概念：** ${f.conceptTerms.join('、')}`, '');
     if (f.variables.length) {
       lines.push('| 符号 | 含义 | 角色 |', '| --- | --- | --- |');
       for (const v of f.variables) lines.push(`| \`${v.symbol}\` | ${v.meaning} | ${v.role} |`);
@@ -298,7 +401,10 @@ module.exports = {
   VAR_ROLES,
   SOURCES,
   MAX_VARIABLES,
+  MAX_CONCEPT_TERMS,
   normalizeCanonicalName,
+  normalizeConceptTerms,
+  looksLikeFormula,
   normalizeLatex,
   formulaIdFor,
   normalizeVariables,
@@ -307,6 +413,7 @@ module.exports = {
   normalizeFormula,
   normalizeFormulas,
   mergeFormulas,
+  mergeFormulaInto,
   deleteFormula,
   removePaperFromFormulas,
   formulasToMarkdown,

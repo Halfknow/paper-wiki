@@ -46,14 +46,16 @@ function buildChatParamsBody(cp) {
  *  - onToken(text, kind)：每个增量 token（kind=content|reasoning）；onDone({reply,chat})：完成；onFail(err)：失败。
  *  - 返回一个 close() 函数，调用即中止（切论文/关抽屉时调，防止 EventSource 自动重连重跑）。
  *  事件名 token/done/fail（避免 error 防 EventSource 原生 error 误判 + 自动重连，沿用 discover 约定）。 */
-export function streamChatFetch(paperId, message, { onToken, onDone, onFail, regenerate, chatParams, extraIds, images } = {}) {
+export function streamChatFetch(paperId, message, { onToken, onDone, onFail, regenerate, truncate, chatParams, extraIds, images } = {}) {
   // Phase 3 视觉问答：带图片走 POST /chat/vision（fetch + ReadableStream，EventSource 无法带 body）
   if (Array.isArray(images) && images.length) {
-    return streamVisionFetch(paperId, message, { onToken, onDone, onFail, regenerate, extraIds, images, chatParams });
+    return streamVisionFetch(paperId, message, { onToken, onDone, onFail, regenerate, truncate, extraIds, images, chatParams });
   }
   const params = new URLSearchParams();
   if (message) params.set('message', message);
   if (regenerate) params.set('regenerate', '1');
+  // 编辑重发：截断被编辑 user 之后的历史（后端对齐截断，防权威历史回灌复活已删的旧消息）
+  if (Number.isInteger(truncate) && truncate >= 0) params.set('truncate', String(truncate));
   // @ 引用论文（逗号分隔透传）
   if (Array.isArray(extraIds) && extraIds.length) params.set('extraIds', extraIds.join(','));
   // 透传模型参数（thinking=enabled/disabled 字符串；其余为数值）。chatParams 显式注入优先，否则读 UI 当前值。
@@ -94,11 +96,12 @@ export function streamChatFetch(paperId, message, { onToken, onDone, onFail, reg
  *  事件协议与 GET /chat 一致（token/done/fail），手动按 \n\n 分块解析。
  *  返回 close() 中止函数（AbortController.abort）。
  *  v3.16 自 reader.js 迁入——详情 tab 视觉问答（图片粘贴/拖拽）也复用此实现。 */
-export function streamVisionFetch(paperId, message, { onToken, onDone, onFail, regenerate, extraIds, images, chatParams } = {}) {
+export function streamVisionFetch(paperId, message, { onToken, onDone, onFail, regenerate, truncate, extraIds, images, chatParams } = {}) {
   const cpBody = buildChatParamsBody(chatParams || (typeof getChatParams === 'function' ? getChatParams() : {}));
   const body = JSON.stringify({
     message: message || '',
     regenerate: !!regenerate,
+    truncate: Number.isInteger(truncate) && truncate >= 0 ? truncate : undefined,
     extraIds: Array.isArray(extraIds) && extraIds.length ? extraIds : undefined,
     images: Array.isArray(images) ? images : [],
     chatParams: cpBody,
@@ -175,4 +178,72 @@ export function streamVisionFetch(paperId, message, { onToken, onDone, onFail, r
 if (typeof window !== 'undefined') {
   window.streamChatFetch = streamChatFetch;
   window.streamVisionFetch = streamVisionFetch;
+}
+
+/** 通用 POST + SSE 流式读取（v3.30）：与 streamVisionFetch 同一套 \n\n 分块解析，
+ *  但不绑定论文聊天协议——概念 AI 综合解读（/api/concepts/:id/explain）等新流式端点复用。
+ *  事件协议 token/done/fail；onToken(obj)/onDone(obj)/onFail(msg) 由调用方解释字段。
+ *  返回 close() 中止函数（AbortController）。 */
+export function streamPostSse(url, body, { onToken, onDone, onFail } = {}) {
+  const ctrl = new AbortController();
+  let finished = false;
+  const close = () => {
+    finished = true;
+    try { ctrl.abort(); } catch {}
+  };
+  (async () => {
+    let res;
+    try {
+      res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body || {}),
+        signal: ctrl.signal,
+      });
+    } catch {
+      if (!finished && typeof onFail === 'function') onFail('连接中断，请重试');
+      return;
+    }
+    if (!res.ok) {
+      let msg = '请求失败（HTTP ' + res.status + '）';
+      try { const j = await res.json(); if (j && j.error) msg = j.error; } catch {}
+      if (typeof onFail === 'function') onFail(msg);
+      return;
+    }
+    const reader = res.body && res.body.getReader ? res.body.getReader() : null;
+    if (!reader) { if (typeof onFail === 'function') onFail('浏览器不支持流式读取'); return; }
+    const decoder = new TextDecoder('utf-8');
+    let buffer = '';
+    const dispatch = (block) => {
+      const lines = block.split('\n');
+      let event = 'message', dataStr = '';
+      for (const ln of lines) {
+        if (ln.startsWith('event:')) event = ln.slice(6).trim();
+        else if (ln.startsWith('data:')) dataStr += ln.slice(5).trim();
+      }
+      if (!dataStr) return;
+      let obj = null; try { obj = JSON.parse(dataStr); } catch { return; }
+      if (event === 'token' && typeof onToken === 'function') onToken(obj);
+      else if (event === 'done') { finished = true; if (typeof onDone === 'function') onDone(obj); }
+      else if (event === 'fail') { finished = true; if (typeof onFail === 'function') onFail((obj && obj.error) || '生成失败'); }
+    };
+    try {
+      for (;;) {
+        const chunk = await reader.read();
+        if (chunk.done) break;
+        buffer += decoder.decode(chunk.value, { stream: true });
+        let sep;
+        while ((sep = buffer.indexOf('\n\n')) >= 0) {
+          const block = buffer.slice(0, sep);
+          buffer = buffer.slice(sep + 2);
+          dispatch(block);
+          if (finished) break;
+        }
+        if (finished) break;
+      }
+    } catch {
+      if (!finished && typeof onFail === 'function') onFail('连接中断，请重试');
+    }
+  })();
+  return close;
 }

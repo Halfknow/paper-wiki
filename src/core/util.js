@@ -169,11 +169,12 @@ function proxyFetchJson(url, opts = {}) {
           done(reject, new Error(`HTTP ${res.statusCode}`));
           return;
         }
-        let buf = '';
-        res.on('data', (c) => (buf += c.toString()));
+        // 字节级累积（逐 chunk toString 会把跨 TCP 边界的多字节 UTF-8 字符解成 U+FFFD）
+        const chunks = [];
+        res.on('data', (c) => chunks.push(c));
         res.on('end', () => {
           try {
-            done(resolve, parseJsonLenient(decodeChunked(buf)));
+            done(resolve, parseJsonLenient(decodeChunked(Buffer.concat(chunks))));
           } catch (e) {
             done(reject, new Error('JSON 解析失败'));
           }
@@ -202,15 +203,18 @@ function proxyFetchJson(url, opts = {}) {
         for (const [k, v] of Object.entries(headers)) reqLines.push(`${k}: ${v}`);
         tlsSock.write(reqLines.join('\r\n') + '\r\n\r\n');
       });
-      let buf = '';
+      // 字节级累积（chunk size / Content-Length 都是字节数；逐 chunk toString 会把跨边界的
+      // 多字节 UTF-8 字符解坏）
+      const chunks = [];
       // TLS 可能分多个 record 下发；用 idle 计时器判断「一段时间无新数据 = 传完」再解析，
       // 避免 end 事件在 chunked 末尾 0\r\n\r\n 收齐前触发导致 body 截断。
       let idle = null;
       const settle = () => {
+        const buf = Buffer.concat(chunks);
         const sep = buf.indexOf('\r\n\r\n');
-        const headBlock = sep >= 0 ? buf.slice(0, sep) : '';
+        const headBlock = sep >= 0 ? buf.slice(0, sep).toString('latin1') : '';
         const body = sep >= 0 ? buf.slice(sep + 4) : buf;
-        // 非 chunked 且有 Content-Length：校验 body 是否收齐，未齐则等下一片
+        // 非 chunked 且有 Content-Length：校验 body 是否收齐（字节比较），未齐则等下一片
         const clMatch = /content-length:\s*(\d+)/i.exec(headBlock);
         if (clMatch && body.length < parseInt(clMatch[1], 10)) return;
         try {
@@ -220,7 +224,7 @@ function proxyFetchJson(url, opts = {}) {
         }
       };
       tlsSock.on('data', (c) => {
-        buf += c.toString();
+        chunks.push(c);
         if (idle) clearTimeout(idle);
         idle = setTimeout(settle, 200); // 200ms 无新数据 → 视为传完
       });
@@ -273,27 +277,31 @@ function parseJsonLenient(s) {
 /** 解码 HTTP chunked transfer-encoding 的 body。非 chunked 则原样返回。
  *  chunked 格式：<size hex>\r\n<size 字节数据>\r\n... 0\r\n\r\n */
 function decodeChunked(body) {
+  // 接受 Buffer 或字符串，统一按字节处理：chunk size 是字节数，字符串 slice 按 UTF-16
+  // code unit 切会把含多字节字符（CJK）的 body 切错位；且输出统一一次性 toString('utf8')，
+  // 多字节字符跨 chunk 边界不再产生 U+FFFD
+  const buf = Buffer.isBuffer(body) ? body : Buffer.from(body, 'utf8');
   // 启发：chunked body 以十六进制 chunk size 行开头（如 "5a\r\n..."）
-  const firstNl = body.indexOf('\r\n');
-  const head = firstNl >= 0 ? body.slice(0, firstNl) : '';
-  if (!/^[0-9a-fA-F]+$/.test(head)) return body; // 非 chunked
-  let out = '';
+  const firstNl = buf.indexOf('\r\n');
+  const head = firstNl >= 0 ? buf.slice(0, firstNl).toString('latin1') : '';
+  if (!/^[0-9a-fA-F]+$/.test(head)) return buf.toString('utf8'); // 非 chunked
+  const parts = [];
   let p = 0;
-  while (p < body.length) {
-    const nl = body.indexOf('\r\n', p);
+  while (p < buf.length) {
+    const nl = buf.indexOf('\r\n', p);
     if (nl < 0) break;
-    const size = parseInt(body.slice(p, nl).trim(), 16);
+    const size = parseInt(buf.slice(p, nl).toString('latin1').trim(), 16);
     if (!size) break; // 0 chunk = 结束
     const dataStart = nl + 2;
     const dataEnd = dataStart + size;
-    if (dataEnd > body.length) {
-      out += body.slice(dataStart);
+    if (dataEnd > buf.length) {
+      parts.push(buf.slice(dataStart));
       break;
     } // 截断保护
-    out += body.slice(dataStart, dataEnd);
+    parts.push(buf.slice(dataStart, dataEnd));
     p = dataEnd + 2; // 跳过 chunk 数据 + 尾部 \r\n
   }
-  return out;
+  return Buffer.concat(parts).toString('utf8');
 }
 
 /** 从文件名里提取 arXiv ID（比 parseArxivUrl 宽：

@@ -256,6 +256,9 @@ async function bootUi({ listItems, details, routes, chatReply, initialPath } = {
     sleep,
     back,
     forward,
+    /** 本次 boot 的模块图版本号：import('.../public/<rel>?boot=N') 可取到与 app.js
+     *  同一批模块实例（不加 query 会拿到第二份实例，state 单例分裂）。 */
+    bootSeq: () => bootSeq,
     path: () => w.location.pathname,
     url: () => w.location.pathname + w.location.search,
     $: (id) => w.document.getElementById(id),

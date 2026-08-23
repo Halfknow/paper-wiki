@@ -7,9 +7,12 @@ if (guardSlowFile('notes-panel')) return;
 
 const { test, before } = require('node:test');
 const assert = require('node:assert');
+const { pathToFileURL } = require('url');
+const path = require('path');
 const { bootUi } = require('./helpers/ui');
 
 let ui;
+let NotesPanel; // ESM：before 里动态 import（895eee0 退役 window 桥后不再有 window.NotesPanel）
 const $ = (id) => ui.document.getElementById(id);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -59,6 +62,10 @@ before(async () => {
       }),
     },
   });
+  // 与 app.js 同一批模块实例（?boot=N），否则 state/syncNotePanels 单例分裂（895eee0 退役 window 桥）
+  ({ NotesPanel } = await import(
+    pathToFileURL(path.join(__dirname, '..', 'public', 'js', 'detail', 'notes-panel.js')).href + '?boot=' + ui.bootSeq()
+  ));
   assert.ok(ui.document.querySelector('.paper-item'), 'boot 成功');
 });
 
@@ -249,7 +256,7 @@ test('双面板同步：详情 tab 保存后，阅读器侧栏面板同步更新
   // 模拟阅读器侧栏：第二个 NotesPanel 实例挂在独立容器 + window._readerNotesPanel
   const host2 = ui.document.createElement('div');
   ui.document.body.appendChild(host2);
-  const panel2 = new ui.window.NotesPanel(host2, { showGenerate: false });
+  const panel2 = new NotesPanel(host2, { showGenerate: false });
   ui.window._readerNotesPanel = panel2;
   await panel2.load('p1');
   assert.strictEqual(host2.querySelectorAll('.note-card').length, 1, '侧栏初始 1 张卡');

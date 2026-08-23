@@ -184,7 +184,8 @@ test('PATCH /api/formulas/:id：修订字段 + latex 归一化 + source 转 manu
   assert.strictEqual(r.json.data.variables.length, 2);
   assert.strictEqual(r.json.data.variables[1].role, 'param', '非法 role 兜底');
   assert.strictEqual(r.json.data.plottable, true);
-  assert.deepStrictEqual(r.json.data.plotHint, { variable: 'x', range: [0, 1], params: {} });
+  // v3.29：plotHint 增加 plotExpr 字段（白名单外的输入置空串）
+  assert.deepStrictEqual(r.json.data.plotHint, { variable: 'x', range: [0, 1], params: {}, plotExpr: '' });
   assert.strictEqual(r.json.data.source, 'manual');
   assert.strictEqual(r.json.data.canonicalName, 'kl-divergence', 'canonicalName 不可改（合并 key）');
   server.close();

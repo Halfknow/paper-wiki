@@ -38,6 +38,9 @@ function register(t, ctx) {
       : [];
     // regenerate=1：重新生成最后一轮（message 可为空，scanner 从末尾轮取 user message）
     const regenerate = q.regenerate === '1';
+    // truncate=N：编辑重发（截断该 user 之后的历史；与前端本地截断对齐，防服务端历史回灌复活旧消息）
+    const truncateRaw = parseInt(q.truncate, 10);
+    const truncate = Number.isFinite(truncateRaw) && truncateRaw >= 0 ? truncateRaw : undefined;
     if (!message && !regenerate) return fail(res, 400, 'empty message');
 
     // —— 流式分支（仅 GET，前端用 EventSource；POST 走原非流式 JSON 向后兼容）——
@@ -88,6 +91,7 @@ function register(t, ctx) {
       try {
         const r = await scanner.chatPaper(spaceId, id, message, {
           regenerate,
+          truncate,
           extraIds: extraIds.length ? extraIds : undefined, // @ 引用论文
           chatParams: Object.keys(chatParams).length ? chatParams : undefined,
           onToken: (t, kind) => {
@@ -126,6 +130,7 @@ function register(t, ctx) {
     }
     const r = await scanner.chatPaper(spaceId, id, message, {
       regenerate,
+      truncate,
       extraIds: extraIds.length ? extraIds : undefined,
       chatParams: Object.keys(chatParams).length ? chatParams : undefined,
     });
@@ -141,6 +146,8 @@ function register(t, ctx) {
     const op = JSON.parse(body || '{}');
     const message = typeof op.message === 'string' ? op.message.trim() : '';
     const regenerate = !!op.regenerate;
+    const truncateRaw = parseInt(op.truncate, 10);
+    const truncate = Number.isFinite(truncateRaw) && truncateRaw >= 0 ? truncateRaw : undefined;
     if (!message && !regenerate) return fail(res, 400, 'empty message');
     const extraIds = Array.isArray(op.extraIds)
       ? op.extraIds.filter((s) => s && store.papers[s])
@@ -190,6 +197,7 @@ function register(t, ctx) {
     try {
       const r = await scanner.chatPaper(spaceId, id, message, {
         regenerate,
+        truncate,
         extraIds: extraIds.length ? extraIds : undefined,
         chatParams: Object.keys(chatParams).length ? chatParams : undefined,
         images: images.length ? images : undefined,

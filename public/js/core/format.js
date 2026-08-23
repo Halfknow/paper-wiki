@@ -39,6 +39,7 @@ export function statusDot(p) {
   return 'busy';
 }
 
+export { chipIndex };
 export function escapeHtml(s) {
   return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
@@ -69,4 +70,10 @@ export function fixCjkStrong(html) {
     .split(/(<(?:pre|code)(?:\s[^>]*)?>[\s\S]*?<\/(?:pre|code)>)/g)
     .map((seg, i) => (i % 2 ? seg : seg.replace(/\*\*(\S(?:[^<\n]*?\S)?)\*\*/g, '<strong>$1</strong>')))
     .join('');
+}
+
+/** 名字 → 双主题 chip 类名（v3.39）：颜色由 CSS `.chip-N` 规则承载（浅/深两套），
+ *  取代旧的内联 style 硬编码浅色——内联样式压过任何暗色覆盖，是深色下标签刺眼的根因。 */
+export function chipClass(name) {
+  return 'chip-' + chipIndex(name);
 }

@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { migrateStore, emptyStore } = require('../core/store');
+const { migrateStore, emptyStore, normalizeConceptContexts } = require('../core/store');
 const { normalizeFormulas } = require('../core/formulas');
 const { hasCjk } = require('../core/search');
 const logger = require('../core/logger').createLogger('db');
@@ -158,14 +158,20 @@ function hashOf(obj) {
   return sha1(JSON.stringify(obj));
 }
 
-/** 概念 → 稳定哈希行：补默认 category（''），使内存对象（无 category 键）与读回对象（category:''）
- *  产生相同 hash，避免 loadSpaceStore 重置快照后 hash-diff 误判重写（v3.10 category 字段引入的抖动）。 */
+/** 概念 → 稳定哈希行：补默认 category/context/source（''），使内存对象（无该键）与读回对象
+ *  （兜底 ''）产生相同 hash，避免 loadSpaceStore 重置快照后 hash-diff 误判重写
+ *  （v3.10 category 字段引入的抖动；context/source 为 008 迁移补列，同模式）。 */
 function conceptToHashRow(c) {
   return {
     id: c.id,
     term: c.term,
     definition: c.definition,
     category: c.category || '',
+    context: c.context || '',
+    source: c.source || '',
+    importance: c.importance || '', // 陷阱 39：新字段必须加默认值兜底，防 load/save 幽灵重写
+    contexts: c.contexts || [], // v3.29 per-paper 由来（同上，默认值兜底）
+    starred: !!c.starred, // v3.30 重点标记（布尔默认值兜底）
     paperIds: c.paperIds || [],
     createdAt: c.createdAt,
     updatedAt: c.updatedAt,
@@ -287,7 +293,9 @@ function createRepository(db) {
     for (const p of Object.values(store.papers || {})) snap.papers.set(p.id, hashOf(paperToRow(p)));
     for (const c of store.concepts || []) snap.concepts.set(c.id, hashOf(conceptToHashRow(c)));
     for (const f of store.formulas || []) snap.formulas.set(f.id, hashOf(f));
-    for (const f of store.folders || []) snap.folders.set(f.id, hashOf(f));
+    // folders 哈希带数组下标（position）：重排（PUT /api/folders/order）必须触发落库，
+    // 否则 hash-diff 判定「无变化」，重启后按 created_at 恢复旧序（v3.22 排序静默丢失的根因）
+    for (const [i, f] of (store.folders || []).entries()) snap.folders.set(f.id, hashOf({ ...f, position: i }));
     return snap;
   }
 
@@ -297,19 +305,19 @@ function createRepository(db) {
     const meta = sp.rows[0] || {};
     const papersR = await db.query('SELECT * FROM papers WHERE space_id=$1', [spaceId]);
     const conceptsR = await db.query(
-      'SELECT id, term, definition, category, paper_ids, created_at, updated_at FROM concepts WHERE space_id=$1 ORDER BY created_at, id',
+      `SELECT id, term, definition, category, context, source, importance, contexts, starred, paper_ids, created_at, updated_at
+         FROM concepts WHERE space_id=$1 ORDER BY created_at, id`,
       [spaceId],
     );
     const formulasR = await db.query(
       `SELECT id, canonical_name, name, latex, description, category, variables, plottable,
-              plot_hint, occurrences, paper_ids, source, created_at, updated_at
+              plot_hint, occurrences, paper_ids, source, concept_terms, starred, created_at, updated_at
          FROM formulas WHERE space_id=$1 ORDER BY canonical_name, id`,
       [spaceId],
     );
-    const foldersR = await db.query(
-      'SELECT id, name, color, created_at FROM folders WHERE space_id=$1 ORDER BY created_at, id',
-      [spaceId],
-    );
+    const foldersR = await db.query('SELECT id, name, color, created_at, position FROM folders WHERE space_id=$1', [
+      spaceId,
+    ]);
     const store = emptyStore();
     store.tags = Array.isArray(meta.tags) ? meta.tags : [];
     store.topics = Array.isArray(meta.topics) ? meta.topics : [];
@@ -319,6 +327,11 @@ function createRepository(db) {
       term: r.term,
       definition: r.definition,
       category: r.category || '',
+      context: r.context || '',
+      source: r.source || '',
+      importance: r.importance || '',
+      contexts: Array.isArray(r.contexts) ? normalizeConceptContexts(r.contexts) : [],
+      starred: !!r.starred,
       paperIds: Array.isArray(r.paper_ids) ? r.paper_ids : [],
       createdAt: Number(r.created_at) || 0,
       updatedAt: Number(r.updated_at) || 0,
@@ -338,16 +351,29 @@ function createRepository(db) {
         plotHint: r.plot_hint || null,
         occurrences: Array.isArray(r.occurrences) ? r.occurrences : [],
         source: r.source,
+        conceptTerms: Array.isArray(r.concept_terms) ? r.concept_terms : [],
+        starred: !!r.starred,
         createdAt: Number(r.created_at) || 0,
         updatedAt: Number(r.updated_at) || 0,
       })),
     );
-    store.folders = foldersR.rows.map((r) => ({
-      id: r.id,
-      name: r.name,
-      color: r.color,
-      createdAt: Number(r.created_at) || 0,
-    }));
+    // 按 position 升序（007 迁移列）：JS 侧排序兜底——NULLS LAST 语法 pg-mem 不一定支持，
+    // 存量 NULL 行（迁移前建的夹）排在有 position 的行之后，再按 created_at/id 稳定排
+    store.folders = foldersR.rows
+      .map((r) => ({
+        id: r.id,
+        name: r.name,
+        color: r.color,
+        createdAt: Number(r.created_at) || 0,
+        pos: r.position == null ? null : Number(r.position),
+      }))
+      .sort(
+        (a, b) =>
+          (a.pos ?? Infinity) - (b.pos ?? Infinity) ||
+          a.createdAt - b.createdAt ||
+          String(a.id).localeCompare(String(b.id)),
+      )
+      .map(({ pos: _pos, ...f }) => f);
     for (const row of papersR.rows) store.papers[row.id] = rowToPaper(row);
     migrateStore(store); // normalizePaper 补默认值，保证内存形状与旧版一致
     snapshots.set(spaceId, buildSnapshot(store));
@@ -369,7 +395,10 @@ function createRepository(db) {
       const conceptDeletes = [...prev.concepts.keys()].filter((id) => !next.concepts.has(id));
       const formulaUpserts = (store.formulas || []).filter((f) => prev.formulas.get(f.id) !== next.formulas.get(f.id));
       const formulaDeletes = [...prev.formulas.keys()].filter((id) => !next.formulas.has(id));
-      const folderUpserts = (store.folders || []).filter((f) => prev.folders.get(f.id) !== next.folders.get(f.id));
+      const folderRows = (store.folders || []).map((f, i) => ({ folder: f, position: i }));
+      const folderUpserts = folderRows.filter(
+        ({ folder }) => prev.folders.get(folder.id) !== next.folders.get(folder.id),
+      );
       const folderDeletes = [...prev.folders.keys()].filter((id) => !next.folders.has(id));
       const dictChanged = prev.tags !== next.tags || prev.topics !== next.topics || prev.settings !== next.settings;
 
@@ -418,10 +447,12 @@ function createRepository(db) {
         }
         for (const c of conceptUpserts) {
           await client.query(
-            `INSERT INTO concepts (space_id, id, term, definition, category, paper_ids, created_at, updated_at)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+            `INSERT INTO concepts (space_id, id, term, definition, category, context, source, importance, contexts, starred, paper_ids, created_at, updated_at)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
              ON CONFLICT (space_id, id) DO UPDATE SET
-               term=EXCLUDED.term, definition=EXCLUDED.definition, category=EXCLUDED.category, paper_ids=EXCLUDED.paper_ids,
+               term=EXCLUDED.term, definition=EXCLUDED.definition, category=EXCLUDED.category,
+               context=EXCLUDED.context, source=EXCLUDED.source, importance=EXCLUDED.importance,
+               contexts=EXCLUDED.contexts, starred=EXCLUDED.starred, paper_ids=EXCLUDED.paper_ids,
                created_at=EXCLUDED.created_at, updated_at=EXCLUDED.updated_at`,
             [
               spaceId,
@@ -429,6 +460,11 @@ function createRepository(db) {
               c.term || '',
               c.definition || '',
               c.category || '',
+              c.context || '',
+              c.source || '',
+              c.importance || '',
+              jstr(c.contexts || []),
+              !!c.starred,
               jstr(c.paperIds || []),
               c.createdAt || 0,
               c.updatedAt || 0,
@@ -445,13 +481,14 @@ function createRepository(db) {
           await client.query(
             `INSERT INTO formulas (space_id, id, canonical_name, name, latex, description, category,
                                    variables, plottable, plot_hint, occurrences, paper_ids, source,
-                                   created_at, updated_at)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+                                   concept_terms, starred, created_at, updated_at)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
              ON CONFLICT (space_id, id) DO UPDATE SET
                canonical_name=EXCLUDED.canonical_name, name=EXCLUDED.name, latex=EXCLUDED.latex,
                description=EXCLUDED.description, category=EXCLUDED.category, variables=EXCLUDED.variables,
                plottable=EXCLUDED.plottable, plot_hint=EXCLUDED.plot_hint, occurrences=EXCLUDED.occurrences,
-               paper_ids=EXCLUDED.paper_ids, source=EXCLUDED.source,
+               paper_ids=EXCLUDED.paper_ids, source=EXCLUDED.source, concept_terms=EXCLUDED.concept_terms,
+               starred=EXCLUDED.starred,
                created_at=EXCLUDED.created_at, updated_at=EXCLUDED.updated_at`,
             [
               spaceId,
@@ -467,6 +504,8 @@ function createRepository(db) {
               jstr(f.occurrences || []),
               jstr(f.paperIds || []),
               f.source || 'ai',
+              jstr(f.conceptTerms || []),
+              !!f.starred,
               f.createdAt || 0,
               f.updatedAt || 0,
             ],
@@ -477,12 +516,12 @@ function createRepository(db) {
           await client.query('DELETE FROM formulas WHERE space_id=$1 AND id=$2', [spaceId, id]);
           stats.rowsWritten++;
         }
-        for (const f of folderUpserts) {
+        for (const { folder: f, position } of folderUpserts) {
           await client.query(
-            `INSERT INTO folders (space_id, id, name, color, created_at) VALUES ($1,$2,$3,$4,$5)
+            `INSERT INTO folders (space_id, id, name, color, created_at, position) VALUES ($1,$2,$3,$4,$5,$6)
              ON CONFLICT (space_id, id) DO UPDATE SET
-               name=EXCLUDED.name, color=EXCLUDED.color, created_at=EXCLUDED.created_at`,
-            [spaceId, f.id, f.name || '', f.color || '', f.createdAt || 0],
+               name=EXCLUDED.name, color=EXCLUDED.color, created_at=EXCLUDED.created_at, position=EXCLUDED.position`,
+            [spaceId, f.id, f.name || '', f.color || '', f.createdAt || 0, position],
           );
           stats.rowsWritten++;
         }

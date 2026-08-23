@@ -522,7 +522,10 @@ test('searchFulltext：opts.ids 子集限定搜索范围；空 ids 数组立即�
   );
   // ids 含不存在的 id：照常只返回真实命中的
   const sub2 = await repo.searchFulltext('s1', '注意力', { ids: ['p2', 'p9'] });
-  assert.deepStrictEqual(sub2.map((h) => h.paperId), ['p2']);
+  assert.deepStrictEqual(
+    sub2.map((h) => h.paperId),
+    ['p2'],
+  );
   // 空 ids 数组 = 无候选 → 直接返回 []
   assert.deepStrictEqual(await repo.searchFulltext('s1', '注意力', { ids: [] }), []);
   await db.close();
@@ -638,7 +641,14 @@ function sampleFormula(over = {}) {
 
 test('formulas：完整往返（jsonb 列不被写成 PG 数组字面量）', async () => {
   const { db, repo } = await repoMem();
-  await repo.upsertSpaceMeta({ id: 's1', name: 'x', papersDir: '.', createdAt: 1, scanIntervalMinutes: 5, lastScanAt: 0 });
+  await repo.upsertSpaceMeta({
+    id: 's1',
+    name: 'x',
+    papersDir: '.',
+    createdAt: 1,
+    scanIntervalMinutes: 5,
+    lastScanAt: 0,
+  });
   const store = sampleStore();
   store.formulas = [sampleFormula()];
   store.papers.p1.formulaIds = ['fm_abc123'];
@@ -660,7 +670,14 @@ test('formulas：完整往返（jsonb 列不被写成 PG 数组字面量）', as
 
 test('formulas：formulaIds 落 PAPER_COLS 独立列，不进 extra 兜底', async () => {
   const { db, repo } = await repoMem();
-  await repo.upsertSpaceMeta({ id: 's1', name: 'x', papersDir: '.', createdAt: 1, scanIntervalMinutes: 5, lastScanAt: 0 });
+  await repo.upsertSpaceMeta({
+    id: 's1',
+    name: 'x',
+    papersDir: '.',
+    createdAt: 1,
+    scanIntervalMinutes: 5,
+    lastScanAt: 0,
+  });
   const store = sampleStore();
   store.papers.p1.formulaIds = ['fm_1', 'fm_2'];
   await repo.saveSpaceStore('s1', store);
@@ -672,7 +689,14 @@ test('formulas：formulaIds 落 PAPER_COLS 独立列，不进 extra 兜底', asy
 
 test('formulas：hash-diff 只写变化行；删除后行消失；重复保存零写入', async () => {
   const { db, repo } = await repoMem();
-  await repo.upsertSpaceMeta({ id: 's1', name: 'x', papersDir: '.', createdAt: 1, scanIntervalMinutes: 5, lastScanAt: 0 });
+  await repo.upsertSpaceMeta({
+    id: 's1',
+    name: 'x',
+    papersDir: '.',
+    createdAt: 1,
+    scanIntervalMinutes: 5,
+    lastScanAt: 0,
+  });
   const store = sampleStore();
   store.formulas = [sampleFormula(), sampleFormula({ id: 'fm_def456', canonicalName: 'elbo', name: 'ELBO' })];
   await repo.saveSpaceStore('s1', store);
@@ -702,12 +726,24 @@ test('formulas：hash-diff 只写变化行；删除后行消失；重复保存�
 
 test('formulas：读取边界经 normalizeFormulas 自愈（脏 variables/occurrences 不炸）', async () => {
   const { db, repo } = await repoMem();
-  await repo.upsertSpaceMeta({ id: 's1', name: 'x', papersDir: '.', createdAt: 1, scanIntervalMinutes: 5, lastScanAt: 0 });
+  await repo.upsertSpaceMeta({
+    id: 's1',
+    name: 'x',
+    papersDir: '.',
+    createdAt: 1,
+    scanIntervalMinutes: 5,
+    lastScanAt: 0,
+  });
   await db.query(
     `INSERT INTO formulas (space_id, id, canonical_name, name, latex, description, category,
                            variables, plottable, plot_hint, occurrences, paper_ids, source, created_at, updated_at)
      VALUES ('s1','fm_dirty','Dirty Name','脏数据','$$x=1$$','', '', $1, false, $2, $3, $4, 'weird', 5, 5)`,
-    [JSON.stringify(['not-an-object']), JSON.stringify({ bogus: 1 }), JSON.stringify([{ noPaperId: true }]), JSON.stringify(['ghost'])],
+    [
+      JSON.stringify(['not-an-object']),
+      JSON.stringify({ bogus: 1 }),
+      JSON.stringify([{ noPaperId: true }]),
+      JSON.stringify(['ghost']),
+    ],
   );
   const loaded = await repo.loadSpaceStore('s1');
   const f = loaded.formulas.find((x) => x.id === 'fm_dirty');
@@ -724,7 +760,14 @@ test('formulas：读取边界经 normalizeFormulas 自愈（脏 variables/occurr
 
 test('deleteSpaceRow：级联删除 formulas 行', async () => {
   const { db, repo } = await repoMem();
-  await repo.upsertSpaceMeta({ id: 's1', name: 'x', papersDir: '.', createdAt: 1, scanIntervalMinutes: 5, lastScanAt: 0 });
+  await repo.upsertSpaceMeta({
+    id: 's1',
+    name: 'x',
+    papersDir: '.',
+    createdAt: 1,
+    scanIntervalMinutes: 5,
+    lastScanAt: 0,
+  });
   const store = sampleStore();
   store.formulas = [sampleFormula()];
   await repo.saveSpaceStore('s1', store);
@@ -779,5 +822,238 @@ test('upsertSpaceMeta：缺省 scanIntervalMinutes/lastScanAt 落库为 0', asyn
   assert.strictEqual(reg.spaces[0].scanIntervalMinutes, 0, '缺省扫描间隔 → 0');
   assert.strictEqual(reg.spaces[0].lastScanAt, 0, '缺省 lastScanAt → 0');
   assert.strictEqual(reg.spaces[0].createdAt, 0, '缺省 createdAt → 0');
+  await db.close();
+});
+
+test('folders 排序持久化（v3.22 修复回归）：重排触发写库 + 重载按 position 恢复顺序', async () => {
+  const { db, repo } = await repoMem();
+  await repo.upsertSpaceMeta({ id: 's1', name: 'x', papersDir: '.', createdAt: 1 });
+  const store = sampleStore();
+  store.folders = [
+    { id: 'f1', name: 'A', color: '#fff', createdAt: 1 },
+    { id: 'f2', name: 'B', color: '#eee', createdAt: 2 },
+    { id: 'f3', name: 'C', color: '#ddd', createdAt: 3 },
+  ];
+  await repo.saveSpaceStore('s1', store);
+  const w = repo._stats().rowsWritten;
+
+  // 模拟 PUT /api/folders/order：只重排内存数组，条目内容不变
+  store.folders = [store.folders[2], store.folders[0], store.folders[1]];
+  await repo.saveSpaceStore('s1', store);
+  assert.ok(repo._stats().rowsWritten > w, '重排必须触发写（position 变化进哈希）');
+  const loaded = await repo.loadSpaceStore('s1');
+  assert.deepEqual(
+    loaded.folders.map((f) => f.id),
+    ['f3', 'f1', 'f2'],
+    '重载后按用户手动顺序恢复',
+  );
+  // 顺序不变再存 → 零写
+  const w2 = repo._stats().rowsWritten;
+  await repo.saveSpaceStore('s1', loaded);
+  assert.equal(repo._stats().rowsWritten, w2);
+  await db.close();
+});
+
+test('starred 持久化（011 迁移回归）：概念/公式重点标记往返 + 幂等', async () => {
+  const { db, repo } = await repoMem();
+  await repo.upsertSpaceMeta({ id: 's1', name: 'x', papersDir: '.', createdAt: 1 });
+  const store = sampleStore();
+  store.concepts = [
+    {
+      id: 'c1',
+      term: 'A',
+      definition: '',
+      category: '',
+      context: '',
+      source: 'ai',
+      importance: '',
+      contexts: [],
+      starred: true,
+      paperIds: ['p1'],
+      createdAt: 1,
+      updatedAt: 1,
+    },
+    {
+      id: 'c2',
+      term: 'B',
+      definition: '',
+      category: '',
+      context: '',
+      source: 'ai',
+      importance: '',
+      paperIds: ['p1'],
+      createdAt: 1,
+      updatedAt: 1,
+    }, // 缺省 starred
+  ];
+  store.formulas = [
+    {
+      id: 'fm1',
+      canonicalName: 'a',
+      name: 'a',
+      latex: 'x=y',
+      description: '',
+      category: '',
+      variables: [],
+      plottable: false,
+      plotHint: null,
+      occurrences: [{ paperId: 'p1', rawLatex: '', context: '', symbolMap: {} }],
+      paperIds: ['p1'],
+      source: 'ai',
+      conceptTerms: [],
+      starred: true,
+      createdAt: 1,
+      updatedAt: 1,
+    },
+  ];
+  await repo.saveSpaceStore('s1', store);
+  const loaded = await repo.loadSpaceStore('s1');
+  assert.strictEqual(loaded.concepts[0].starred, true, '概念 starred 往返');
+  assert.strictEqual(loaded.concepts[1].starred, false, '缺省兜底 false（稳定 hash）');
+  assert.strictEqual(loaded.formulas[0].starred, true, '公式 starred 往返');
+  const w1 = repo._stats().rowsWritten;
+  await repo.saveSpaceStore('s1', loaded);
+  await repo.saveSpaceStore('s1', await repo.loadSpaceStore('s1'));
+  assert.equal(repo._stats().rowsWritten, w1, 'load/save 幂等，无幽灵重写');
+  await db.close();
+});
+
+test('concepts.contexts 持久化（010 迁移回归）：per-paper 由来往返不丢 + 幂等', async () => {
+  const { db, repo } = await repoMem();
+  await repo.upsertSpaceMeta({ id: 's1', name: 'x', papersDir: '.', createdAt: 1 });
+  const store = sampleStore();
+  store.concepts = [
+    {
+      id: 'c1',
+      term: 'RLHF',
+      definition: 'd',
+      category: 'training',
+      context: '2.1 节',
+      source: 'ai',
+      importance: '',
+      contexts: [
+        { paperId: 'p1', context: '2.1 节，式(3)' },
+        { paperId: 'p2', context: '附录 B' },
+      ],
+      paperIds: ['p1', 'p2'],
+      createdAt: 1,
+      updatedAt: 1,
+    },
+    {
+      id: 'c2',
+      term: 'LoRA',
+      definition: 'd',
+      category: 'training',
+      source: 'ai',
+      paperIds: ['p1'],
+      createdAt: 1,
+      updatedAt: 1,
+    }, // 无 contexts
+  ];
+  await repo.saveSpaceStore('s1', store);
+  const loaded = await repo.loadSpaceStore('s1');
+  assert.deepEqual(
+    loaded.concepts[0].contexts,
+    [
+      { paperId: 'p1', context: '2.1 节，式(3)' },
+      { paperId: 'p2', context: '附录 B' },
+    ],
+    'contexts jsonb 往返保真',
+  );
+  assert.deepEqual(loaded.concepts[1].contexts, [], '缺省 contexts 兜底空数组（稳定 hash）');
+  // load/save 幂等（默认值兜底进哈希行，防陷阱 39 幽灵重写）
+  const w1 = repo._stats().rowsWritten;
+  await repo.saveSpaceStore('s1', loaded);
+  await repo.saveSpaceStore('s1', await repo.loadSpaceStore('s1'));
+  assert.equal(repo._stats().rowsWritten, w1, 'load/save 幂等，无幽灵重写');
+  await db.close();
+});
+
+test('concepts context/source 持久化（008 迁移回归）：重启后出处与来源不丢', async () => {
+  const { db, repo } = await repoMem();
+  await repo.upsertSpaceMeta({ id: 's1', name: 'x', papersDir: '.', createdAt: 1 });
+  const store = sampleStore();
+  store.concepts = [
+    {
+      id: 'c1',
+      term: 'MoE',
+      definition: 'd',
+      category: 'architecture',
+      context: '3.2 节，式(1)',
+      source: 'ai',
+      paperIds: ['p1'],
+      createdAt: 1,
+      updatedAt: 1,
+    },
+  ];
+  await repo.saveSpaceStore('s1', store);
+  const loaded = await repo.loadSpaceStore('s1');
+  assert.equal(loaded.concepts[0].context, '3.2 节，式(1)', 'context 经 PG 往返不丢');
+  assert.equal(loaded.concepts[0].source, 'ai', 'source 经 PG 往返不丢');
+  await db.close();
+});
+
+test('knowledge-links 持久化（009 迁移回归）：concepts.importance + formulas.concept_terms 往返不丢', async () => {
+  const { db, repo } = await repoMem();
+  await repo.upsertSpaceMeta({ id: 's1', name: 'x', papersDir: '.', createdAt: 1 });
+  const store = sampleStore();
+  store.concepts = [
+    {
+      id: 'c1',
+      term: 'DPO',
+      definition: 'd',
+      category: 'training',
+      context: '',
+      source: 'ai',
+      importance: 'core',
+      paperIds: ['p1'],
+      createdAt: 1,
+      updatedAt: 1,
+    },
+    {
+      id: 'c2',
+      term: 'LoRA',
+      definition: 'd',
+      category: 'training',
+      context: '',
+      source: 'ai',
+      paperIds: ['p1'],
+      createdAt: 1,
+      updatedAt: 1,
+    }, // 无 importance
+  ];
+  store.formulas = [
+    {
+      id: 'fm1',
+      canonicalName: 'kl-divergence',
+      name: 'KL 散度',
+      latex: 'D_{KL}',
+      description: '',
+      category: 'loss',
+      variables: [],
+      plottable: false,
+      plotHint: null,
+      occurrences: [{ paperId: 'p1', rawLatex: '', context: '', symbolMap: {} }],
+      paperIds: ['p1'],
+      source: 'ai',
+      conceptTerms: ['KL Divergence', 'Variational Inference'],
+      createdAt: 1,
+      updatedAt: 1,
+    },
+  ];
+  await repo.saveSpaceStore('s1', store);
+  const loaded = await repo.loadSpaceStore('s1');
+  assert.equal(loaded.concepts[0].importance, 'core', 'importance 经 PG 往返不丢');
+  assert.equal(loaded.concepts[1].importance, '', '缺省 importance 兜底空串（稳定 hash）');
+  assert.deepEqual(
+    loaded.formulas[0].conceptTerms,
+    ['KL Divergence', 'Variational Inference'],
+    'concept_terms jsonb 往返保真',
+  );
+  // 二次保存零写（importance 默认值兜底进 hash 行，防 008 之前的幽灵重写坑，见陷阱 39）
+  const w1 = repo._stats().rowsWritten;
+  await repo.saveSpaceStore('s1', loaded);
+  await repo.saveSpaceStore('s1', await repo.loadSpaceStore('s1'));
+  assert.equal(repo._stats().rowsWritten, w1, 'load/save 幂等，无幽灵重写');
   await db.close();
 });

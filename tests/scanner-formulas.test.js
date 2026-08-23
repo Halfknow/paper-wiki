@@ -87,8 +87,8 @@ test('processOne 步骤 6：抽取公式并入清单，p.formulaIds 由 occurren
       extractFormulas: async ({ existingFormulas }) => {
         sawExisting = (existingFormulas || []).slice(); // 快照：store.formulas 是同一引用，随后会被 merge 填充
         return [
-          { canonicalName: 'softmax', name: '归一化指数函数', latex: '\\sigma(z)', rawLatex: 'sm(z)' },
-          { canonicalName: 'elbo', latex: '\\mathcal{L}' },
+          { canonicalName: 'softmax', name: '归一化指数函数', latex: 'y = \\sigma(z)', rawLatex: 'sm(z)' },
+          { canonicalName: 'elbo', latex: '\\mathcal{L} = f(x)' },
         ];
       },
     },
@@ -133,7 +133,7 @@ test('processOne 步骤 6：公式抽取抛错不影响入库（仍 ready）', a
 test('processOne 步骤 6：deps 未注入 mergeFormulas 时安全跳过（老装配兼容）', async () => {
   const dir = tmp();
   const store = fixture(dir);
-  const deps = mkDeps({ ai: { extractFormulas: async () => [{ canonicalName: 'a', latex: 'x' }] } });
+  const deps = mkDeps({ ai: { extractFormulas: async () => [{ canonicalName: 'a', latex: 'x = y' }] } });
   delete deps.mergeFormulas;
   const scanner = createScanner({ store, textStore: memTextStore(), papersDir: dir, deps, scanIntervalMs: 0 });
   scanner.enqueue(['x']);
@@ -158,7 +158,7 @@ test('scanner.extractFormulas：串行处理 + 单参 saveStore + 返回 {proces
         order.push('start');
         await new Promise((r) => setTimeout(r, 10));
         order.push('end');
-        return [{ canonicalName: 'shared-formula', latex: 'x', name: title }];
+        return [{ canonicalName: 'shared-formula', latex: 'x = y', name: title }];
       },
     },
     rest: {
@@ -211,7 +211,7 @@ test('scanner.extractFormulas：单篇抛错不影响其余篇（继续处理）
     ai: {
       extractFormulas: async ({ title }) => {
         if (title === 'boom') throw new Error('bad');
-        return [{ canonicalName: 'ok-formula', latex: 'x' }];
+        return [{ canonicalName: 'ok-formula', latex: 'x = y' }];
       },
     },
   });
@@ -258,7 +258,7 @@ test('scanner.extractFormulas：重复抽取幂等（occurrence 覆盖，不重�
   const dir = tmp();
   const store = fixture(dir);
   const deps = mkDeps({
-    ai: { extractFormulas: async () => [{ canonicalName: 'idem', latex: 'x', rawLatex: 'raw' }] },
+    ai: { extractFormulas: async () => [{ canonicalName: 'idem', latex: 'x = y', rawLatex: 'raw' }] },
   });
   const text = { load: async () => '全文', save: async () => {}, remove: async () => {} };
   const scanner = createScanner({ store, textStore: text, papersDir: dir, deps, scanIntervalMs: 0 });

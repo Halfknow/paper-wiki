@@ -79,7 +79,7 @@ test.describe('批注持久化（便签/手写）', () => {
     await page.mouse.up();
     await page.waitForTimeout(800);
     // 退出阅读器（force 保存路径：_teardown → saveAnnotations(true)）
-    await page.locator('#reader-back').click();
+    await page.locator('#reader-close').click();
     await page.waitForTimeout(2000);
     const items = await getStoredItems(request);
     const inkItems = items.filter((it) => Number(it.annotationType) === 15);
@@ -115,7 +115,7 @@ test.describe('批注持久化（便签/手写）', () => {
     await pageEl.click({ position: { x: box.width / 2, y: box.height * 0.9 } });
     await page.waitForTimeout(800);
     // 退出阅读器
-    await page.locator('#reader-back').click();
+    await page.locator('#reader-close').click();
     await page.waitForTimeout(2000);
     const items = await getStoredItems(request, freshId);
     const ftItems = items.filter((it) => Number(it.annotationType) === 3);

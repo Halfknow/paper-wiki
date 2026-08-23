@@ -115,9 +115,15 @@ test('深链 /concepts：视图在概念数据到达前就已切换（不闪现�
   // bootUi 一见 dataset.view 非 library 就返回——此刻 /api/concepts 仍挂起
   assert.equal(view(ui), 'concepts');
   assert.ok(ui.$('library-view').classList.contains('view-hidden'), '论文视图应已隐藏，而不是等数据回来才切');
-  assert.equal(ui.$('concepts-grid').children.length, 0, '此时数据未到，网格应为空（证明 showView 抢在前面）');
+  // v3.31 R2：数据未到时网格是加载骨架（skel-kcard），而不是空——但绝不能是真实卡片
+  // （有真实卡片才说明 showView 排在了数据请求之后）
+  assert.equal(ui.$('concepts-grid').querySelectorAll('.concept-card').length, 0, '数据未到，不应有真实概念卡');
+  assert.ok(
+    ui.$('concepts-grid').children.length === 0 || ui.$('concepts-grid').querySelectorAll('.skel-kcard').length > 0,
+    '空或骨架均可——证明 showView 抢在前面',
+  );
   await sleep(300);
-  assert.ok(ui.$('concepts-grid').children.length > 0, '数据到达后应渲染概念卡片');
+  assert.ok(ui.$('concepts-grid').querySelectorAll('.concept-card').length > 0, '数据到达后应渲染概念卡片');
 });
 
 test('index.html 默认不显示任何视图，首帧由 data-boot-path 决定', async () => {
@@ -393,4 +399,36 @@ test('导入 / 发现收进「+ 添加」下拉', async () => {
   await sleep(30);
   assert.ok(ui.$('import-modal').classList.contains('active'), '仍应打开导入弹窗');
   assert.ok(ui.$('add-menu-list').hasAttribute('hidden'), '选中一项后下拉应收起');
+});
+
+// ---------------------------------------------------------------------------
+// 跨视图筛选隔离（v3.51 修）
+// ---------------------------------------------------------------------------
+
+test('公式页筛选后点「论文」导航：?q= 不带进论文页，搜索框还原论文自己的筛选', async () => {
+  // 深链公式页并带上公式 DSL 查询词（等价于在公式页筛选过）
+  const ui = await boot('/formulas?q=category%3Aattention');
+  await sleep(60);
+  assert.equal(ui.$('search').value, 'category:attention', '公式页应还原 DSL');
+
+  navItem(ui, 'library').click();
+  await sleep(80);
+  assert.equal(ui.path(), '/library');
+  const search = ui.document.defaultView.location.search;
+  assert.ok(!search.includes('category'), '公式页的 ?q= 不得带进论文页 URL: ' + search);
+  assert.equal(ui.$('search').value, '', '搜索框应还原为论文页自己的查询词（此处为空）');
+  assert.equal(view(ui), 'library');
+});
+
+test('论文页筛选在跨视图往返后保留（state.filter 显式还原）', async () => {
+  const ui = await boot('/library?status=ready');
+  await sleep(60);
+  assert.equal(ui.$('search').value, '', 'status 走筛选条，不在搜索框');
+  navItem(ui, 'formulas').click();
+  await sleep(60);
+  navItem(ui, 'library').click();
+  await sleep(80);
+  assert.equal(ui.path(), '/library');
+  const search = ui.document.defaultView.location.search;
+  assert.ok(search.includes('status=ready'), '论文页自己的筛选往返后应保留: ' + search);
 });

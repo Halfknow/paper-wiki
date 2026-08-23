@@ -118,6 +118,20 @@ export function gotoPaperRoute(id, tab) {
   });
 }
 
+/** 从概念/公式页跳转到论文库：选中该论文 → 列表定位并高亮闪一下。
+ *  v3.28 自 formulas.js 迁入（概念详情抽屉也用，避免 formulas ↔ drawer 循环依赖）。
+ *  论文被当前筛选/搜索排除时列表里没有对应项，仅打开详情，不报错。 */
+export async function gotoPaper(id) {
+  if (!id) return;
+  await router.navigate(buildPath('/paper/:id', { id }));
+  const el = document.querySelector('.paper-list .paper-item[data-id="' + CSS.escape(id) + '"]');
+  if (el) {
+    el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    el.classList.add('flash');
+    setTimeout(() => el.classList.remove('flash'), 1300);
+  }
+}
+
 /** 回到库视图，并把 state.filter 写进 URL（侧栏/标签跳转用）。 */
 export function gotoLibraryRoute() {
   router.navigate('/library', { query: filterToQuery(state.filter) });

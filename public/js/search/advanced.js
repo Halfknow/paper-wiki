@@ -124,13 +124,22 @@ function renderLibraryFields() {
   wireLibraryFields();
 }
 
-/** 概念页字段集：关键词 + 分类（chip 多选）+ 共享频次（单选）+ 有章节出处（复选）。 */
+/** 概念页字段集（v3.29 扩容）：关键词 + 分类 + 热度 + 核心度 + 最近新增 + 质量 + 出处。 */
 function renderConceptFields() {
   $('sf-grid').innerHTML = `
-    <label class="sf-field sf-full"><span>关键词</span><input type="text" id="sf-text" autocomplete="off" placeholder="术语或解释中包含…（多个词需同时命中）"></label>
+    <label class="sf-field sf-full"><span>关键词</span><input type="text" id="sf-text" autocomplete="off" placeholder="术语、解释或出处中包含…（多个词需同时命中）"></label>
     <label class="sf-field sf-tags sf-full"><span>分类</span><div class="sf-chips" id="sf-cat-row"></div><input type="text" id="sf-cat-input" autocomplete="off" placeholder="输入分类名后回车添加（如 attention）"></label>
-    <label class="sf-field"><span>共享频次</span>
-      <select id="sf-freq"><option value="">全部</option><option value="shared">多篇共享（≥2）</option><option value="hot">高频（≥4）</option></select>
+    <label class="sf-field"><span>热度</span>
+      <select id="sf-freq"><option value="">全部</option><option value="hot">高频（≥4 篇）</option><option value="shared">多篇共享（≥2 篇）</option><option value="solo">仅单篇</option></select>
+    </label>
+    <label class="sf-field"><span>核心度</span>
+      <select id="sf-importance"><option value="">不限</option><option value="core">核心创新</option><option value="supporting">支撑技术</option></select>
+    </label>
+    <label class="sf-field"><span>最近新增</span>
+      <select id="sf-added"><option value="">不限</option><option value="7d">7 天内</option><option value="30d">30 天内</option></select>
+    </label>
+    <label class="sf-field"><span>质量</span>
+      <select id="sf-quality"><option value="">不限</option><option value="nodef">缺解释</option></select>
     </label>
     <div class="sf-full sf-checks">
       <label class="sf-check"><input type="checkbox" id="sf-has-context"> 有章节出处</label>
@@ -140,17 +149,27 @@ function renderConceptFields() {
     text: $('sf-text'),
     catRow: $('sf-cat-row'), catInput: $('sf-cat-input'),
     freq: $('sf-freq'), hasContext: $('sf-has-context'),
+    importance: $('sf-importance'), added: $('sf-added'), quality: $('sf-quality'),
   });
   wireConceptFields();
 }
 
-/** 公式页字段集：关键词 + 分类（chip 多选）+ 来源（单选）+ 可绘图（复选）。 */
+/** 公式页字段集（v3.29 扩容）：关键词 + 分类 + 热度 + 来源 + 最近新增 + 质量 + 可绘图。 */
 function renderFormulaFields() {
   $('sf-grid').innerHTML = `
     <label class="sf-field sf-full"><span>关键词</span><input type="text" id="sf-text" autocomplete="off" placeholder="公式名 / LaTeX / 解读中包含…"></label>
     <label class="sf-field sf-tags sf-full"><span>分类</span><div class="sf-chips" id="sf-cat-row"></div><input type="text" id="sf-cat-input" autocomplete="off" placeholder="输入分类名后回车添加（如 loss）"></label>
+    <label class="sf-field"><span>热度</span>
+      <select id="sf-freq"><option value="">全部</option><option value="hot">高频（≥4 篇）</option><option value="shared">多篇共享（≥2 篇）</option><option value="solo">仅单篇</option></select>
+    </label>
     <label class="sf-field"><span>来源</span>
-      <select id="sf-source"><option value="">全部</option><option value="ai">AI 抽取</option><option value="vision">视觉问答</option><option value="mineru">MinerU</option><option value="manual">手动录入</option></select>
+      <select id="sf-source"><option value="">全部</option><option value="ai">AI 抽取</option><option value="vision">阅读器框选</option><option value="mineru">MinerU</option><option value="manual">手动录入 / 人工修订</option></select>
+    </label>
+    <label class="sf-field"><span>最近新增</span>
+      <select id="sf-added"><option value="">不限</option><option value="7d">7 天内</option><option value="30d">30 天内</option></select>
+    </label>
+    <label class="sf-field"><span>质量</span>
+      <select id="sf-quality"><option value="">不限</option><option value="nodef">缺解读</option></select>
     </label>
     <div class="sf-full sf-checks">
       <label class="sf-check"><input type="checkbox" id="sf-plottable"> 仅可绘图</label>
@@ -160,6 +179,7 @@ function renderFormulaFields() {
     text: $('sf-text'),
     catRow: $('sf-cat-row'), catInput: $('sf-cat-input'),
     source: $('sf-source'), plottable: $('sf-plottable'),
+    freq: $('sf-freq'), added: $('sf-added'), quality: $('sf-quality'),
   });
   wireFormulaFields();
 }
@@ -197,7 +217,7 @@ function wireConceptFields() {
     applyDslFromPanel(dsl);
   };
   if (p.text) p.text.addEventListener('input', onChange);
-  if (p.freq) p.freq.addEventListener('change', onChange);
+  [p.freq, p.importance, p.added, p.quality].forEach((el) => { if (el) el.addEventListener('change', onChange); });
   if (p.hasContext) p.hasContext.addEventListener('change', onChange);
   let _cats = [];
   const getCats = () => _cats, setCats = (a) => { _cats = a; };
@@ -216,7 +236,7 @@ function wireFormulaFields() {
     applyDslFromPanel(dsl);
   };
   if (p.text) p.text.addEventListener('input', onChange);
-  if (p.source) p.source.addEventListener('change', onChange);
+  [p.source, p.freq, p.added, p.quality].forEach((el) => { if (el) el.addEventListener('change', onChange); });
   if (p.plottable) p.plottable.addEventListener('change', onChange);
   let _cats = [];
   const getCats = () => _cats, setCats = (a) => { _cats = a; };
@@ -280,6 +300,9 @@ function panelStateFromInputs() {
       text: p.text ? p.text.value : '',
       categories: p._cats ? p._cats() : [], excludeCategories: [],
       freq: p.freq ? p.freq.value : '', hasContext: p.hasContext ? p.hasContext.checked : false,
+      importance: p.importance ? p.importance.value : '',
+      added: p.added ? p.added.value : '',
+      quality: p.quality ? p.quality.value : '',
     };
   }
   if (view === 'formulas') {
@@ -287,18 +310,22 @@ function panelStateFromInputs() {
       text: p.text ? p.text.value : '',
       categories: p._cats ? p._cats() : [], excludeCategories: [],
       source: p.source ? p.source.value : '', plottable: p.plottable ? p.plottable.checked : false,
+      freq: p.freq ? p.freq.value : '',
+      added: p.added ? p.added.value : '',
+      quality: p.quality ? p.quality.value : '',
     };
   }
-  // 论文页
+  // 论文页（字段判空防御：视图刚切换、字段集还没按 library 重渲的窗口期内不抛 TypeError）
   return {
-    title: p.title.value, author: p.author.value, abstract: p.abstract.value, summary: p.summary.value,
-    notes: p.hasNotes.checked ? '.' : '',
-    tags: p._tags(), excludeTags: [], topics: p._topics(), excludeTopics: [],
-    yearFrom: p.yearFrom.value, yearTo: p.yearTo.value,
-    status: p.status.value, readStatus: p.read.value,
-    starred: p.starred.checked, hasNotes: p.hasNotes.checked,
-    scope: p.scopeBody.checked ? 'body' : 'metadata', bodyText: p.bodyText.value,
-    text: p.text.value,
+    title: p.title ? p.title.value : '', author: p.author ? p.author.value : '',
+    abstract: p.abstract ? p.abstract.value : '', summary: p.summary ? p.summary.value : '',
+    notes: p.hasNotes && p.hasNotes.checked ? '.' : '',
+    tags: p._tags ? p._tags() : [], excludeTags: [], topics: p._topics ? p._topics() : [], excludeTopics: [],
+    yearFrom: p.yearFrom ? p.yearFrom.value : '', yearTo: p.yearTo ? p.yearTo.value : '',
+    status: p.status ? p.status.value : '', readStatus: p.read ? p.read.value : '',
+    starred: !!(p.starred && p.starred.checked), hasNotes: !!(p.hasNotes && p.hasNotes.checked),
+    scope: p.scopeBody && p.scopeBody.checked ? 'body' : 'metadata', bodyText: p.bodyText ? p.bodyText.value : '',
+    text: p.text ? p.text.value : '',
   };
 }
 
@@ -313,6 +340,10 @@ function dslFromPanelInputs() {
 export function syncAdvancedPanelFromDsl(dsl) {
   const S = window.PaperWikiSearch;
   if (!S || !_advPanel) return;
+  // 字段集可能还是上一个视图的（在概念/公式页开过面板，切回论文页后视图切换只隐藏面板、
+  // 不重置 _advPanel/_advView）：先按当前视图重渲，否则下方 library 分支读 _advPanel.title
+  // 等直接 TypeError，且异常会打断 bind.js 的 oninput 链——搜索框打字完全无反应。
+  if (_advView !== currentView()) ensureAdvancedPanel();
   _advSyncing = true;
   try {
     const panel = S.parseToPanel(dsl);
@@ -322,11 +353,17 @@ export function syncAdvancedPanelFromDsl(dsl) {
       if (_advPanel._setCats) _advPanel._setCats(panel.categories || []);
       if (_advPanel.freq) _advPanel.freq.value = panel.freq || '';
       if (_advPanel.hasContext) _advPanel.hasContext.checked = !!panel.hasContext;
+      if (_advPanel.importance) _advPanel.importance.value = panel.importance || '';
+      if (_advPanel.added) _advPanel.added.value = panel.added || '';
+      if (_advPanel.quality) _advPanel.quality.value = panel.quality || '';
     } else if (view === 'formulas') {
       if (_advPanel.text) _advPanel.text.value = panel.text || '';
       if (_advPanel._setCats) _advPanel._setCats(panel.categories || []);
       if (_advPanel.source) _advPanel.source.value = panel.source || '';
       if (_advPanel.plottable) _advPanel.plottable.checked = !!panel.plottable;
+      if (_advPanel.freq) _advPanel.freq.value = panel.freq || '';
+      if (_advPanel.added) _advPanel.added.value = panel.added || '';
+      if (_advPanel.quality) _advPanel.quality.value = panel.quality || '';
     } else {
       _advPanel.title.value = panel.title || '';
       _advPanel.author.value = panel.author || '';
@@ -359,11 +396,17 @@ function clearAdvancedPanel() {
     if (_advPanel._setCats) _advPanel._setCats([]);
     if (_advPanel.freq) _advPanel.freq.value = '';
     if (_advPanel.hasContext) _advPanel.hasContext.checked = false;
+    if (_advPanel.importance) _advPanel.importance.value = '';
+    if (_advPanel.added) _advPanel.added.value = '';
+    if (_advPanel.quality) _advPanel.quality.value = '';
   } else if (view === 'formulas') {
     if (_advPanel.text) _advPanel.text.value = '';
     if (_advPanel._setCats) _advPanel._setCats([]);
     if (_advPanel.source) _advPanel.source.value = '';
     if (_advPanel.plottable) _advPanel.plottable.checked = false;
+    if (_advPanel.freq) _advPanel.freq.value = '';
+    if (_advPanel.added) _advPanel.added.value = '';
+    if (_advPanel.quality) _advPanel.quality.value = '';
   } else {
     _advPanel.title.value = ''; _advPanel.author.value = ''; _advPanel.abstract.value = ''; _advPanel.summary.value = '';
     _advPanel.yearFrom.value = ''; _advPanel.yearTo.value = ''; _advPanel.status.value = ''; _advPanel.read.value = '';

@@ -6,11 +6,13 @@
 const { applySettingsOverride, withGlobalAi } = require('../../services/ai');
 
 function discoverOpts(topic, { config, store, gai }) {
-  const cfg = config.discover || {};
-  const arx = config.arxiv || {};
-  const { planViaGateway } = require('../../services/discover');
-  // discover 的「网关规划」走 AI 调用，需用生效配置（store.settings.ai 覆盖 config.ai）
+  // 生效配置 = store.settings 覆盖 config（陷阱 19）：maxResults/perAxis/weights/S2 key/
+  // titleSimThreshold 等都是设置页可热改的（PUT /api/settings/discover 写 store.settings），
+  // 读原始 config 会让设置面板的「生效值」展示与实际行为脱节（用户 S2 key 静默无效）。
   const effConfig = applySettingsOverride(config, withGlobalAi(store.settings, gai));
+  const cfg = effConfig.discover || {};
+  const arx = effConfig.arxiv || {};
+  const { planViaGateway } = require('../../services/discover');
   return {
     topic,
     store,
@@ -26,6 +28,7 @@ function discoverOpts(topic, { config, store, gai }) {
     titleSimThreshold: cfg.titleSimThreshold ?? undefined,
     // 查询理解引擎：默认 auto（claude → GLM 网关 → 原始）。claude 无头鉴权失败时用网关兜底。
     queryEngine: cfg.queryEngine || 'auto',
+    // 「网关规划」走 AI 调用，同样用生效配置（ai 段含渠道）
     generateViaGateway: (t) => planViaGateway(t, { config: effConfig }),
   };
 }

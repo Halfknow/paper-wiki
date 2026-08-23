@@ -50,63 +50,68 @@ const DEFAULT_TAGS_PROMPT = `你是一位 AI/ML 论文分类专家。阅读给�
 /** 向后兼容别名：旧代码引用 DEFAULT_PROMPT（现等价于总结提示词）。 */
 const DEFAULT_PROMPT = DEFAULT_SUMMARY_PROMPT;
 
-/** 默认概念抽取提示词（v3.16 优化）：对齐公式提示词质量 + 融合 ConExion/ATE 研究要点——
+/** 默认概念抽取提示词（v3.28 优化）：对齐公式提示词质量 + 融合 ConExion/ATE 研究要点——
  *  强制抽取式（禁止编造文档外术语）、noun phrase 约束、明确排除规则、term 作为跨论文合并 key、
  *  definition 对齐公式的 description 精细度（是什么+为什么+作用，不复述 term）。
+ *  v3.28 新增 importance（core/supporting，本篇视角的核心度——跨论文合并只升不降），
+ *  context 强化为「章节号 + 式/图号 + 在此处干什么」（回溯价值）。
  *  可被 settings.conceptPrompt / config.conceptPrompt 覆盖（三级回退）。 */
-const DEFAULT_CONCEPT_PROMPT = `你是一位 AI/ML 本体工程专家（ontology expert）。从给定论文中抽取**论文实际提出的、或为理解论文不可或缺的关键概念**（学界命名的术语 / 方法 / 核心机制 / 重要指标）。
+const DEFAULT_CONCEPT_PROMPT = `你是一位跨领域的学术术语学家与本体编辑。任务：从给定论文中抽取**论文实际提出的、或为理解论文不可或缺的关键概念**，产出可直接并入跨论文术语库的规范条目。
+
+## 通用性（领域自适应，必须遵守）
+- 先判断论文所属领域；术语的**规范命名、分类、表述惯例一律采用该领域的学术规范**——不要把 AI/ML 惯例强加给数学、物理、生物、经济、法学等领域的论文。
+- category 优先从下表的**广义语义**中选（小写英文，跨领域稳定）；仅当全都不贴切时，才用该领域通行的小写英文类别词（如 theory / method / metric / phenomenon / task / dataset / protocol）：
+  - \`architecture\`：模型/系统结构（网络、架构、框架、构造）
+  - \`attention\`：核心机制模块（信息聚合、门控、路由类机制）
+  - \`loss\`：目标/损失/代价/能量函数
+  - \`optimization\`：优化算法、求解器、迭代格式
+  - \`regularization\`：约束、正则、稳定性条件
+  - \`generative\`：生成式建模
+  - \`representation\`：表示、嵌入、编码
+  - \`training\`：训练/校准范式、数据到模型的流程
+  - \`evaluation\`：评估指标、实验设计、检验方法
+  - \`inference\`：推理、解码、判定过程
+  - \`other\`：以上皆不贴切（定理、数据对象、理论分析等）
 
 ## 输出格式（严格 JSON，不要 markdown 围栏，不要任何解释文字）
-{"concepts":[{"term":"Scaled Dot-Product Attention","definition":"通过查询与键的点积衡量相关度、softmax 归一化后对值加权求和的注意力计算；用缩放因子 1/√d_k 抵消点积随维度增大导致的梯度消失。","category":"attention","context":"3.2.1 节，式(1)"}]}
+{"concepts":[{"term":"Scaled Dot-Product Attention","definition":"通过查询与键的点积衡量相关度、softmax 归一化后对值加权求和的注意力计算（scaled dot-product attention）；用缩放因子 1/√d_k 抵消点积随维度增大导致的梯度消失。","category":"attention","importance":"supporting","context":"3.2.1 节，式(1)：本篇用它作为基础注意力单元"}]}
 
 ## 核心原则（必须严格遵守）
-- **抽取式，禁止幻觉**：只抽取**论文中真实出现**的概念。绝不能基于你的知识"补充"论文未提及的术语，即便是相关领域常识。每个 term 必须能在论文全文里找到出处。
-- **term 必须是名词短语（noun phrase）**：是学界命名的实体——方法名 / 机制名 / 架构组件 / 损失函数 / 评估指标 / 训练范式。**禁止**动词短语（如"训练模型"）、整句、形容词、泛指词。
-- **term 是跨论文合并的唯一 key**：命名必须**归一化到学界通用写法**。同一概念在不同论文里应输出相同的 term，否则无法归并。优先用对照表里的写法（见下）。
+- **抽取式，禁止幻觉**：只抽取**论文中真实出现**的概念；绝不基于你的知识"补充"论文未提及的术语。每个 term 必须能在论文全文中找到出处。
+- **term 必须是名词短语**：该领域学界命名的实体——方法名 / 机制名 / 模型结构 / 定理引理 / 重要度量。禁止动词短语、整句、形容词、泛指词。
+- **term 是跨论文合并的唯一 key，并做同义词折叠**：命名归一化到该领域最通用的规范写法。若论文用局部别名/非规范名指称某个规范概念，输出**规范名**，并在 context 里注明论文局部名（如"论文中称为 X"）。同一概念在不同论文里必须输出相同 term，否则无法归并；已有概念清单里出现过的写法**必须复用**。
 
 ## 字段约束
-- **term**：概念的**规范学术名**——英文专有名词用首字母大写（Title Case，每个实词首字母大写，如 Transformer、Scaled Dot-Product Attention、KL Divergence）；中文术语用学界通行译名（如"缩放点积注意力"）。同一概念在「已有概念」里出现过则**必须复用其原 term 写法**（不要大小写/单复数变体）。**禁止**把缩写和全称拆成两条；优先用学界最通用的形式（如用 GAN 而非 Generative Adversarial Network，除非论文通篇用全称）。
-- **definition**：1-3 句中文精炼解释（建议 30-80 字）。必须包含三要素：**①是什么（机制/定义）②解决什么问题 / 为什么需要它 ③在本论文中起什么作用**。不要复述 term 字面、不要泛泛而谈（错误示例："是一种重要的注意力机制"；正确示例见上方 Scaled Dot-Product Attention）。
-- **category**：从以下枚举中选**最贴切**的一个（小写英文）：
-  - \`architecture\`：模型架构/网络结构（Transformer、CNN、RNN、U-Net、Encoder-Decoder）
-  - \`attention\`：注意力机制（Self-Attention、Multi-Head Attention、Cross-Attention）
-  - \`loss\`：损失函数/目标函数（Cross-Entropy、KL Divergence、Contrastive Loss）
-  - \`optimization\`：优化算法/训练技巧（Adam、SGD、Learning Rate Decay）
-  - \`regularization\`：正则化/防过拟合（Dropout、Batch Normalization、Weight Decay）
-  - \`generative\`：生成模型（GAN、VAE、Diffusion、Autoregressive）
-  - \`representation\`：表示学习/嵌入（Embedding、Representation Learning、Contrastive Learning）
-  - \`training\`：训练策略/范式（Pre-training、Fine-tuning、Transfer Learning、RLHF）
-  - \`evaluation\`：评估指标/方法（BLEU、FID、Accuracy、Ablation Study）
-  - \`inference\`：推理/解码（Beam Search、Top-k Sampling、KV Cache）
-  - \`other\`：以上都不贴切（数据增强、采样策略、理论分析等）
-- **context**：概念在论文中的出处（章节号 / 式号 / 图号，如 "3.2 节"、"式(1)"、"图 3"），便于回溯。论文未明确给章节时填首次出现处的大致位置。
+- **term**：规范学术名。英文按该领域惯例（AI/ML 多用 Title Case，数学/物理惯例保留斜体名与下标语义如 L^p 空间写 "Lp Space"）；中文术语用学界通行译名。禁止缩写与全称拆成两条；优先用最通用形式。
+- **definition**：按**学术综述的表述标准**写 1-3 句中文（建议 30-90 字），必须做到：
+  ① **独立成立**——不使用"本文/该文/我们"等指代，脱离这篇论文也能读（综述可直接引用）；
+  ② 三要素：是什么（机制/定义）＋解决什么问题/为什么存在＋在论文中的角色；
+  ③ **教学自包含**：定义内首次出现的相邻子概念，用半句括号补义（如 "自注意力（序列元素两两相关度加权的聚合）"）；
+  ④ 术语保留英文原文，中文表述，不复述 term 字面。
+- **importance**：该概念**在本篇**中的地位：\`core\`=本篇核心创新（判断标准：拿掉它论文不成立；通常每篇 ≤2 个）；\`supporting\`=支撑技术/背景组件。
+- **context**：可回溯出处——「章节号/式号/图号/定理号 + 半句话它在此处做什么」，优先**首次定义处**；论文无编号时给大致位置。禁止只写"正文"。
 
-## 高频概念规范名对照表（命中学名时**必须用此写法**，保证跨论文可归并）
-Transformer、Attention、Self-Attention、Multi-Head Attention、Cross-Attention、Scaled Dot-Product Attention、
-CNN、RNN、LSTM、GRU、ResNet、U-Net、Encoder-Decoder、Autoencoder、Mixture of Experts、
+## 高频概念规范名对照表（AI/ML 领域；命中学名时必须用此写法；其他领域用该领域规范名，同构处理）
+Transformer、Attention、Self-Attention、Multi-Head Attention、Cross-Attention、Scaled Dot-Product Attention、Flash Attention、
+CNN、RNN、LSTM、GRU、ResNet、U-Net、Encoder-Decoder、Autoencoder、Mixture of Experts、State Space Model、Mamba、
 KL Divergence、Cross-Entropy Loss、Contrastive Loss、Triplet Loss、MSE、CTC Loss、InfoNCE、
 Adam、SGD、AdamW、Learning Rate Warmup、Cosine Learning Rate Schedule、Dropout、Batch Normalization、Layer Normalization、RMSNorm、Weight Decay、Gradient Clipping、
-GAN、VAE、Diffusion Model、DDPM、Score-Based Model、Autoregressive Model、Flow Matching、Rectified Flow、
+GAN、VAE、Diffusion Model、DDPM、Diffusion Transformer、Score-Based Model、Flow Matching、Rectified Flow、Autoregressive Model、
 Embedding、Word2Vec、Contrastive Learning、Self-Supervised Learning、Metric Learning、
-Pre-training、Fine-tuning、Transfer Learning、RLHF、DPO、LoRA、QLoRA、Chain-of-Thought、Instruction Tuning、
+Pre-training、Fine-tuning、Transfer Learning、RLHF、DPO、LoRA、QLoRA、Chain-of-Thought、Instruction Tuning、Speculative Decoding、
 BLEU、ROUGE、FID、IS、Perplexity、Ablation Study、Human Evaluation、
 Beam Search、Top-k Sampling、Top-p Sampling、Temperature Sampling、KV Cache、Grouped Query Attention、
 Data Augmentation、Backpropagation、Knowledge Distillation、Quantization、Pruning、Mixture of Experts Routing
-不在表内的用同样的构词法命名（Title Case、学界通用叫法、避免论文私有记号）。
 
 ## 抽取优先级（数量 3-12 个，宁缺毋滥）
-1. **论文的核心创新/主打方法**（必须抽，这是本篇论文存在的理由）。
-2. **论文反复使用的、理解论文不可或缺的关键技术组件/机制**。
-3. **论文定义/提出的损失函数、评估指标、训练目标**。
-4. 论文标题/摘要里点名的核心术语。
-**坚决不要抽**：
-- 过于常识的通用词（"神经网络""训练""数据""模型""结果"）。
-- 纯背景介绍性、仅在 related work 里一笔带过的他人方法（除非论文核心就是改进它）。
-- 论文未实际使用的工具名/库/数据集名（如"PyTorch""ImageNet"，除非是研究对象）。
-- 动词短语、形容词、整句描述。
+1. 论文的核心创新/主打方法（必须抽，importance 标 core）。
+2. 反复使用的、理解论文不可或缺的关键组件/机制。
+3. 论文定义/提出的目标函数、度量、构造。
+4. 标题/摘要里点名的核心术语。
+**坚决不要抽**：过于常识的通用词；仅在 related work 一笔带过的他人方法（除非本文核心是改进它）；未实际使用的工具/库名；动词短语与整句。
 
 ## 去重
-只返回**尚未出现在「已有概念」列表中的新概念**（按规范名比对，大小写/单复数/连字符不敏感视为同一）。若本篇概念全部已存在，返回 \`{"concepts":[]}\`。
+只返回**尚未出现在「已有概念」列表中的新概念**（按规范名比对，大小写/单复数/连字符不敏感）。若全部已存在，返回 \`{"concepts":[]}\`。
 
 只输出 JSON。`;
 
@@ -154,31 +159,44 @@ const DEFAULT_CONCEPT_MAP_PROMPT = `你是一位顶尖的前端可视化设计�
  *    高频公式规范名对照表压住命名漂移——模型把 KL 散度一会儿叫 kl-divergence 一会儿叫
  *    kullback-leibler-divergence 就会合并失败。
  *  - `latex` 要求「领域通用符号」，论文的个性化记号进 rawLatex + symbolMap，
- *    否则清单页展示的不是「一般形式」而是某一篇的私有写法。 */
-const DEFAULT_FORMULA_PROMPT = `你是一位 AI/ML 论文的数学审读者。从给定论文中抽取**核心公式**，并归一化到学界通用的一般形式。
+ *    否则清单页展示的不是「一般形式」而是某一篇的私有写法。
+ *  - v3.28：description 升级为「三问」结构（做什么/设计直觉/适用边界）；
+ *    variables.meaning 要求带维度或单位；新增 conceptTerms（与本篇概念清单对齐的显式关联，
+ *    概念页与公式页由此打通——用户消息里会注入本篇概念清单供挑选）。 */
+const DEFAULT_FORMULA_PROMPT = `你是一位跨领域的数学审读者。从给定论文中抽取**核心公式**，归一化到该领域**教科书式的一般形式**。
+
+## 通用性（领域自适应）
+- 先判断论文领域；**记号惯例按该领域标准**（AI/ML 矩阵与期望记号、数学的集合论/测度论记号、物理的 SI 与求和惯例……），不要把 AI/ML 记号强加给其他领域。
+- canonicalName 用**该领域学界通用英文规范名**（小写连字符）；下方对照表仅是 AI/ML 高频示例，其他领域按同样构词法取规范名（如 bayes-theorem、jensen-inequality、navier-stokes-equation）。
 
 输出严格 JSON：
 {"formulas":[{
   "canonicalName": "scaled-dot-product-attention",
   "name": "缩放点积注意力",
   "latex": "\\\\mathrm{Attention}(Q,K,V)=\\\\mathrm{softmax}\\\\left(\\\\frac{QK^\\\\top}{\\\\sqrt{d_k}}\\\\right)V",
-  "description": "解读：这个公式在做什么、为什么这样设计、关键项的作用（2-4 句中文）",
+  "description": "做什么：以查询与键的相似度对值加权聚合信息。设计直觉：除以 √d_k 把点积方差拉回 1，避免 softmax 进入饱和区导致梯度消失。适用边界：适合键值无强结构先验的序列建模；O(n²) 复杂度在长序列下需近似变体。",
   "category": "attention",
-  "variables": [{"symbol":"Q","meaning":"查询矩阵","role":"input"},
-                {"symbol":"d_k","meaning":"键向量维度","role":"param"}],
+  "variables": [{"symbol":"Q","meaning":"查询矩阵（行数=序列长度 n，列数=头维度 d_k）","role":"input"},
+                {"symbol":"d_k","meaning":"键/查询向量维度（标量）","role":"param"}],
   "plottable": false,
   "plotHint": null,
   "rawLatex": "论文原文里的写法（保留其个性化记号）",
   "context": "式(1)，3.2 节",
-  "symbolMap": {"d_k": "d"}
+  "symbolMap": {"d_k": "d"},
+  "conceptTerms": ["Scaled Dot-Product Attention"]
 }]}
 
 要求：
-- 只抽 **3-8 个核心公式**：论文自己提出的方法、目标/损失函数、关键指标定义。
-  **不要**抽引用他人的背景公式、不要抽推导中间步骤、不要抽纯符号定义。
-- **latex 必须是归一化的一般形式**：用领域约定俗成的符号，不要照抄论文的个性化记号。
-  论文原写法放 rawLatex；论文符号与通用符号的差异放 symbolMap（{通用符号: 论文符号}）。
-- **canonicalName**：小写英文 + 连字符，优先用学界通用名。常见对照（务必沿用这些写法）：
+- 只抽 **3-8 个核心公式**：论文自己提出的方法、目标/损失函数、关键度量定义、关键定理结论式。
+  **不要**抽引用他人的背景公式、推导中间步骤、纯符号定义。
+- **latex 是归一化的一般形式**：该领域教科书会用的记号，不照抄论文个性化写法；论文原写法放 rawLatex，差异放 symbolMap（{通用符号: 论文符号}）。**教科书式标准**：读者不翻论文也能读懂每个符号的含义。
+- **description 按三问结构写**（2-4 句中文）：
+  ①**做什么**——公式计算的量、输入输出关系；
+  ②**设计直觉**——为什么长这样/关键项在防什么问题；
+  ③**适用边界**——成立前提、失效场景或复杂度量级（若适用）。
+  若是**有标准名称的经典公式/定理**（Jensen 不等式、Bayes 定理、Nash 均衡……），首句给标准名与惯常归属（如"Jensen 不等式（Jensen's inequality）"），提高教学引用价值。
+  不复述符号定义（那是 variables 的事），不空泛。
+- **canonicalName**：小写英文+连字符，领域通用名。AI/ML 高频对照（务必沿用这些写法）：
   scaled-dot-product-attention、multi-head-attention、softmax、sigmoid、layer-norm、batch-norm、
   rms-norm、cross-entropy-loss、kl-divergence、js-divergence、elbo、reparameterization-trick、
   mse-loss、contrastive-loss、info-nce、adam-update、sgd-momentum、cosine-lr-schedule、
@@ -186,14 +204,11 @@ const DEFAULT_FORMULA_PROMPT = `你是一位 AI/ML 论文的数学审读者。�
   rope-positional-encoding、sinusoidal-positional-encoding、moe-gating、top-k-routing、
   perplexity、bleu、rouge、f1-score、diffusion-forward-process、diffusion-reverse-process、
   score-matching-objective、flash-attention-tiling、lora-decomposition。
-  不在表内的用同样的构词法命名（小写、连字符、领域通用叫法）。
-- **variables**：列出公式里出现的每个符号，role ∈ input（自变量/输入）| param（超参/维度/常量参数）|
-  output（输出量）| const（数学常量）。
-- **plottable**：仅当公式可化为单变量实函数 y=f(x) 并画出有意义的曲线时为 true；
-  此时 plotHint 给 {"variable":"x","range":[下限,上限],"params":{"其它符号":取值}}，否则 plotHint 为 null。
-- **latex 必须是 KaTeX 可渲染子集**：禁止 \\\\newcommand、自定义宏；多行只用 aligned/cases。
-- 已在「已有公式」列表中的，**不要重复造条目**——若本篇确实用到，仍要输出该条（canonicalName 保持一致），
-  只需填 rawLatex / context / symbolMap，其余字段可留空。
+- **variables**：列出公式里每个符号，role ∈ input|param|output|const；meaning 写**语义 + 形状/量纲/类型**，按该领域惯例（"查询矩阵（n×d_k）"、"步长，标量"、"概率密度，无量纲"）——只写"一个矩阵"不合格。
+- **conceptTerms**：用户消息里给出「本篇概念清单」。列出与该公式**直接相关**的概念规范 term（≤3 个，写法与清单完全一致）；无则空数组。宁可少给不要硬凑。
+- **plottable**：仅当可化为单变量实函数 y=f(x) 且曲线有意义时为 true，plotHint 给 {"variable":"x","range":[lo,hi],"params":{"其它符号":取值},"plotExpr":"可求值表达式（+ - * / ^ 与 sin cos exp log sqrt abs min max，常量 pi；引用 params 符号）"}，否则 null。例：衰减 e^{-γx} → plotExpr 为 "exp(-gamma*x)"，params 给 {"gamma":0.5}。
+- **latex 必须是 KaTeX 可渲染子集**：禁止 \\newcommand、自定义宏；多行只用 aligned/cases。
+- 已在「已有公式」列表中的**不要重复造条目**——若本篇确实用到仍要输出（canonicalName 保持一致），只需填 rawLatex / context / symbolMap，其余字段可留空。
 - 只输出 JSON。`;
 
 /** 聊天系统提示词（角色=论文研究助手）。可被 settings.chatSystemPrompt / config.chatSystemPrompt 覆盖。 */
@@ -427,8 +442,10 @@ function pickMathDenseText(fulltext, budget) {
     .slice(0, cap);
 }
 
-/** 构造「增量抽取公式」的请求消息：把已有公式（规范名 + latex）喂给模型以避免重复造条目。 */
-function buildFormulaMessages({ title, abstract, fulltext, existingFormulas, maxInputChars, prompt }) {
+/** 构造「增量抽取公式」的请求消息：把已有公式（规范名 + latex）喂给模型以避免重复造条目。
+ *  conceptTerms（v3.28）：本篇概念清单（规范 term），供模型输出 conceptTerms 显式关联——
+ *  公式页与概念页的知识由此打通。 */
+function buildFormulaMessages({ title, abstract, fulltext, existingFormulas, conceptTerms, maxInputChars, prompt }) {
   const cap = Number(maxInputChars) > 0 ? Number(maxInputChars) : DEFAULT_MAX_INPUT_CHARS;
   const head = (abstract || '').slice(0, 4000);
   const body = pickMathDenseText(fulltext, cap);
@@ -437,7 +454,8 @@ function buildFormulaMessages({ title, abstract, fulltext, existingFormulas, max
       .slice(0, 200)
       .map((f) => `- ${f.canonicalName}：$${f.latex || ''}$`)
       .join('\n') || '（暂无）';
-  const user = `标题：${title || '（未知）'}\n摘要：${head}\n\n论文全文（节选）：\n${body}\n\n已有公式（沿用其 canonicalName，勿重复造条目）：\n${have}\n\n请抽取本篇的核心公式，按指定 JSON 输出。`;
+  const terms = (conceptTerms || []).slice(0, 120).join('、') || '（暂无）';
+  const user = `标题：${title || '（未知）'}\n摘要：${head}\n\n论文全文（节选）：\n${body}\n\n本篇概念清单（conceptTerms 从中挑选，term 写法必须与此完全一致）：\n${terms}\n\n已有公式（沿用其 canonicalName，勿重复造条目）：\n${have}\n\n请抽取本篇的核心公式，按指定 JSON 输出。`;
   return [
     { role: 'system', content: prompt && prompt.trim() ? prompt : DEFAULT_FORMULA_PROMPT },
     { role: 'user', content: user },
@@ -762,7 +780,12 @@ async function callChat({ messages, config, fetchImpl = fetch, jsonMode = true, 
       const retryable = res.status === 429 || (res.status >= 500 && res.status < 600);
       lastErr = new Error(`AI HTTP ${res.status}: ${errText.slice(0, 200)}`);
       if (!retryable) throw lastErr;
-      logger.warn('AI 请求可重试错误，退避重试', { model: reqBody.model, status: res.status, attempt, error: errText.slice(0, 120) });
+      logger.warn('AI 请求可重试错误，退避重试', {
+        model: reqBody.model,
+        status: res.status,
+        attempt,
+        error: errText.slice(0, 120),
+      });
     }
     // 外部取消（chatParams.signal，如后台任务被删除）不走退避重试，立即抛出
     if (cp.signal && cp.signal.aborted) throw lastErr || new Error('aborted');
@@ -873,7 +896,12 @@ async function callChatStream({ messages, config, fetchImpl = fetch, jsonMode = 
       const retryable = res.status === 429 || (res.status >= 500 && res.status < 600);
       lastErr = new Error(`AI HTTP ${res.status}: ${errText.slice(0, 200)}`);
       if (!retryable) throw lastErr;
-      logger.warn('AI 流式请求可重试错误，退避重试', { model: reqBody.model, status: res.status, attempt, error: errText.slice(0, 120) });
+      logger.warn('AI 流式请求可重试错误，退避重试', {
+        model: reqBody.model,
+        status: res.status,
+        attempt,
+        error: errText.slice(0, 120),
+      });
     }
     // 外部取消（chatParams.signal，如后台任务被删除）不走退避重试，立即抛出
     if (cp.signal && cp.signal.aborted) throw lastErr || new Error('aborted');
@@ -1032,9 +1060,26 @@ async function generateConceptMap({ concepts, config, fetchImpl = fetch, prompt,
 /** 抽取核心公式（v3.9）：强制 JSON 调用。返回原始 item 数组（未归一化）——
  *  归一化与跨论文合并由 src/core/formulas 的 mergeFormulas 负责，本层只管拿数据。
  *  输入预算走任务级 `formulas`（默认远大于总结，因为公式散布全篇）。 */
-async function extractFormulas({ title, abstract, fulltext, existingFormulas, config, fetchImpl = fetch, prompt }) {
+async function extractFormulas({
+  title,
+  abstract,
+  fulltext,
+  existingFormulas,
+  conceptTerms,
+  config,
+  fetchImpl = fetch,
+  prompt,
+}) {
   const maxInputChars = resolveMaxInputChars(config, 'formulas');
-  const messages = buildFormulaMessages({ title, abstract, fulltext, existingFormulas, maxInputChars, prompt });
+  const messages = buildFormulaMessages({
+    title,
+    abstract,
+    fulltext,
+    existingFormulas,
+    conceptTerms,
+    maxInputChars,
+    prompt,
+  });
   const text = await callChat({ messages, config, fetchImpl, jsonMode: true });
   return parseFormulaResult(text);
 }
@@ -1149,14 +1194,24 @@ async function listModels({ config, fetchImpl = fetch, timeoutMs = 8000 }) {
     const data = await res.json();
     const list = Array.isArray(data && data.data)
       ? data.data
-          .map((m) => ({ id: m.id, owned_by: m.owned_by, contextLength: extractContextLength(m), displayName: extractDisplayName(m) }))
+          .map((m) => ({
+            id: m.id,
+            owned_by: m.owned_by,
+            contextLength: extractContextLength(m),
+            displayName: extractDisplayName(m),
+          }))
           .filter((m) => m && m.id)
       : Array.isArray(data && data.models)
         ? data.models
             .map((m) =>
               typeof m === 'string'
                 ? { id: m, contextLength: null, displayName: null }
-                : { id: m.id, owned_by: m.owned_by, contextLength: extractContextLength(m), displayName: extractDisplayName(m) },
+                : {
+                    id: m.id,
+                    owned_by: m.owned_by,
+                    contextLength: extractContextLength(m),
+                    displayName: extractDisplayName(m),
+                  },
             )
             .filter((m) => m && m.id)
         : [];

@@ -36,7 +36,7 @@ function libraryHelpBody() {
     </div>`;
 }
 
-/** 概念页语法内容（v3.20）：裸词搜 term/definition + 结构化字段。 */
+/** 概念页语法内容（v3.20 → v3.28 扩容）：裸词搜 term/definition + 结构化字段。 */
 function conceptsHelpBody() {
   return `
     <div class="shp-section"><div class="shp-title">关键词</div>
@@ -44,10 +44,12 @@ function conceptsHelpBody() {
     </div>
     <div class="shp-section"><div class="shp-title">字段前缀</div>
       <table class="shp-table">
-        <tr><td><code>category:</code></td><td>按分类筛（如 attention）</td><td><code>freq:</code></td><td>共享频次</td></tr>
-        <tr><td><code>context:.</code></td><td>有章节出处</td><td><code>-category:</code></td><td>排除某分类</td></tr>
+        <tr><td><code>freq:</code></td><td>热度（shared/hot/solo）</td><td><code>topic:</code></td><td>论文主题关联</td></tr>
+        <tr><td><code>importance:core</code></td><td>核心创新概念</td><td><code>added:7d</code></td><td>最近新增（7d/30d）</td></tr>
+        <tr><td><code>category:</code></td><td>按 AI 分类筛</td><td><code>context:.</code></td><td>有章节出处</td></tr>
+        <tr><td><code>quality:nodef</code></td><td>缺解释</td><td><code>-category:</code></td><td>排除某分类</td></tr>
       </table>
-      <div class="shp-note">分类也可在左侧栏点选；freq 取值 <code>shared</code>（≥2 篇）/ <code>hot</code>（≥4 篇）。</div>
+      <div class="shp-note">这些分面在左侧栏都有对应入口（热度/主题/质量/最近新增/AI 分类）；freq 取值 <code>shared</code>（≥2 篇）/ <code>hot</code>（≥4 篇）/ <code>solo</code>（仅单篇）。</div>
     </div>
     <div class="shp-section"><div class="shp-title">操作符</div>
       <div class="shp-codes"><code>"exact phrase"</code> <code>-category:other</code>（排除） <code>AND</code> <code>OR</code></div>
@@ -55,13 +57,14 @@ function conceptsHelpBody() {
     <div class="shp-section"><div class="shp-title">示例</div>
       <div class="shp-examples">
         <div><code>attention category:attention</code></div>
-        <div><code>freq:shared context:.</code> <span class="shp-note">（多篇共享且有出处）</span></div>
+        <div><code>freq:shared importance:core context:.</code> <span class="shp-note">（多篇共享 + 核心创新 + 有出处）</span></div>
+        <div><code>topic:推理 added:7d</code> <span class="shp-note">（推理主题论文的概念，最近 7 天新增）</span></div>
         <div><code>"self-attention" -category:other</code></div>
       </div>
     </div>`;
 }
 
-/** 公式页语法内容（v3.20）：裸词搜 name/latex/description + 结构化字段。 */
+/** 公式页语法内容（v3.20 → v3.28 扩容）：裸词搜 name/latex/description + 结构化字段。 */
 function formulasHelpBody() {
   return `
     <div class="shp-section"><div class="shp-title">关键词</div>
@@ -69,10 +72,11 @@ function formulasHelpBody() {
     </div>
     <div class="shp-section"><div class="shp-title">字段前缀</div>
       <table class="shp-table">
-        <tr><td><code>category:</code></td><td>按分类筛（如 loss）</td><td><code>source:</code></td><td>抽取来源</td></tr>
-        <tr><td><code>plottable:1</code></td><td>仅可绘图</td><td><code>-category:</code></td><td>排除某分类</td></tr>
+        <tr><td><code>freq:</code></td><td>热度（shared/hot/solo）</td><td><code>source:</code></td><td>抽取来源</td></tr>
+        <tr><td><code>added:7d</code></td><td>最近新增（7d/30d）</td><td><code>quality:nodef</code></td><td>缺解读</td></tr>
+        <tr><td><code>category:</code></td><td>按分类筛（如 loss）</td><td><code>plottable:1</code></td><td>仅可绘图</td></tr>
       </table>
-      <div class="shp-note">分类也可在左侧栏点选；source 取值 <code>ai</code> / <code>vision</code> / <code>mineru</code> / <code>manual</code>。</div>
+      <div class="shp-note">这些分面在左侧栏都有对应入口（热度/来源/特性/最近新增/AI 分类）；source 取值 <code>ai</code> / <code>vision</code> / <code>mineru</code> / <code>manual</code>。</div>
     </div>
     <div class="shp-section"><div class="shp-title">操作符</div>
       <div class="shp-codes"><code>"exact phrase"</code> <code>-category:loss</code>（排除） <code>AND</code> <code>OR</code></div>
@@ -80,8 +84,8 @@ function formulasHelpBody() {
     <div class="shp-section"><div class="shp-title">示例</div>
       <div class="shp-examples">
         <div><code>softmax category:attention</code></div>
+        <div><code>freq:hot added:30d</code> <span class="shp-note">（最近 30 天新增的高频公式）</span></div>
         <div><code>source:mineru plottable:1</code> <span class="shp-note">（MinerU 抽取且可绘图）</span></div>
-        <div><code>"cross entropy" source:ai</code></div>
       </div>
     </div>`;
 }

@@ -1158,7 +1158,9 @@ test('extractFormulas：读 taskMaxInputChars.formulas 而非全局 maxInputChar
 });
 
 test('callChat：chatParams.timeoutMs 覆盖 config.ai.timeoutMs（单次调用级超时）', async () => {
-  // fakeFetch 挂起直到 signal abort；chatParams.timeoutMs=50 应远早于 config 的 1000ms 触发
+  // fakeFetch 挂起直到 signal abort。config 拉到 20s：覆盖生效 → ~50ms abort；
+  // 覆盖失效 → 20s（必超阈值）。阈值放宽到 5s——并发测试文件的 CPU 争抢会把 50ms
+  // 定时器推迟数百 ms，阈值贴着 config 值（原 900 vs 1000）会随机红（Windows 实测 1.4s）。
   const fakeFetch = (_url, opts) =>
     new Promise((_, reject) => {
       opts.signal.addEventListener('abort', () => reject(new Error('aborted')));
@@ -1167,14 +1169,14 @@ test('callChat：chatParams.timeoutMs 覆盖 config.ai.timeoutMs（单次调用�
   await assert.rejects(
     callChat({
       messages: [{ role: 'user', content: 'hi' }],
-      config: CFG, // timeoutMs: 1000
+      config: { ai: { ...CFG.ai, timeoutMs: 20000 } },
       fetchImpl: fakeFetch,
       jsonMode: false,
       chatParams: { timeoutMs: 50, maxRetries: 0 },
     }),
     /aborted/,
   );
-  assert.ok(Date.now() - t0 < 900, '应使用 chatParams.timeoutMs=50 而非 config 的 1000ms');
+  assert.ok(Date.now() - t0 < 5000, '应使用 chatParams.timeoutMs=50 而非 config 的 20000ms');
 });
 
 test('callChat：chatParams.maxRetries 覆盖默认 4 次重试', async () => {

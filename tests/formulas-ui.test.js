@@ -14,20 +14,64 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const LIST = [
   {
-    id: 'p1', filename: 'a.pdf', title: 'Attention Is All You Need', authors: ['V'], year: '2017',
-    abstract: '', arxivId: null, arxivUrl: null, primaryCategory: null, metaSource: null, metaConfidence: 0,
-    fulltextChars: 100, summaryExcerpt: '', status: 'ready', error: null,
-    tags: [], topics: [], folders: [], rating: 0, starred: false, readStatus: 'unread',
-    readProgress: null, addedAt: 1, updatedAt: 1, hasSummary: true, hasNotes: false,
-    conceptCount: 0, formulaCount: 2,
+    id: 'p1',
+    filename: 'a.pdf',
+    title: 'Attention Is All You Need',
+    authors: ['V'],
+    year: '2017',
+    abstract: '',
+    arxivId: null,
+    arxivUrl: null,
+    primaryCategory: null,
+    metaSource: null,
+    metaConfidence: 0,
+    fulltextChars: 100,
+    summaryExcerpt: '',
+    status: 'ready',
+    error: null,
+    tags: [],
+    topics: [],
+    folders: [],
+    rating: 0,
+    starred: false,
+    readStatus: 'unread',
+    readProgress: null,
+    addedAt: 1,
+    updatedAt: 1,
+    hasSummary: true,
+    hasNotes: false,
+    conceptCount: 0,
+    formulaCount: 2,
   },
   {
-    id: 'p2', filename: 'b.pdf', title: 'Auto-Encoding Variational Bayes', authors: ['K'], year: '2014',
-    abstract: '', arxivId: null, arxivUrl: null, primaryCategory: null, metaSource: null, metaConfidence: 0,
-    fulltextChars: 50, summaryExcerpt: '', status: 'ready', error: null,
-    tags: [], topics: [], folders: [], rating: 0, starred: false, readStatus: 'unread',
-    readProgress: null, addedAt: 2, updatedAt: 2, hasSummary: true, hasNotes: false,
-    conceptCount: 0, formulaCount: 1,
+    id: 'p2',
+    filename: 'b.pdf',
+    title: 'Auto-Encoding Variational Bayes',
+    authors: ['K'],
+    year: '2014',
+    abstract: '',
+    arxivId: null,
+    arxivUrl: null,
+    primaryCategory: null,
+    metaSource: null,
+    metaConfidence: 0,
+    fulltextChars: 50,
+    summaryExcerpt: '',
+    status: 'ready',
+    error: null,
+    tags: [],
+    topics: [],
+    folders: [],
+    rating: 0,
+    starred: false,
+    readStatus: 'unread',
+    readProgress: null,
+    addedAt: 2,
+    updatedAt: 2,
+    hasSummary: true,
+    hasNotes: false,
+    conceptCount: 0,
+    formulaCount: 1,
   },
 ];
 
@@ -36,7 +80,9 @@ let FORMULAS;
 function resetFormulas() {
   FORMULAS = [
     {
-      id: 'fm_att', canonicalName: 'scaled-dot-product-attention', name: '缩放点积注意力',
+      id: 'fm_att',
+      canonicalName: 'scaled-dot-product-attention',
+      name: '缩放点积注意力',
       latex: '\\mathrm{Attention}(Q,K,V)=\\mathrm{softmax}\\left(\\frac{QK^{\\top}}{\\sqrt{d_k}}\\right)V',
       description: '缩放因子 $\\sqrt{d_k}$ 抑制点积方差。',
       category: 'attention',
@@ -44,40 +90,84 @@ function resetFormulas() {
         { symbol: 'Q', meaning: '查询矩阵', role: 'input' },
         { symbol: 'd_k', meaning: '键向量维度', role: 'param' },
       ],
-      plottable: false, plotHint: null,
+      plottable: false,
+      plotHint: null,
       occurrences: [{ paperId: 'p1', rawLatex: 'QK^T', context: '式(1)', symbolMap: { d_k: 'd' } }],
-      paperIds: ['p1'], source: 'ai', createdAt: 1, updatedAt: 1,
+      paperIds: ['p1'],
+      source: 'ai',
+      createdAt: 1,
+      updatedAt: 1,
     },
     {
-      id: 'fm_kl', canonicalName: 'kl-divergence', name: 'KL 散度',
+      id: 'fm_kl',
+      canonicalName: 'kl-divergence',
+      name: 'KL 散度',
       latex: 'D_{\\mathrm{KL}}(P\\,\\|\\,Q)=\\sum_x P(x)\\log\\frac{P(x)}{Q(x)}',
-      description: '衡量分布差异。', category: 'information-theory',
-      variables: [], plottable: false, plotHint: null,
+      description: '衡量分布差异。',
+      category: 'information-theory',
+      variables: [],
+      plottable: false,
+      plotHint: null,
       occurrences: [
         { paperId: 'p1', rawLatex: '', context: '附录', symbolMap: {} },
         { paperId: 'p2', rawLatex: 'KL[q\\|p]', context: '式(3)', symbolMap: { P: 'q' } },
       ],
-      paperIds: ['p1', 'p2'], source: 'vision', createdAt: 2, updatedAt: 2,
+      paperIds: ['p1', 'p2'],
+      source: 'vision',
+      createdAt: 2,
+      updatedAt: 2,
     },
     {
-      id: 'fm_elbo', canonicalName: 'elbo', name: '证据下界',
-      latex: '\\mathcal{L}=\\mathbb{E}[\\log p]-D_{\\mathrm{KL}}', description: '',
-      category: 'variational-inference', variables: [], plottable: false, plotHint: null,
+      id: 'fm_elbo',
+      canonicalName: 'elbo',
+      name: '证据下界',
+      latex: '\\mathcal{L}=\\mathbb{E}[\\log p]-D_{\\mathrm{KL}}',
+      description: '',
+      category: 'variational-inference',
+      variables: [],
+      plottable: false,
+      plotHint: null,
       occurrences: [{ paperId: 'p2', rawLatex: '', context: '', symbolMap: {} }],
-      paperIds: ['p2'], source: 'ai', createdAt: 3, updatedAt: 3,
+      paperIds: ['p2'],
+      source: 'ai',
+      createdAt: 3,
+      updatedAt: 3,
     },
   ];
 }
 
-const jsonRes = (data) => ({ ok: true, status: 200, headers: { get: () => 'application/json' }, json: async () => ({ ok: true, data }) });
+const jsonRes = (data) => ({
+  ok: true,
+  status: 200,
+  headers: { get: () => 'application/json' },
+  json: async () => ({ ok: true, data }),
+});
 
 let details;
 
 before(async () => {
   resetFormulas();
   details = {
-    p1: { ...LIST[0], summary: '## TL;DR\nx', notes: '', noteCards: [], conceptIds: [], formulaIds: ['fm_att', 'fm_kl'], annotations: null, chat: [] },
-    p2: { ...LIST[1], summary: '## TL;DR\ny', notes: '', noteCards: [], conceptIds: [], formulaIds: ['fm_kl', 'fm_elbo'], annotations: null, chat: [] },
+    p1: {
+      ...LIST[0],
+      summary: '## TL;DR\nx',
+      notes: '',
+      noteCards: [],
+      conceptIds: [],
+      formulaIds: ['fm_att', 'fm_kl'],
+      annotations: null,
+      chat: [],
+    },
+    p2: {
+      ...LIST[1],
+      summary: '## TL;DR\ny',
+      notes: '',
+      noteCards: [],
+      conceptIds: [],
+      formulaIds: ['fm_kl', 'fm_elbo'],
+      annotations: null,
+      chat: [],
+    },
   };
   ui = await bootUi({
     listItems: LIST,
@@ -149,46 +239,53 @@ test('卡片渲染：解读走 renderMd（行内 $...$ 也经 KaTeX）；无解�
   assert.strictEqual(elbo.querySelector('.fc-desc').textContent, '（无解读）');
 });
 
-test('卡片渲染：符号表折叠区列出符号/含义/角色（中文角色名）', async () => {
+test('卡片渲染（v3.52）：符号表移入预览浮窗，卡上出现论文标签', async () => {
   await openFormulas();
   const att = [...ui.document.querySelectorAll('.formula-card')].find(
     (c) => c.querySelector('h3').textContent === '缩放点积注意力',
   );
-  const rows = att.querySelectorAll('.fc-vars tr');
-  assert.strictEqual(rows.length, 2);
-  assert.ok(att.querySelector('.fc-vars summary').textContent.includes('2'));
-  assert.strictEqual(rows[0].querySelectorAll('td')[1].textContent, '查询矩阵');
-  assert.strictEqual(rows[0].querySelectorAll('td')[2].textContent, '输入');
-  assert.strictEqual(rows[1].querySelectorAll('td')[2].textContent, '参数');
-  assert.ok(rows[0].querySelector('td.vs .katex'), '符号本身也走 KaTeX');
-  // 无 variables 的条目不渲染符号表
-  const elbo = [...ui.document.querySelectorAll('.formula-card')].find(
-    (c) => c.querySelector('h3').textContent === '证据下界',
-  );
-  assert.strictEqual(elbo.querySelector('.fc-vars'), null);
+  assert.strictEqual(att.querySelector('.fc-vars'), null, '卡上不再有符号表折叠区');
+  const chips = att.querySelectorAll('.fc-papers .paper-chip');
+  assert.ok(chips.length >= 1, '卡上有出现于论文标签');
+  assert.strictEqual(att.querySelector('.fc-hint') !== null, true, '有「点卡片看全貌」提示');
 });
 
-test('论文胶囊：每个 occurrence 一个，tooltip 含章节与符号对照', async () => {
+test('预览浮窗（v3.52）：点卡片打开，符号表/出处明细/完整解读都在浮窗里', async () => {
   await openFormulas();
   const kl = [...ui.document.querySelectorAll('.formula-card')].find(
     (c) => c.querySelector('h3').textContent === 'KL 散度',
   );
-  const chips = kl.querySelectorAll('.paper-chip');
-  assert.strictEqual(chips.length, 2);
-  assert.strictEqual(chips[0].textContent, 'Attention Is All You Need');
-  assert.strictEqual(chips[1].textContent, 'Auto-Encoding Variational Bayes');
-  assert.ok(chips[1].title.includes('式(3)'), 'tooltip 含章节出处');
-  assert.ok(chips[1].title.includes('P→q'), 'tooltip 含符号对照（归一化落点）');
+  kl.click(); // v3.52：点卡片 → 预览浮窗
+  await sleep(50);
+  const ov = ui.document.querySelector('#formula-detail-overlay');
+  assert.ok(ov && ov.classList.contains('open'), '预览浮窗打开');
+  const panel = ov.querySelector('#formula-detail-panel');
+  assert.ok(panel.querySelector('.fdv-latex .katex'), '浮窗有 display 公式');
+  assert.ok(panel.querySelector('.fdv-desc'), '浮窗有完整解读');
+  const links = panel.querySelectorAll('.fdv-occ-link');
+  assert.strictEqual(links.length, 2);
+  assert.strictEqual(links[0].textContent, 'Attention Is All You Need');
+  assert.ok(links[1].textContent.includes('Auto-Encoding'), '第二条论文链接');
+  const occs = [...panel.querySelectorAll('.fdv-occ')];
+  assert.match(occs[1].textContent, /式\(3\)/, '出处含章节');
+  assert.match(occs[1].textContent, /P→q/, '符号对照含归一化落点');
+  assert.ok(panel.querySelector('.fdv-merge') && panel.querySelector('.fdv-del') && panel.querySelector('.fdv-edit2'), '底部动作齐全（合并/删除/编辑）');
+  // Esc 关闭
+  ui.document.dispatchEvent(new ui.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  await sleep(30);
+  assert.ok(!ov.classList.contains('open'), 'Esc 关闭浮窗');
 });
 
 // ---------------------------------------------------------------- 交互
 
-test('点击论文胶囊：回论文库 + 选中该论文', async () => {
+test('预览浮窗里点论文：回论文库 + 选中该论文', async () => {
   await openFormulas();
   const kl = [...ui.document.querySelectorAll('.formula-card')].find(
     (c) => c.querySelector('h3').textContent === 'KL 散度',
   );
-  kl.querySelectorAll('.paper-chip')[1].click();
+  kl.click();
+  await sleep(50);
+  ui.document.querySelectorAll('.fdv-occ-link')[1].click();
   await sleep(80);
   assert.ok(!hidden('library-view'), '回到论文库视图');
   assert.ok(hidden('formulas-view'));
@@ -256,26 +353,33 @@ test('布局切换：清单视图单行紧凑（隐藏公式块，展示行内�
 
 // ---------------------------------------------------------------- 编辑 / 删除
 
-test('编辑：两步 prompt（LaTeX → 解读）后 PATCH，中途取消不发请求', async () => {
+test('编辑：编辑抽屉（v3.29 取代两步 prompt）取消不发请求；保存 PATCH 全字段', async () => {
   await openFormulas();
   const before = ui.backend.posts.length;
-  // 第一步取消 → 不应发请求
-  globalThis.prompt = () => null;
+  // 打开编辑抽屉 → 取消 → 不应发请求
   ui.document.querySelector('.formula-card [data-edit="fm_kl"]').click();
   await sleep(50);
+  const panel = ui.document.querySelector('#formula-editor-panel');
+  assert.ok(panel, '编辑抽屉打开');
+  panel.querySelector('.fe-cancel').click();
+  await sleep(30);
   assert.strictEqual(ui.backend.posts.length, before, '取消不发 PATCH');
+  assert.ok(!ui.document.querySelector('#formula-editor-overlay').classList.contains('open'), '抽屉关闭');
 
-  // 两步都填 → PATCH latex + description
-  const answers = ['新的 LaTeX', '新的解读'];
-  let i = 0;
-  globalThis.prompt = () => answers[i++];
+  // 重新打开：改 LaTeX 与解读 → 保存 → PATCH
   ui.document.querySelector('.formula-card [data-edit="fm_kl"]').click();
+  await sleep(50);
+  const panel2 = ui.document.querySelector('#formula-editor-panel');
+  const textarea = [...panel2.querySelectorAll('textarea')];
+  textarea[0].value = '新的 LaTeX';
+  textarea[1].value = '新的解读';
+  panel2.querySelector('.fe-save').click();
   await sleep(80);
   // 路径带 sp() 注入的 ?space=default，故用 startsWith
   const patch = ui.backend.posts.find((x) => x.path.startsWith('/api/formulas/fm_kl'));
   assert.ok(patch, '发出 PATCH /api/formulas/fm_kl');
-  assert.deepStrictEqual(patch.body, { latex: '新的 LaTeX', description: '新的解读' });
-  globalThis.prompt = undefined;
+  assert.strictEqual(patch.body.latex, '新的 LaTeX');
+  assert.strictEqual(patch.body.description, '新的解读');
 });
 
 test('删除：确认后 DELETE，取消则不发请求', async () => {

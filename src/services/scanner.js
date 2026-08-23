@@ -3,6 +3,7 @@ const path = require('path');
 const { sha1OfFile, log, sleep, buildPaperFilename, extractArxivIdFromFilename } = require('../core/util');
 const { createLogger } = require('../core/logger');
 const { splitMarkdownToCards } = require('../core/notes');
+const { looksLikeFormula } = require('../core/formulas');
 
 // 错误路径统一走 logger.warn/error（生产 NODE_ENV=production 默认阈值 warn，info 级 log() 会被吞掉）。
 const logger = createLogger('scanner');
@@ -35,7 +36,15 @@ async function scanDir(dir) {
 async function fingerprintAll(items) {
   const byId = new Map();
   for (const it of items) {
-    const id = (await sha1OfFile(it.filepath)).slice(0, 16);
+    let id;
+    try {
+      id = (await sha1OfFile(it.filepath)).slice(0, 16);
+    } catch (e) {
+      // 单文件读失败（拷贝中/被占用 EBUSY/扫描间隙被删）只跳过该文件——
+      // 之前会让整轮 scan 抛出，本轮的 added/changed/missing 全部不处理
+      log('fingerprint failed (skip this file):', it.filename, e.message);
+      continue;
+    }
     const entry = { ...it, id };
     if (!byId.has(id)) {
       byId.set(id, entry);
@@ -131,7 +140,10 @@ function createScanner({ store, papersDir, textStore, deps, scanIntervalMs, onEn
     let target = path.join(dir, desired);
     const same = (a, b) => path.resolve(a) === path.resolve(b);
     if ((await fileExists(target)) && !same(target, p.filepath)) {
-      desired = desired.replace(/\.pdf$/i, ` (${p.arxivId || p.id}).pdf`); // 撞名 → 加 arxivId 区分
+      // 撞名 → 加 (arxivId|id) 后缀。后缀清洗文件系统非法字符：老格式 arXiv ID（如
+      // cs.AI/0701001）含 `/`，直接拼进 path.join 会被当子目录 → rename 恒 ENOENT
+      const suffix = String(p.arxivId || p.id).replace(/[/\\:*?"<>|]/g, '_');
+      desired = desired.replace(/\.pdf$/i, ` (${suffix}).pdf`);
       target = path.join(dir, desired);
     }
     if (!same(target, p.filepath) && (await fileExists(target))) return false; // 加后缀仍撞名（罕见）：放弃
@@ -238,13 +250,27 @@ function createScanner({ store, papersDir, textStore, deps, scanIntervalMs, onEn
       }
     }
     try {
-      if (await normalizePaperFilename(store.papers[id])) log('meta backfill renamed', id, '→', store.papers[id].filename);
+      if (await normalizePaperFilename(store.papers[id]))
+        log('meta backfill renamed', id, '→', store.papers[id].filename);
     } catch (e) {
       logger.warn('rename error', { id, error: e.message });
     }
   }
 
+  /** 本扫描器正在 processOne 的论文 id。scan() 的中断残留自愈重新入队时排除它们，
+   *  防止「scan 与正在跑的流水线并发」时同一篇被双跑（双倍 AI 调用）。 */
+  const inflightIds = new Set();
+
   async function processOne(id, opts) {
+    inflightIds.add(id);
+    try {
+      await processOneJob(id, opts);
+    } finally {
+      inflightIds.delete(id);
+    }
+  }
+
+  async function processOneJob(id, opts) {
     const metaOnly = !!(opts && opts.metaOnly);
     const p = store.papers[id];
     if (!p) return;
@@ -379,16 +405,22 @@ function createScanner({ store, papersDir, textStore, deps, scanIntervalMs, onEn
         try {
           // 引擎 dispatcher：effConfig.formulas.engine='mineru' 走 MinerU（需 filepath），否则走 AI（用 fulltext）
           const extractFn = deps.ai.extractFormulasViaEngine || deps.ai.extractFormulas;
-          const items = await extractFn({
+          // 本篇概念清单（第 5 步刚抽完，conceptIds 已更新）喂给 AI 供其输出 conceptTerms 显式关联
+          const conceptTermOf = new Map((store.concepts || []).map((c) => [c.id, c.term]));
+          const conceptTerms = (store.papers[id].conceptIds || []).map((cid) => conceptTermOf.get(cid)).filter(Boolean);
+          // 简单度门禁（v3.50）：单变量/裸记号不是公式，不入库（MinerU 侧 v3.27 已在原始片段过滤，
+          // 这里对两引擎的归一化产物统一再过一道——AI 也会抽出 \tau、y_t 这类「太简单的公式」）
+          const items = (await extractFn({
             title: store.papers[id].title,
             abstract: store.papers[id].abstract,
             fulltext: text,
             filepath: store.papers[id].filepath,
             existingFormulas: store.formulas || [],
+            conceptTerms,
             config: effConfig,
             prompt: formulaPromptOf(store),
-          });
-          const touched = deps.mergeFormulas(store, items || [], id);
+          })).filter((it) => looksLikeFormula(it && it.latex));
+          const touched = deps.mergeFormulas(store, items, id);
           // 本篇「贡献」的公式 = 本次涉及的全部条目（含并入已有条目的），故按 occurrence 反查
           store.papers[id].formulaIds = formulaIdsOfPaper(store, id);
           if (touched.length) log('formulas extracted', id, '+', touched.length, 'new');
@@ -473,7 +505,12 @@ function createScanner({ store, papersDir, textStore, deps, scanIntervalMs, onEn
     const missingFuse = missing.length > 5 && missing.length > totalPapers * 0.5;
     if (missingFuse) {
       lastFuse = { at: Date.now(), missing: missing.length, total: totalPapers, papersDir };
-      logger.warn('missing 熔断', { missing: missing.length, total: totalPapers, papersDir, note: '疑似目录挂载失效，本轮不翻转状态' });
+      logger.warn('missing 熔断', {
+        missing: missing.length,
+        total: totalPapers,
+        papersDir,
+        note: '疑似目录挂载失效，本轮不翻转状态',
+      });
     } else {
       lastFuse = null;
       for (const m of missing) store.papers[m.id].status = 'missing';
@@ -481,19 +518,26 @@ function createScanner({ store, papersDir, textStore, deps, scanIntervalMs, onEn
     // 中间态自愈：processOne 在写完 summary+tags 后、跑到 `status='ready'`（见下方 processOne）
     // 之前若进程被中断，store 会残留中间态（pending/parsing/enriching/summarizing）。
     // 重启后 diffPapers 不把未变文件当 changed，这些论文就永远停在中间态（前端圆点不变绿）。
-    // 自愈规则：有实质 summary（>30 字，过滤占位）+ 有 summaryAt → 翻成 ready。
-    // 空总结的不动（那才是真没处理好，需要重新入队）。
+    // 自愈规则：① 有实质 summary（>30 字）+ 有 summaryAt → 翻成 ready；② 没有实质总结
+    // （流水线中途被杀/保存失败）→ 重新入队补完——旧版只写了注释没实现，卡死态无自动恢复。
     const STALE_STATUSES = ['pending', 'parsing', 'enriching', 'summarizing'];
     let healed = 0;
+    const requeueIds = [];
+    const queuedThisScan = new Set([...added, ...changed].map((s) => s.id));
     for (const p of Object.values(store.papers)) {
       if (!p || !STALE_STATUSES.includes(p.status)) continue;
-      if (!p.summaryAt) continue;
-      if (String(p.summary || '').trim().length < 30) continue;
-      p.status = 'ready';
-      p.error = null;
-      healed++;
+      if (p.summaryAt && String(p.summary || '').trim().length >= 30) {
+        p.status = 'ready';
+        p.error = null;
+        healed++;
+        continue;
+      }
+      // 无实质总结的中断残留：重新入队。排除本轮 added/changed（已在 enqueue 列表）与
+      // 正在处理中的（inflightIds，定时 tick 与流水线并发时防双跑）。
+      if (!queuedThisScan.has(p.id) && !inflightIds.has(p.id)) requeueIds.push(p.id);
     }
     if (healed > 0) log(`[scan] 中间态自愈：${healed} 篇已有完整内容但 status 卡在中间态，已修正为 ready`);
+    if (requeueIds.length) log(`[scan] 中断残留重新入队：${requeueIds.length} 篇（无实质总结的中间态）`);
     // 存量规范化改名：processOne 只处理新增/变更，早已入库的论文不会再过流水线——
     // 在此对扫描到的文件做轻量改名检查（字符串比对，已规范的零开销），保证全库最终都
     // 统一成「作者 等 - 年份 - 标题.pdf」。顺带修正「外部手动改名未同步」的 desync：
@@ -527,14 +571,27 @@ function createScanner({ store, papersDir, textStore, deps, scanIntervalMs, onEn
     if (backfillIds.length) log(`[scan] 元数据回填入队：${backfillIds.length} 篇（无标题存量）`);
     await deps.saveStore(store);
     enqueue([...added, ...changed].map((s) => s.id));
+    if (requeueIds.length) enqueue(requeueIds);
     if (backfillIds.length) enqueue(backfillIds, { metaOnly: true });
-    return { added: added.length, changed: changed.length, missing: missing.length, missingFuse, healed, renamed, backfilled: backfillIds.length };
+    return {
+      added: added.length,
+      changed: changed.length,
+      missing: missing.length,
+      missingFuse,
+      healed,
+      requeued: requeueIds.length,
+      renamed,
+      backfilled: backfillIds.length,
+    };
   }
 
   function start() {
     scan().catch((e) => logger.error('initial scan error', { error: e.message }));
     if (currentIntervalMs > 0) {
-      timer = setInterval(() => scan().catch((e) => logger.error('scan error', { error: e.message })), currentIntervalMs);
+      timer = setInterval(
+        () => scan().catch((e) => logger.error('scan error', { error: e.message })),
+        currentIntervalMs,
+      );
     }
   }
   function stop() {
@@ -550,7 +607,10 @@ function createScanner({ store, papersDir, textStore, deps, scanIntervalMs, onEn
     }
     currentIntervalMs = (Number(minutes) || 0) * 60 * 1000;
     if (currentIntervalMs > 0) {
-      timer = setInterval(() => scan().catch((e) => logger.error('scan error', { error: e.message })), currentIntervalMs);
+      timer = setInterval(
+        () => scan().catch((e) => logger.error('scan error', { error: e.message })),
+        currentIntervalMs,
+      );
     }
   }
 
@@ -602,16 +662,20 @@ function createScanner({ store, papersDir, textStore, deps, scanIntervalMs, onEn
           : deps.config;
         // 引擎 dispatcher：effConfig.formulas.engine='mineru' 走 MinerU（需 filepath），否则走 AI
         const extractFn = deps.ai.extractFormulasViaEngine || deps.ai.extractFormulas;
-        const items = await extractFn({
+        // 本篇概念清单喂给 AI 供其输出 conceptTerms 显式关联（同 processOne 第 6 步）
+        const conceptTermOf = new Map((store.concepts || []).map((c) => [c.id, c.term]));
+        const conceptTerms = (p.conceptIds || []).map((cid) => conceptTermOf.get(cid)).filter(Boolean);
+        const items = (await extractFn({
           title: p.title,
           abstract: p.abstract,
           fulltext: text,
           filepath: p.filepath,
           existingFormulas: store.formulas || [],
+          conceptTerms,
           config: effConfig,
           prompt: formulaPromptOf(store),
-        });
-        if (items && items.length && deps.mergeFormulas) {
+        })).filter((it) => looksLikeFormula(it && it.latex)); // 简单度门禁（v3.50，同 processOne 第 6 步）
+        if (items.length && deps.mergeFormulas) {
           const newIds = deps.mergeFormulas(store, items, id);
           p.formulaIds = formulaIdsOfPaper(store, id);
           p.updatedAt = Date.now();
@@ -727,6 +791,9 @@ function createScanner({ store, papersDir, textStore, deps, scanIntervalMs, onEn
    *    回调返回 false 表示客户端已断开/中止，立即停止累积（配合 api 层 req.on('close')）。
    *  opts.regenerate=true：重新生成最后一轮——丢弃末尾的 user+assistant 对（按 ts 配对），
    *    取该 user 的 message 作为本次 message 重新回答。落盘时旧对被丢弃、新对用新 ts 写入。
+   *  opts.truncate=N（编辑重发）：截断被编辑 user 消息（含）之后的历史再回答——前端
+   *    doSend({editMi}) 只在本地截断，后端不截断的话 onDone 回灌服务端完整历史会把
+   *    已删的旧消息「复活」，且后续按 mi 删消息会错位。
    *  opts.extraIds（v2.6 @ 引用）：用户 @ 引用的其它论文 id 数组；读取每篇全文（缺失则仅摘要），
    *    组装成 extraPapers 透传给 ai.chatPaper。落盘时记到 user 消息 extraIds 字段（回显 chip 用）。
    *    regenerate 时若 opts.extraIds 未显式传入，则回退取末尾被丢弃 user 的 extraIds（保持引用一致）。 */
@@ -745,6 +812,10 @@ function createScanner({ store, papersDir, textStore, deps, scanIntervalMs, onEn
     // history 也随之缩短（不含被丢弃的这轮），等于「回到上一次提问前」的状态重新答。
     let chatArr = Array.isArray(p.chat) ? p.chat.slice() : [];
     let regenExtraIds = null; // 重新生成时回退取被丢弃 user 的 extraIds
+    // 编辑重发：先截断（与前端本地截断对齐），再走正常「追加 user+assistant」
+    if (Number.isInteger(opts.truncate) && opts.truncate >= 0 && opts.truncate < chatArr.length) {
+      chatArr = chatArr.slice(0, opts.truncate);
+    }
     if (opts.regenerate) {
       // 从末尾找最后一轮：assistant 在末尾、其前是 user（成对）。丢这对，message 用该 user 内容。
       if (
@@ -798,8 +869,8 @@ function createScanner({ store, papersDir, textStore, deps, scanIntervalMs, onEn
       return { reply, chat: p.chat || [], aborted: true };
     }
     const ts = Date.now();
-    // 重新生成：用缩短后的 chatArr 作为基底（已丢弃旧轮）；正常：用原 p.chat。
-    p.chat = opts.regenerate ? chatArr : Array.isArray(p.chat) ? p.chat : [];
+    // 重新生成/编辑重发：用缩短后的 chatArr 作为基底（已丢弃旧轮/已截断）；正常：用原 p.chat。
+    p.chat = opts.regenerate || Number.isInteger(opts.truncate) ? chatArr : Array.isArray(p.chat) ? p.chat : [];
     // user 消息：仅当引用了论文时才挂 extraIds 字段（向后兼容，旧消息无此字段）
     const userMsg = { role: 'user', content: message, ts };
     if (extraIds.length) userMsg.extraIds = extraIds;
@@ -828,7 +899,13 @@ function createScanner({ store, papersDir, textStore, deps, scanIntervalMs, onEn
     const prompt = (store.settings && store.settings.notesPrompt) || deps.config.notesPrompt || undefined;
     const text = (await textStore.load(id).catch(() => null)) || '';
     if (!text && !p.abstract) return { cards: [], error: '全文未解析且无摘要，无法生成' };
-    const md = await deps.ai.generateNotes({ title: p.title, abstract: p.abstract, fulltext: text, config: effConfig, prompt });
+    const md = await deps.ai.generateNotes({
+      title: p.title,
+      abstract: p.abstract,
+      fulltext: text,
+      config: effConfig,
+      prompt,
+    });
     // 骨架语义要求分段输出：无 ## 标题说明模型没按格式来（整段文本塞成一张卡体验很差），报 error 请重试
     if (!/^##\s+/m.test(md || '')) return { cards: [], error: '模型未按骨架格式输出，请重试' };
     const cards = splitMarkdownToCards(md || '', 'skeleton');
@@ -875,6 +952,7 @@ function createMultiSpaceScanner({ manager, deps }) {
   let processing = false;
   let inFlight = null; // 当前 processOne 的 Promise，供 drain() 等待
   let timer = null;
+  let paused = false; // stop() 置位：pump 不再取新 job（drain 语义见下；start() 恢复）
 
   // 每空间的子扫描器缓存：spaceId -> { scanner, saveStore }
   const subScanners = new Map();
@@ -903,9 +981,7 @@ function createMultiSpaceScanner({ manager, deps }) {
             applySettingsOverride: (cfg, st) =>
               deps.ai.applySettingsOverride(
                 cfg,
-                deps.ai.withGlobalAi && manager.getGlobalAi
-                  ? deps.ai.withGlobalAi(st, manager.getGlobalAi())
-                  : st,
+                deps.ai.withGlobalAi && manager.getGlobalAi ? deps.ai.withGlobalAi(st, manager.getGlobalAi()) : st,
               ),
           }
         : deps.ai,
@@ -940,6 +1016,7 @@ function createMultiSpaceScanner({ manager, deps }) {
     processing = true;
     try {
       while (queue.length) {
+        if (paused) return; // stop() 后不再取新 job（遗留项等 start() 恢复时续跑）
         const { spaceId, id, metaOnly } = queue.shift();
         try {
           const sub = await subFor(spaceId);
@@ -992,12 +1069,15 @@ function createMultiSpaceScanner({ manager, deps }) {
   }
 
   function start() {
+    paused = false;
+    if (queue.length) pump(); // 恢复 stop() 暂停时遗留的队列项
     scan({ dueOnly: false }).catch((e) => logger.error('initial multi-space scan error', { error: e.message }));
     rescheduleTimer();
   }
   function stop() {
     if (timer) clearInterval(timer);
     timer = null;
+    paused = true;
   }
 
   /** 重算定时器间隔 = min(所有 scheduled 空间 scanInterval)；每次 tick scan({dueOnly:true})。
@@ -1009,7 +1089,10 @@ function createMultiSpaceScanner({ manager, deps }) {
     }
     const ms = manager.minScheduledIntervalMs();
     if (ms > 0) {
-      timer = setInterval(() => scan({ dueOnly: true }).catch((e) => logger.error('scheduled scan error', { error: e.message })), ms);
+      timer = setInterval(
+        () => scan({ dueOnly: true }).catch((e) => logger.error('scheduled scan error', { error: e.message })),
+        ms,
+      );
     }
   }
 
@@ -1020,9 +1103,16 @@ function createMultiSpaceScanner({ manager, deps }) {
   }
 
   function drain(timeoutMs = 5000) {
+    // 等泵完全停转而非只等 inFlight：job 之间有 `await subFor` 空窗（inFlight=null 但 pump
+    // 仍在跑），只等 inFlight 会在空窗提前返回——「stop→drain→改绑/改名搬目录」就与下一个
+    // processOne 并发改同一批文件（ENOENT 被误标 missing）。stop() 的 paused 保证不取新 job，
+    // 这里等当前 job 收尾即可。
     return Promise.race([
       (async () => {
-        while (inFlight) await inFlight.catch(() => {});
+        while (processing || inFlight) {
+          if (inFlight) await inFlight.catch(() => {});
+          else await sleep(10);
+        }
       })(),
       sleep(timeoutMs),
     ]);

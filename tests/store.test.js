@@ -11,6 +11,7 @@ const {
   mergeTags,
   mergeTopics,
   mergeConcepts,
+  removePaperFromConcepts,
   deleteConcept,
   addFolder,
   deleteFolder,
@@ -199,6 +200,58 @@ test('mergeConcepts 首次写入新增，重复 term 仅追加 paperId', () => {
   assert.strictEqual(store.concepts[0].definition, '人类反馈强化学习');
 });
 
+test('mergeConcepts importance（v3.28）：core 只升不降；supporting 只补空；非法值回落空', () => {
+  const store = { version: 2, concepts: [], papers: { p1: { id: 'p1' }, p2: { id: 'p2' }, p3: { id: 'p3' } } };
+  mergeConcepts(store, [{ term: 'DPO', definition: '直接偏好优化', importance: 'CORE' }], 'p1'); // 大小写不敏感
+  assert.strictEqual(store.concepts[0].importance, 'core');
+  // 后续论文把它当支撑技术（supporting）不应降级
+  mergeConcepts(store, [{ term: 'DPO', importance: 'supporting' }], 'p2');
+  assert.strictEqual(store.concepts[0].importance, 'core');
+  // 反向：首篇 supporting、次篇 core → 升级
+  mergeConcepts(store, [{ term: 'LoRA', importance: 'supporting' }], 'p1');
+  mergeConcepts(store, [{ term: 'LoRA', importance: 'core' }], 'p2');
+  const lora = store.concepts.find((c) => c.term === 'LoRA');
+  assert.strictEqual(lora.importance, 'core');
+  // 非法枚举与缺省 → ''（未知，不参与 importance 筛选）
+  mergeConcepts(store, [{ term: 'MoE', importance: 'very-important' }], 'p1');
+  mergeConcepts(store, [{ term: 'RLHF' }], 'p1');
+  assert.strictEqual(store.concepts.find((c) => c.term === 'MoE').importance, '');
+  assert.strictEqual(store.concepts.find((c) => c.term === 'RLHF').importance, '');
+});
+
+test('mergeConcepts contexts（v3.29 per-paper 由来）：每篇各记一处、同篇覆盖幂等、删论文清理', () => {
+  const store = { version: 2, concepts: [], papers: { p1: { id: 'p1' }, p2: { id: 'p2' } } };
+  mergeConcepts(store, [{ term: 'RLHF', context: '2.1 节' }], 'p1');
+  mergeConcepts(store, [{ term: 'RLHF', context: '附录 B，式(9)' }], 'p2');
+  let c = store.concepts[0];
+  assert.strictEqual(c.context, '2.1 节', '概念级主出处 = 首次');
+  assert.deepStrictEqual(
+    c.contexts,
+    [
+      { paperId: 'p1', context: '2.1 节' },
+      { paperId: 'p2', context: '附录 B，式(9)' },
+    ],
+    '两篇各一条',
+  );
+  // 同篇重复抽取：覆盖该篇槽位（幂等，不追加）
+  mergeConcepts(store, [{ term: 'RLHF', context: '2.1 节，式(3)' }], 'p1');
+  c = store.concepts[0];
+  assert.strictEqual(c.contexts.length, 2);
+  assert.strictEqual(c.contexts.find((x) => x.paperId === 'p1').context, '2.1 节，式(3)');
+  // 无 context 的抽取不产生空槽位
+  mergeConcepts(store, [{ term: 'LoRA' }], 'p1');
+  assert.deepStrictEqual(store.concepts.find((x) => x.term === 'LoRA').contexts, []);
+  // 手动录入 source 透传（命中已有不改）
+  mergeConcepts(store, [{ term: 'LoRA', source: 'manual' }], 'p2');
+  assert.strictEqual(store.concepts.find((x) => x.term === 'LoRA').source, 'ai', '命中已有不覆盖 source');
+  // 删论文：paperIds 与 contexts 同步清理
+  removePaperFromConcepts(store, 'p1');
+  c = store.concepts.find((x) => x.term === 'RLHF');
+  assert.deepStrictEqual(c.paperIds, ['p2']);
+  assert.strictEqual(c.contexts.length, 1);
+  assert.strictEqual(c.contexts[0].paperId, 'p2');
+});
+
 test('deleteConcept 从清单移除并清理 paper.conceptIds', () => {
   const store = { version: 2, concepts: [], papers: { p1: { id: 'p1', title: 'A', conceptIds: [] } } };
   const [id] = mergeConcepts(store, [{ term: 'PPO', definition: 'd' }], 'p1');
@@ -354,7 +407,15 @@ test('saveStore：循环引用 store 拒绝写入且不破坏原文件', async (
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pwcirc-'));
   try {
     const p = path.join(dir, 'papers.json');
-    const good = { version: 2, tags: ['ok'], topics: [], folders: [], concepts: [], settings: {}, papers: { a: { id: 'a' } } };
+    const good = {
+      version: 2,
+      tags: ['ok'],
+      topics: [],
+      folders: [],
+      concepts: [],
+      settings: {},
+      papers: { a: { id: 'a' } },
+    };
     await saveStore(p, good);
     const circular = { version: 2, papers: {} };
     circular.self = circular; // 循环引用 → JSON.stringify 抛 TypeError
