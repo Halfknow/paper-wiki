@@ -1029,7 +1029,11 @@ body.is-resizing { cursor:col-resize; user-select:none; }
 }
 .pane-splitter:hover, .pane-splitter:focus { background:var(--fill-ghost-hover); outline:none; }
 .pane-splitter:hover span, .pane-splitter:focus span { background:var(--accent); }
-.detail-pane { background:var(--bg); padding:18px 26px; }
+/* scrollbar-gutter:stable both-edges —— 各 tab 内容高矮不一：总结/笔记撑不满不出
+   滚动条，信息/聊天更高会出。不预留槽的话面板可用宽在 812 / 802 之间跳，表现为
+   「切 tab 时上方论文卡宽度会变」；只写 stable 又会让右侧比左侧多一个槽宽（26 vs 36）。
+   both-edges 两侧都预留，宽度恒定且左右对称。 */
+.detail-pane { background:var(--bg); padding:18px 26px; scrollbar-gutter:stable both-edges; }
 /* 聊天 tab 激活：底 padding 归零让 sticky composer 贴住面板底缘 */
 .detail-pane.chat-active { padding-bottom:0; }
 
@@ -1576,11 +1580,15 @@ body.is-resizing { cursor:col-resize; user-select:none; }
   font-size:13.5px; line-height:1.65; word-break:break-word; max-width:100%;
   transition:box-shadow .18s ease, transform .12s ease;
 }
+/* 我方气泡：底色/描边必须走令牌。此前是硬编码的浅靛渐变（#eef2ff→#e0e7ff）+
+   1px #c7d2fe，而文字用 var(--text)——暗色下文字翻成近白、底色仍是近白，
+   于是白底白字完全看不见。渐变本身也没带来什么，一并去掉。 */
 .chat-msg.user .chat-bubble {
-  background:linear-gradient(135deg, #eef2ff 0%, #e0e7ff 100%);
-  border:1px solid #c7d2fe; color:var(--text);
+  background:var(--accent-soft);
+  border:1px solid rgba(79,70,229,.22); color:var(--text);
   border-bottom-right-radius:5px;
 }
+html[data-theme="dark"] .chat-msg.user .chat-bubble { border-color:rgba(129,140,248,.34); }
 .chat-msg.assistant .chat-bubble {
   background:var(--panel); border:1px solid var(--border); color:var(--text);
   border-bottom-left-radius:5px; box-shadow:0 1px 2px rgba(15,23,42,.04);
@@ -2309,6 +2317,45 @@ body.fab-dragging { user-select:none; cursor:ns-resize; }
 .sr-stack-body { margin-top:8px; }
 /* 信息页里的行内说明允许出现 <b> 强调计数 */
 .info-page .sr-hint b { color:var(--s-t1); font-weight:600; }
+
+/* ---- 知识产出清单（v3.60）：本篇贡献的概念 / 公式，可展开逐条管理 ---- */
+/* 缩进 + 左侧引导线：它是上一行「概念 / 公式」的从属内容，不是同级的设置行 */
+.kx-list {
+  margin:0 0 4px 12px; padding-left:12px;
+  border-left:2px solid var(--s-line);
+}
+.kx-empty { padding:10px 2px; font-size:13px; color:var(--s-t2); }
+.kx-item {
+  display:flex; align-items:center; gap:10px;
+  min-height:36px; padding:6px 8px; margin:2px 0;
+  border-radius:var(--ctl-r-sm); cursor:pointer;
+  transition:background .12s ease;
+}
+.kx-item:hover { background:var(--s-fill); }
+.kx-item:focus-visible { outline:2px solid var(--accent); outline-offset:-2px; }
+.kx-main { display:flex; flex-direction:column; gap:1px; min-width:0; flex:0 0 auto; max-width:44%; }
+.kx-title {
+  font-size:13px; color:var(--s-t1);
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+}
+/* 概念标题带 chip 配色（与库页/概念页同一套按名 hash 色），跨页面认得出是同一个概念 */
+.kx-title[class*="chip-"] {
+  display:inline-flex; align-items:center; align-self:flex-start;
+  padding:1px 7px; border-radius:6px; border:1px solid transparent; font-size:12px;
+}
+.kx-meta { font-size:11.5px; color:var(--s-t3); font-variant-numeric:tabular-nums; }
+.kx-def, .kx-latex {
+  flex:1 1 auto; min-width:0; font-size:12px; color:var(--s-t2);
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+}
+.kx-latex { font-family:ui-monospace,Consolas,"Cascadia Code",monospace; font-size:11.5px; }
+/* 行内「编辑」：静默不占注意力，hover 整行才浮现 */
+.kx-edit { flex:0 0 auto; opacity:0; transition:opacity .12s ease; }
+.kx-item:hover .kx-edit { opacity:1; }
+.kx-edit:focus-visible { opacity:1; }
+@media (hover:none) { .kx-edit { opacity:1; } }
+/* 展开/收起钮与「重新抽取」同列，间距跟随 .sr-ctl 的 gap */
+.kx-toggle:disabled { opacity:.4; }
 
 .info-grid { display:grid; grid-template-columns:minmax(0, 1fr) minmax(0, 1fr); gap:16px 22px; width:100%; }
 .field { margin-bottom:0; }
@@ -4714,19 +4761,24 @@ textarea.pwdlg-textarea { resize:vertical; min-height:84px; line-height:1.55; }
 
 /* ---- v3.30：概念抽屉「出现论文」年份时间线 ---- */
 .cd-timeline-hint { font-weight:400; font-size:10.5px; color:var(--muted2); margin-left:8px; }
+/* 时间线的横向分栏（v3.60 修重叠）：年份 | 竖线+节点 | 内容，三段互不相交。
+   旧版年份是 left:0 + width:56px + text-align:center，文字因此居中在 x≈29，
+   而节点圆点占 27→37px——两者正好叠在一起。现在年份右对齐收在竖线左侧。 */
 .cd-timeline { position:relative; }
 .cd-timeline::before {
-  content:''; position:absolute; left:31px; top:8px; bottom:8px; width:2px;
+  content:''; position:absolute; left:41px; top:8px; bottom:8px; width:2px;
   background:linear-gradient(to bottom, #c7d2fe, #e0e7ff); border-radius:1px;
 }
-.cd-timeline .cd-paper { position:relative; padding-left:56px; }
+.cd-timeline .cd-paper { position:relative; padding-left:58px; }
 .cd-timeline .cd-year {
-  position:absolute; left:0; top:7px; width:56px; text-align:center;
+  position:absolute; left:0; top:9px; width:32px; text-align:right;
   font-size:11px; font-weight:700; color:var(--accent-strong); white-space:nowrap;
+  font-variant-numeric:tabular-nums;   /* 各行年份等宽，右缘对齐成一条线 */
 }
+/* 圆点与竖线同心：线中心 41+1=42，点 37..47 中心也是 42 */
 .cd-timeline .cd-paper::after {
-  content:''; position:absolute; left:27px; top:12px; width:10px; height:10px;
-  border-radius:50%; background:#fff; border:2px solid var(--accent); box-sizing:border-box; z-index:1;
+  content:''; position:absolute; left:37px; top:12px; width:10px; height:10px;
+  border-radius:50%; background:var(--panel); border:2px solid var(--accent); box-sizing:border-box; z-index:1;
 }
 
 /* ---- v3.30：合并对话框（openMergeDialog）---- */
@@ -5008,7 +5060,6 @@ html[data-theme="dark"] .fc-plot-svg .zb { fill:#0b0f17; }
 html[data-theme="dark"] .cms-thumb-frame { background:#0b0f17; }
 html[data-theme="dark"] .concept-map-overlay, html[data-theme="dark"] .concept-map-overlay .cmo-frame { background:var(--bg); }
 html[data-theme="dark"] .skel::after { background:linear-gradient(90deg, transparent, rgba(255,255,255,.08), transparent); }
-html[data-theme="dark"] .cd-timeline .cd-paper::after { background:var(--panel); }
 html[data-theme="dark"] .cp-kind.k-paper { color:#93c5fd; }
 html[data-theme="dark"] .cp-kind.k-concept { color:#c4b5fd; }
 html[data-theme="dark"] .cp-kind.k-formula { color:#67e8f9; }

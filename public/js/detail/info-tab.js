@@ -14,13 +14,17 @@
 //   危险区 删除，单独一节，同设置页「恢复默认」的位置语义
 // 论文卡顶部因此只留「评分 + 打开 PDF」，不再堆 6 个按钮。
 
-import { DEL, PATCH, POST, api, jget, sp } from '../core/api.js';
+import { DEL, PATCH, POST, jget, sp } from '../core/api.js';
 import { $ } from '../core/dom.js';
 import { chipClass, escapeHtml } from '../core/format.js';
 import { state } from '../core/state.js';
 import { setBusy, toast } from '../core/ui-kit.js';
 import { renderDetail } from './detail.js';
 import { refresh } from '../library/refresh.js';
+// 概念/公式的详情与编辑复用既有实现——同一个实体在概念页和信息页应当是同一个编辑器
+import { openConceptDetail } from '../concepts/detail-drawer.js';
+import { openFormulaDetail } from '../formulas/detail-overlay.js';
+import { openFormulaEditor } from '../formulas/editor-drawer.js';
 
 /** 只读行：左标签（可带说明）、右值。 */
 function readRow(label, value, opts = {}) {
@@ -56,6 +60,93 @@ function progressText(p) {
   return `第 ${rp.page}/${rp.total || '?'} 页 · ${new Date(rp.updatedAt).toLocaleString()}`;
 }
 
+
+// ---------------------------------------------------------------------------
+// 知识产出清单（v3.60）
+//
+// 此前信息页只显示「已贡献 12 个概念」这样一个数字——看得到量，看不到是什么，
+// 更改不了。现在可展开成清单，每条接进**已有的**详情抽屉 / 编辑器：
+//   概念 → openConceptDetail（出现论文、共现概念、相关公式、合并、AI 解读、星标、删除）
+//   公式 → openFormulaDetail（预览浮窗）/ openFormulaEditor（全字段编辑）
+// 不另造一套编辑界面：同一个实体在概念页和这里应当是同一个编辑器，否则两处会漂。
+//
+// 那两个抽屉都从 state.concepts / state.formulas 里按 id 找对象，若用户没进过
+// 概念/公式页，这两个数组是空的、抽屉会静默关掉。故展开前先确保全局列表已加载，
+// 而不是单独拉 ?paper= 的子集——子集喂不饱抽屉里的「共现概念」等跨条目信息。
+let _kxLoading = false;
+async function ensureKnowledgeLoaded() {
+  if (_kxLoading) return;
+  const needC = !(state.concepts || []).length;
+  const needF = !(state.formulas || []).length;
+  if (!needC && !needF) return;
+  _kxLoading = true;
+  try {
+    const [cr, fr] = await Promise.all([needC ? jget("/api/concepts") : null, needF ? jget("/api/formulas") : null]);
+    if (cr && Array.isArray(cr.data)) state.concepts = cr.data;
+    if (fr && Array.isArray(fr.data)) state.formulas = fr.data;
+  } catch { /* 拉取失败时清单显示空态，不影响页面其余部分 */ }
+  _kxLoading = false;
+}
+
+/** 用真实关系校正「已贡献 N 个」。
+ *  论文记录上的 conceptIds/formulaIds 与概念/公式侧的 paperIds 会不一致（实测有
+ *  论文 conceptIds=0 而概念侧有 5 条指向它）——权威关系在概念/公式那一侧，
+ *  论文侧那两个数组只是冗余缓存。旧版信息页只显示数字，所以这个偏差一直没被发现。 */
+async function syncKnowledgeCounts(pid) {
+  await ensureKnowledgeLoaded();
+  const set = (id, n, tpl, btnId) => {
+    const el = document.getElementById(id);
+    if (el) el.innerHTML = tpl(n);
+    const btn = document.getElementById(btnId);
+    if (btn) btn.disabled = !n;
+  };
+  const cn = (state.concepts || []).filter((c) => (c.paperIds || []).includes(pid)).length;
+  const fn = (state.formulas || []).filter((f) => (f.paperIds || []).includes(pid)).length;
+  set("kx-concepts-count", cn, (n) => `已贡献 <b>${n}</b> 个概念`, "b-concepts-expand");
+  set("kx-formulas-count", fn, (n) => `已涉及 <b>${n}</b> 个公式`, "b-formulas-expand");
+}
+
+const KX_IMPORTANCE = { core: "核心", supporting: "支撑" };
+
+/** 本篇的概念清单。右侧动作交给概念详情抽屉（它自带改名/合并/删除/星标）。 */
+function conceptRowsHtml(pid) {
+  const list = (state.concepts || []).filter((c) => (c.paperIds || []).includes(pid));
+  if (!list.length) return '<div class="kx-empty">本篇还没有抽取出概念。点上方「重新抽取」试试。</div>';
+  return list
+    .map((c) => {
+      const imp = KX_IMPORTANCE[c.importance] || "";
+      const meta = [imp, c.category ? escapeHtml(c.category) : "", `${(c.paperIds || []).length} 篇`]
+        .filter(Boolean)
+        .join(" · ");
+      return (
+        `<div class="kx-item" data-kx-concept="${escapeHtml(c.id)}" tabindex="0" role="button" title="查看概念详情">` +
+        `<span class="kx-main"><span class="kx-title ${chipClass(c.term)}">${escapeHtml(c.term)}</span>` +
+        `<span class="kx-meta">${meta}</span></span>` +
+        `<span class="kx-def">${escapeHtml((c.definition || "").slice(0, 60))}</span>` +
+        `</div>`
+      );
+    })
+    .join("");
+}
+
+/** 本篇的公式清单。行内两个动作：预览（浮窗）与编辑（全字段抽屉）。 */
+function formulaRowsHtml(pid) {
+  const list = (state.formulas || []).filter((f) => (f.paperIds || []).includes(pid));
+  if (!list.length) return '<div class="kx-empty">本篇还没有抽取出公式。点上方「重新抽取」试试。</div>';
+  return list
+    .map((f) => {
+      const meta = [f.category ? escapeHtml(f.category) : "", `${(f.paperIds || []).length} 篇`].filter(Boolean).join(" · ");
+      return (
+        `<div class="kx-item" data-kx-formula="${escapeHtml(f.id)}" tabindex="0" role="button" title="预览公式">` +
+        `<span class="kx-main"><span class="kx-title">${escapeHtml(f.name || f.canonicalName || "(未命名)")}</span>` +
+        `<span class="kx-meta">${meta}</span></span>` +
+        `<span class="kx-latex">${escapeHtml((f.latex || "").slice(0, 48))}</span>` +
+        `<button class="btn subtle sm kx-edit" type="button" data-kx-fedit="${escapeHtml(f.id)}" title="编辑公式">编辑</button>` +
+        `</div>`
+      );
+    })
+    .join("");
+}
 export function renderInfoTab(body, p) {
   const folderChecks = state.folders
     .map(
@@ -126,18 +217,30 @@ export function renderInfoTab(body, p) {
         )}
       </div>
 
-      <div class="set-section">知识产出<span class="set-section-sub">本篇贡献到全局概念库 / 公式库的内容。重算会追加新条目，不会删除已有的。</span></div>
+      <div class="set-section">知识产出<span class="set-section-sub">本篇贡献到全局概念库 / 公式库的内容。展开可逐条查看与管理；重算会追加新条目，不会删除已有的。</span></div>
       <div class="set-rows">
-        ${ctlRow(
-          '概念',
-          '<button class="btn ghost sm" id="b-concepts-this" type="button">重新抽取</button>',
-          `已贡献 <b>${(p.conceptIds || []).length}</b> 个概念`,
-        )}
-        ${ctlRow(
-          '公式',
-          '<button class="btn ghost sm" id="b-formulas-this" type="button">重新抽取</button>',
-          `已涉及 <b>${(p.formulaIds || []).length}</b> 个公式`,
-        )}
+        <div class="set-row">
+          <div class="sr-main">
+            <div class="sr-label">概念</div>
+            <div class="sr-hint" id="kx-concepts-count">已贡献 <b>${(p.conceptIds || []).length}</b> 个概念</div>
+          </div>
+          <div class="sr-ctl">
+            <button class="btn subtle sm kx-toggle" id="b-concepts-expand" type="button" aria-expanded="false">展开</button>
+            <button class="btn ghost sm" id="b-concepts-this" type="button">重新抽取</button>
+          </div>
+        </div>
+        <div class="kx-list" id="kx-concepts" hidden></div>
+        <div class="set-row">
+          <div class="sr-main">
+            <div class="sr-label">公式</div>
+            <div class="sr-hint" id="kx-formulas-count">已涉及 <b>${(p.formulaIds || []).length}</b> 个公式</div>
+          </div>
+          <div class="sr-ctl">
+            <button class="btn subtle sm kx-toggle" id="b-formulas-expand" type="button" aria-expanded="false">展开</button>
+            <button class="btn ghost sm" id="b-formulas-this" type="button">重新抽取</button>
+          </div>
+        </div>
+        <div class="kx-list" id="kx-formulas" hidden></div>
       </div>
 
       <div class="set-section">操作</div>
@@ -168,6 +271,8 @@ export function renderInfoTab(body, p) {
     </div>`;
 
   wireInfoTab(body, p);
+  // 计数以概念/公式侧的 paperIds 为准后台校正——见 syncKnowledgeCounts 注释。
+  syncKnowledgeCounts(p.id);
 }
 
 /** 事件接线。与渲染分开，读起来是「这一屏有哪些行」和「每一行怎么动」两件事。 */
@@ -238,6 +343,45 @@ function wireInfoTab(body, p) {
       refresh();
     };
   };
+  // ---- 知识产出：展开清单 ----
+  const wireExpand = (btnId, listId, rowsHtml, onRowClick) => {
+    const btn = $(btnId), box = $(listId);
+    if (!btn || !box) return;
+    btn.onclick = async () => {
+      const open = box.hidden;
+      btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+      btn.textContent = open ? '收起' : '展开';
+      if (!open) { box.hidden = true; return; }
+      box.hidden = false;
+      box.innerHTML = '<div class="kx-empty">加载中…</div>';
+      await ensureKnowledgeLoaded();
+      box.innerHTML = rowsHtml(p.id);
+    };
+    box.onclick = (e) => onRowClick(e);
+    box.onkeydown = (e) => {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      if (!e.target.closest('[data-kx-concept],[data-kx-formula]')) return;
+      e.preventDefault();
+      onRowClick(e);
+    };
+  };
+
+  wireExpand('b-concepts-expand', 'kx-concepts', conceptRowsHtml, (e) => {
+    const row = e.target.closest('[data-kx-concept]');
+    if (row) openConceptDetail(row.dataset.kxConcept);
+  });
+  wireExpand('b-formulas-expand', 'kx-formulas', formulaRowsHtml, (e) => {
+    const ed = e.target.closest('[data-kx-fedit]');
+    if (ed) {
+      e.stopPropagation();
+      const f = (state.formulas || []).find((x) => x.id === ed.dataset.kxFedit);
+      if (f) openFormulaEditor(f);
+      return;
+    }
+    const row = e.target.closest('[data-kx-formula]');
+    if (row) openFormulaDetail(row.dataset.kxFormula);
+  });
+
   reextract('b-concepts-this', '/api/papers/concepts', '概念');
   reextract('b-formulas-this', '/api/papers/formulas', '公式');
 
