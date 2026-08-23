@@ -173,6 +173,14 @@
       <!-- 左下角设置入口（v3.18 自顶栏移回）：侧栏 v3.17 起跨视图常驻，footer 不再随切页消失，
            当年「藏在库视图里切页即失踪」的问题已随骨架统一消解。 -->
       <div class="side-footer">
+        <!-- 阅读架（v3.59）：此前只有阅读器内的浮动 FAB 能看，退出阅读器就没入口了。
+             列表就在 footer 上方原地展开——侧栏本来就是「有哪些东西可读」的地方。 -->
+        <div class="side-shelf-list" id="side-shelf-list" hidden></div>
+        <button class="side-settings side-shelf-btn" id="btn-shelf" type="button" aria-expanded="false" title="阅读架（放进来的论文可随时接着读）">
+          <span class="ico"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="21 13.5 15.5 13.5 14 16 10 16 8.5 13.5 3 13.5"/><path d="M3 13.5v4a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-4"/><line x1="7" y1="5" x2="17" y2="5"/><line x1="7" y1="9" x2="17" y2="9"/></svg></span>
+          <span>阅读架</span>
+          <span class="count" id="shelf-count"></span>
+        </button>
         <button class="side-settings" id="btn-settings" type="button" title="设置（AI 接口 / 提示词 / 采集 / 主题标签 / 系统）">
           <span class="ico"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></span><span>设置</span>
         </button>
@@ -996,7 +1004,7 @@
           <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
         </button>
         <button class="rb-chrome-btn rb-shelf-toggle" id="reader-shelf-toggle" title="放入阅读架（Ctrl+D）" aria-pressed="false" aria-label="放入阅读架">
-          <svg viewBox="0 0 24 24" width="15" height="15" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="21 13.5 15.5 13.5 14 16 10 16 8.5 13.5 3 13.5"/><path d="M3 13.5v4a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-4"/><polyline points="8.8 7.2 12 10.4 15.2 7.2"/><line x1="12" y1="2.6" x2="12" y2="10.4"/></svg>
         </button>
         <span class="rb-title" id="reader-title"></span>
       </div>

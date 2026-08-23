@@ -2,7 +2,7 @@
 //
 // 自 public/app.js 拆出（v3.15 模块化重构）——声明体原样迁移，仅补 import/export。
 
-import { DEL, PATCH, POST, api, jget, sp } from '../core/api.js';
+import { PATCH, jget } from '../core/api.js';
 import { $ } from '../core/dom.js';
 import { escapeHtml, starSvg, statusDot } from '../core/format.js';
 import { truncateChatTitle } from '../core/markdown.js';
@@ -88,12 +88,10 @@ export function renderDetail() {
             ${(p.rating || 0) > 0 ? `<button class="rate-clear" id="b-rate-clear" title="清除评分">清除</button>` : ''}
           </span>
           <span class="dh-spacer"></span>
+          <!-- v3.59：卡片顶部只留「评分 + 打开 PDF」。这里是「这篇论文是什么」的身份区，
+               不该堆 6 个动作；重新总结/打标/BibTeX/删除已下沉到「信息」tab 分区组织，
+               「标记已读」在信息 tab 有更完整的三态控件（未读/在读/已读）。 -->
           <button class="btn sm" id="b-open-pdf" title="在新视图打开 PDF 阅读器">打开 PDF</button>
-          <button class="btn ghost sm" id="b-read" title="切换阅读状态">${p.readStatus === 'done' ? '✓ 已读' : '标记已读'}</button>
-          <button class="btn ghost sm" id="b-resume" title="重新总结（含主题/概念）">重新总结</button>
-          <button class="btn ghost sm" id="b-copy-bib" title="复制本篇 BibTeX 引用到剪贴板">复制 BibTeX</button>
-          <button class="btn ghost sm" id="b-retag" title="用当前标签提示词重新打标（标签库联动增删）">重新打标</button>
-          <button class="btn ghost sm danger" id="b-delete" title="删除论文（连同本地 PDF 与全文，不可恢复）">删除</button>
         </div>
         <div class="title-block">
           <div class="title-row">
@@ -150,62 +148,6 @@ export function renderDetail() {
     const clr = $('b-rate-clear');
     if (clr) clr.onclick = (e) => { e.stopPropagation(); apply(0); };
   })();
-  $('b-read').onclick = async () => {
-    const next = p.readStatus === 'done' ? 'unread' : 'done';
-    await patch(p.id, { readStatus: next });
-    toast(next === 'done' ? '已标记为已读' : '已标记为未读');
-  };
-  $('b-resume').onclick = async () => {
-    const btn = $('b-resume');
-    setBusy(btn, true, '已排队…');
-    const r = await POST('/api/papers/' + p.id + '/summarize');
-    setBusy(btn, false);
-    if (r.ok) toast('已加入重新总结队列');
-    else toast(r.error || '重新总结失败', 'error');
-    setTimeout(refresh, 600);
-  };
-  // 复制本篇 BibTeX：从导出端点取单篇文本 → 剪贴板（写论文引用即取即用）
-  $('b-copy-bib').onclick = async () => {
-    const btn = $('b-copy-bib');
-    setBusy(btn, true, '复制中…');
-    try {
-      const r = await fetch(sp('/api/papers.bib?ids=' + encodeURIComponent(p.id)));
-      if (!r.ok) throw new Error('HTTP ' + r.status);
-      const bib = await r.text();
-      await navigator.clipboard.writeText(bib);
-      toast('BibTeX 已复制到剪贴板');
-    } catch (e) {
-      toast('复制失败：' + (e && e.message ? e.message : '网络错误'), 'error');
-    } finally {
-      setBusy(btn, false);
-    }
-  };
-  // 重新打标：用当前标签提示词重新生成标签/主题（同步覆盖 + 标签库联动增删）
-  $('b-retag').onclick = async () => {
-    const btn = $('b-retag');
-    setBusy(btn, true, '打标中…');
-    $('b-resume').disabled = true;
-    const r = await POST('/api/papers/' + p.id + '/retag');
-    setBusy(btn, false);
-    $('b-resume').disabled = false;
-    if (r.ok) { toast('已重新打标'); refresh(); }
-    else toast(r.error || '重新打标失败', 'error');
-  };
-  $('b-delete').onclick = async () => {
-    if (!(await PWDialog.confirm(`删除论文「${p.title || p.filename}」？\n将同时删除本地 PDF 与全文文本，且不可恢复。`, { title: '删除论文', danger: true, okText: '删除' }))) return;
-    const btn = $('b-delete');
-    setBusy(btn, true, '删除中…');
-    const r = await DEL('/api/papers/' + p.id);
-    setBusy(btn, false);
-    if (r.ok) {
-      toast('已删除');
-      state.detail = null; // 清空详情，回到「从左侧选择一篇论文」
-      renderDetail();
-      refresh();
-    } else {
-      toast(r.error || '删除失败', 'error');
-    }
-  };
   // tab 切换走路由（/paper/:id/:tab），使「刷新停在聊天页」「后退回总结页」成立。
   // 落盘 + state.tab + renderDetail 由 enterPaper 统一处理。
   d.querySelectorAll('.tab').forEach((t) => t.onclick = () => gotoPaperRoute(p.id, t.dataset.tab));

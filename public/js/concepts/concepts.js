@@ -138,9 +138,11 @@ const _CM_ICON = {
   opt: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.36 6.36l-.7-.7M6.34 6.34l-.7-.7m12.72 0l-.7.7M6.34 17.66l-.7.7"/><circle cx="12" cy="12" r="4"/></svg>',
   tab: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>',
   del: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>',
+  cancel: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>',
 };
+// 操作按钮浮在缩略图上，带文字会盖掉半张图 → 纯图标，label 进 aria-label/title。
 const _cmBtn = (kind, label, title, attr, danger) =>
-  `<button class="qbtn${danger ? ' danger' : ''}" ${attr} title="${title}">${_CM_ICON[kind]}<span>${label}</span></button>`;
+  `<button class="cms-act${danger ? ' danger' : ''}" ${attr} type="button" title="${title}" aria-label="${label}">${_CM_ICON[kind]}</button>`;
 
 /** 渲染制品缩略图网格（元信息从 state.conceptMaps）。
  *  缩略图 = 制品 HTML 在 1280×800 iframe 里真实渲染后 CSS scale 缩小（live preview），
@@ -157,7 +159,7 @@ function renderConceptMaps() {
     if (m.status === 'generating') {
       thumbHtml = '<div class="cms-thumb-status"><span class="cms-spinner"></span><span>后台生成中…<br>可随时离开本页</span></div>';
       metaHtml = '<span class="cms-item-time cms-generating">生成中</span>';
-      actions = _cmBtn('del', '取消', '取消生成并删除', 'data-cm-del="' + m.id + '"', true);
+      actions = _cmBtn('cancel', '取消生成', '取消生成并删除', 'data-cm-del="' + m.id + '"', true);
     } else if (m.status === 'error') {
       thumbHtml = m.hasHtml
         ? '<div class="cms-thumb" data-cm-thumb="' + m.id + '"></div><div class="cms-thumb-badge err">不完整</div>'
@@ -175,11 +177,16 @@ function renderConceptMaps() {
         _cmBtn('tab', '新标签页', '在新标签页打开', 'data-cm-newtab="' + m.id + '"') +
         _cmBtn('del', '删除', '删除制品', 'data-cm-del="' + m.id + '"', true);
     }
+    // 布局（v3.59）：操作簇移进缩略图右上角浮层，卡片底部只留标题 + 元信息并独占整宽。
+    // 旧版把三个按钮和标题挤在同一行，而按钮 opacity:0 时**仍占布局宽度**——
+    // 标题被一排看不见的按钮永久挤成省略号，这正是「标题日期显示不全」的来源。
     return '<div class="cms-card' + (m.status === 'generating' ? ' is-generating' : '') + '" data-id="' + m.id + '">' +
-      '<div class="cms-thumb-wrap">' + thumbHtml + '</div>' +
-      '<div class="cms-card-body">' +
-      '<div class="cms-item-main"><span class="cms-item-name">' + escapeHtml(m.name || '概念地图') + '</span>' + metaHtml + '</div>' +
+      '<div class="cms-thumb-wrap">' + thumbHtml +
       '<div class="cms-item-actions">' + actions + '</div>' +
+      '</div>' +
+      '<div class="cms-card-body">' +
+      '<span class="cms-item-name" title="' + escapeHtml(m.name || '概念地图') + '">' + escapeHtml(m.name || '概念地图') + '</span>' +
+      metaHtml +
       '</div></div>';
   }).join('');
   box.querySelectorAll('[data-cm-view]').forEach((b) => (b.onclick = () => viewConceptMap(b.dataset.cmView)));

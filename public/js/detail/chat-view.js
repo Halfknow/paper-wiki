@@ -93,13 +93,16 @@ export function chatMsgHtml(m, i, opts) {
   const metaHtml = showMeta
     ? `${m.ts ? `<span class="chat-time">${formatChatTime(m.ts)}</span>` : ''}${role === 'assistant' && m.model ? `<span class="chat-model-badge" title="${escapeHtml(m.model)}">${escapeHtml(m.model)}</span>` : ''}`
     : '';
+  // 气泡 + 底部行外面套一层 .chat-stack（收缩包裹）：底部行 width:100% 撑的是这一层，
+  // 而这一层的宽度等于气泡宽度，于是时间戳的左缘 = 气泡左缘。
+  // 没有这层时 .chat-foot 会撑满整个 .chat-body，我方（右对齐）消息的时间戳就被甩到最左。
   // 底部行：时间戳/徽章 在左，操作按钮 在右同行（旧实现把二者分两行堆叠，占纵向空间且按钮不易发现）。
   // 始终渲染该行（即便无 meta，user 也要靠它放 edit/delete 按钮）。
   const footHtml = `<div class="chat-foot">${metaHtml}<span class="chat-foot-spacer"></span>${actionsHtml}</div>`;
   const extraRow = role === 'user' && m.extraIds && m.extraIds.length ? extraChipsReadonlyHtml(m.extraIds) : '';
   return `<div class="chat-msg ${role}" data-mi="${i}">
     <div class="chat-role"><span class="chat-role-ico">${CHAT_ROLE_ICO[role] || CHAT_ROLE_ICO.assistant}</span><span class="chat-role-label">${role === 'user' ? '你' : 'AI'}</span></div>
-    <div class="chat-body">${extraRow}<div class="chat-bubble">${imagesHtml}<div class="chat-content">${content}</div></div>${rawHtml ? `<div class="chat-raw-wrap" hidden>${rawHtml}</div>` : ''}${footHtml}</div>
+    <div class="chat-body">${extraRow}<div class="chat-stack"><div class="chat-bubble">${imagesHtml}<div class="chat-content">${content}</div></div>${rawHtml ? `<div class="chat-raw-wrap" hidden>${rawHtml}</div>` : ''}${footHtml}</div></div>
   </div>`;
 }
 

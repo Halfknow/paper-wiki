@@ -2057,7 +2057,7 @@ const { AnnotationEditorType, AnnotationEditorParamsType, PixelsPerInch } = pdfj
         '<div class="rsp-inner">' +
           '<span class="rsp-swatches">' + swatches + '</span>' +
           '<span class="rsp-sep"></span>' +
-          '<button class="rsp-act" type="button" data-act="ai" title="划线问 AI（基于所选文字提问）">' + ICON.ai + '</button>' +
+          '<button class="rsp-act" type="button" data-act="ai" title="用所选文字提问（填入聊天框，可改后再发）">' + ICON.ai + '</button>' +
           '<button class="rsp-act" type="button" data-act="translate" title="翻译所选文字（按设置中的引擎）" id="rsp-translate" hidden>' + ICON.translate + '</button>' +
           '<button class="rsp-act" type="button" data-act="note" title="高亮并添加便签">' + ICON.note + '</button>' +
           '<button class="rsp-act" type="button" data-act="copy" title="复制所选文字">' + ICON.copy + '</button>' +
@@ -2188,9 +2188,17 @@ const { AnnotationEditorType, AnnotationEditorParamsType, PixelsPerInch } = pdfj
       await this.toggleChat(true); // 确保抽屉打开（首次会拉历史）
       const snippet = txt.length > 200 ? txt.slice(0, 200) + '…' : txt;
       const question = '论文里有这段内容，请解释/分析：\n\n' + snippet;
-      if (this.elChatInput) this.elChatInput.value = question;
-      // 直接发送（用户也可在发送前编辑输入框内容）
-      this.sendChat();
+      // v3.59：只填充、不自动发送。划线选中的范围经常不是用户真正想问的那一段
+      // （PDF 文本层会把页眉、公式碎片、断行一起选进来），直接发出去就浪费一轮对话；
+      // 用户也常想在预置句式上补一句限定。填好 + 聚焦 + 光标落末尾，发不发交回用户。
+      if (this.elChatInput) {
+        this.elChatInput.value = question;
+        this.autoResizeInput();
+        this.elChatInput.focus();
+        const end = this.elChatInput.value.length;
+        try { this.elChatInput.setSelectionRange(end, end); } catch { /* 非文本输入时忽略 */ }
+      }
+      this.setStatus('已填入聊天框，可修改后发送');
     }
 
     /** 翻译选区文字：统一以浮窗展示译文（不跳转外链）。

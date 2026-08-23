@@ -28,6 +28,7 @@ import { closeSuggest, handleSuggestKeydown } from './search/suggest.js';
 import { bindChannelGrid, chEditModels, editingChannelId, renderChannels, set_chEditModels, set_editingChannelId } from './settings/channels.js';
 import { filterSettingsNav, normalizeWeights, renderWeightProp, resetAllSettings, resetSection, saveArxiv, saveDiscover, saveFormulaEngine, saveScan } from './settings/collect.js';
 import { currentPromptPane, initPromptStudios, showPromptIndex } from './settings/prompt-studio.js';
+import { closeShelfSidebar, initShelfSidebar } from './reader/shelf-sidebar.js';
 import { mountSettingDropdown, saveAiConfig } from './settings/settings.js';
 import { renderTaxonomy, taxBatchDelete, taxBatchMerge, taxState, taxSwitchKind, taxToggleSelectMode } from './settings/taxonomy.js';
 import { applyListWidth, bindListSplitter, refreshSystemHealth, setSidebarCollapsed } from './views/layout.js';
@@ -354,6 +355,11 @@ export function bind() {
     router.navigate(to.split('?')[0], { query: to.includes('?') ? '?' + to.split('?')[1] : '' });
   };
   // 设置入口：侧栏 footer（展开态）+ rail 底部（收起态），两处同一行为（v3.18 自顶栏移回）
+  // 侧栏阅读架（v3.59）：点条目进阅读器；进阅读器前先收起列表，避免回来时留一个过期展开态
+  initShelfSidebar((id) => {
+    closeShelfSidebar();
+    router.navigate(buildPath('/reader/:id', { id }));
+  });
   $('btn-settings').onclick = openSettingsOverlay;
   $('btn-settings-rail').onclick = openSettingsOverlay;
   if ($('btn-settings-x')) $('btn-settings-x').onclick = closeSettingsOverlay;

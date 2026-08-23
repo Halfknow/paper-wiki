@@ -126,8 +126,11 @@ export function renderChatTab(body, p) {
     </div>
   </div>`;
   const list = $('chat-list');
-  // 滚动容器是外层 .detail-pane（.chat-list 自身不滚），进 tab 即贴底
-  scrollChatListToBottom();
+  // 进 tab 时只在「已有对话」时贴底（滚动容器是外层 .detail-pane，.chat-list 自身不滚）。
+  // 空聊天不能滚：.chat-tab 有 min-height:calc(100vh - 280px) 把面板撑得可滚，
+  // 此时贴底只会把上方的论文卡顶出视野，却没有任何消息可看——正是「切到 AI 聊天
+  // 卡片就往上跑，而信息/总结/笔记不会」的来源。有历史时贴底仍是聊天该有的行为。
+  if (Array.isArray(p.chat) && p.chat.length) scrollChatListToBottom();
   const input = $('chat-input'), sendBtn = $('chat-send');
   if (chatState.busy) { input.disabled = true; sendBtn.classList.add('sending'); }
   // 实时同步 draft 到 chatState（任何 input 变化即存），renderDetail 重建后由上方回填，杜绝「打字被清空」

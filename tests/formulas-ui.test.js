@@ -407,9 +407,11 @@ test('详情「信息」tab：显示公式贡献数 + 「重新抽取并追加�
   ui.document.querySelector('.tab[data-tab="info"]').click();
   await sleep(60);
   const btn = $('b-formulas-this');
-  assert.ok(btn, '信息 tab 有「重新抽取并追加」按钮');
-  const field = btn.closest('.field');
-  assert.ok(field.textContent.includes('本篇涉及 2 个公式'), '显示公式贡献数');
+  assert.ok(btn, '信息 tab 有「重新抽取」按钮');
+  // v3.59 信息 tab 改行式：容器从 .field 换成 .set-row，计数进 .sr-hint
+  const row = btn.closest('.set-row');
+  assert.ok(row, '按钮位于一条设置行内');
+  assert.match(row.textContent.replace(/\s+/g, ' '), /已涉及 2 个公式/, '显示公式贡献数');
   btn.click();
   await sleep(80);
   const post = ui.backend.posts.find((x) => x.path.startsWith('/api/papers/formulas'));

@@ -45,6 +45,19 @@
   --fill-primary:#4f46e5;                    /* 主按钮底 = 产品身份色 Indigo */
   --fill-primary-hover:#4338ca;
   --on-primary:#fff;
+
+  /* ---- 行式布局令牌（v3.59 自设置页提升到全局）----
+     「标签居左 / 控件居右 / 行间发丝线」这套语言原本只在设置页用，现在信息 tab
+     也走它。令牌从 --ink 派生，深浅两色各定义一次 --ink 即可，不需要两处维护。 */
+  --s-ink:var(--ink);
+  --s-t1:rgba(var(--ink), 1);            /* 主文：行标签、值 */
+  --s-t2:rgba(var(--ink), .60);          /* 次要：行描述、分组标题 */
+  --s-t3:rgba(var(--ink), .42);          /* 弱：占位、元信息 */
+  --s-line:rgba(var(--ink), .07);        /* 行间发丝线 */
+  --s-edge:rgba(var(--ink), .13);        /* 输入框 / 容器描边 */
+  --s-fill:rgba(var(--ink), .05);
+  --s-fill-hover:rgba(var(--ink), .08);
+  --s-paper:var(--panel);
 }
 
 * { box-sizing:border-box; }
@@ -912,6 +925,42 @@ body.is-resizing { cursor:col-resize; user-select:none; }
 }
 .side-settings:hover { background:var(--fill-ghost-hover); }
 .side-settings:active { background:var(--fill-secondary-hover); }
+
+/* ---- 侧栏阅读架（v3.59）---- */
+/* 列表在 footer 上方原地展开。footer 是 margin-top:auto 钉底的，所以列表向上生长，
+   不会把「阅读架 / 设置」两个入口推出视野。 */
+.side-shelf-btn .count { margin-left:auto; }
+.side-shelf-btn .count:empty { display:none; }
+.side-shelf-btn.active { background:var(--fill-secondary-hover); }
+.side-shelf-list {
+  max-height:min(46vh, 340px); overflow:auto; margin-bottom:4px;
+  border-radius:var(--ctl-r); background:var(--fill-secondary);
+  box-shadow:inset 0 0 0 1px var(--ring);
+}
+.side-shelf-empty { padding:12px 10px; font-size:12px; color:var(--muted); line-height:1.65; }
+.side-shelf-item {
+  display:flex; align-items:center; gap:6px; min-height:38px; padding:5px 6px 5px 10px;
+  cursor:pointer; border-radius:6px; margin:2px; transition:background .12s ease;
+}
+.side-shelf-item:hover { background:var(--fill-ghost-hover); }
+.side-shelf-item.active { background:var(--fill-active); }
+.side-shelf-item:focus-visible { outline:2px solid var(--accent); outline-offset:-2px; }
+.ssi-main { display:flex; flex-direction:column; gap:1px; min-width:0; flex:1 1 auto; }
+.ssi-title {
+  font-size:12.5px; color:var(--text); line-height:1.35;
+  display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;
+}
+.side-shelf-item.active .ssi-title { color:var(--accent-strong); }
+.ssi-meta { font-size:11px; color:var(--muted2); font-variant-numeric:tabular-nums; }
+/* 移出按钮：静默不占注意力，hover 整行才浮现（同列表行内动作的通行做法） */
+.ssi-x {
+  flex:0 0 auto; display:inline-grid; place-items:center; width:22px; height:22px;
+  border:0; border-radius:5px; background:transparent; color:var(--muted2); cursor:pointer;
+  opacity:0; transition:opacity .12s ease, background .12s ease, color .12s ease;
+}
+.side-shelf-item:hover .ssi-x { opacity:1; }
+.ssi-x:hover { background:var(--red-soft); color:var(--red); }
+@media (hover:none) { .ssi-x { opacity:1; } }
 .side-settings .ico { display:inline-flex; align-items:center; color:inherit; }
 .side-settings .ico svg { width:16px; height:16px; }
 /* 收起后的图标栏（56px）：展开按钮 + 视图快捷入口 + 收藏夹色点 + 设置（底部，rail-spacer 钉底）。
@@ -1509,9 +1558,18 @@ body.is-resizing { cursor:col-resize; user-select:none; }
 /* 去掉 hover scale —— hover 应只显操作按钮，头像不动 */
 .chat-role-label { font-size:10px; color:var(--muted2); font-weight:600; }
 /* 内容区（气泡 + meta） */
-.chat-body { flex:1 1 auto; min-width:0; display:flex; flex-direction:column; max-width:min(720px, calc(100% - 42px)); }
+/* 气泡可用宽（v3.59 自 720 放宽到 880）：720 在宽面板下只用掉九成不到，
+   稍长一句就换行；窄面板由 calc(100% - 42px) 兜底，不受影响。 */
+.chat-body { flex:1 1 auto; min-width:0; display:flex; flex-direction:column; max-width:min(880px, calc(100% - 42px)); }
 .chat-msg.user .chat-body { align-items:flex-end; }
 .chat-msg.assistant .chat-body { align-items:flex-start; }
+/* 气泡 + 底部行的收缩包裹：宽度取二者的较大者（通常即气泡宽），
+   底部行的 width:100% 因此等于气泡宽，时间戳左缘与气泡左缘对齐。
+   边界：气泡比底部行还窄时（如只回一个「好的」），宽度由底部行决定，
+   此时时间戳会落在气泡左侧一点——两者右缘仍对齐，且偏移只有几十像素，
+   远好于此前被甩到整个消息区最左的 720px。 */
+.chat-stack { display:flex; flex-direction:column; min-width:0; max-width:100%; width:max-content; }
+.chat-msg.user .chat-stack { align-items:flex-end; }
 /* 气泡本体 */
 .chat-bubble {
   display:inline-block; position:relative; padding:11px 14px; border-radius:16px;
@@ -2229,6 +2287,29 @@ body.fab-dragging { user-select:none; cursor:ns-resize; }
 /* 抽屉输入行：列布局（chip 行 + textarea + 预置行 + 发送键），钉底。flex:0 0 auto 让其在抽屉列里自然贴底 */
 
 /* Info tab 字段块 */
+/* ---- 信息 tab（v3.59 重做）----
+   复用全站行式语言（.set-section/.set-row/.sr-*，令牌见 :root「行式布局令牌」）。
+   旧的 .info-grid 双列网格保留在下方——它把只读、可编辑、耗时动作混在同一种格子里，
+   新页面已不用；留着是因为别处可能还有 .field 复用。 */
+.info-page { max-width:820px; }
+.info-page .set-section:first-child { margin-top:0; }
+/* 摘要：正文体量最大的一块，单独成块而不是挤进行式（行式是「标签↔值」的对读，长文不适合） */
+.info-abstract { margin-top:10px; }
+.ia-label { font-size:14px; color:var(--s-t1); margin-bottom:6px; }
+.ia-text {
+  font-size:13.5px; line-height:1.75; color:var(--s-t2);
+  padding:12px 14px; border-radius:10px; background:var(--s-fill);
+  white-space:pre-wrap; word-break:break-word;
+}
+.ia-text.clamped { display:-webkit-box; -webkit-line-clamp:6; -webkit-box-orient:vertical; overflow:hidden; }
+.ia-more { margin-top:6px; }
+/* 整行铺开的编辑块（chips）：标签+说明在上，控件在下占满整行 */
+.set-row-stack { align-items:flex-start; }
+.set-row-stack .sr-main { width:100%; }
+.sr-stack-body { margin-top:8px; }
+/* 信息页里的行内说明允许出现 <b> 强调计数 */
+.info-page .sr-hint b { color:var(--s-t1); font-weight:600; }
+
 .info-grid { display:grid; grid-template-columns:minmax(0, 1fr) minmax(0, 1fr); gap:16px 22px; width:100%; }
 .field { margin-bottom:0; }
 .field-wide { grid-column:1 / -1; }
@@ -2281,7 +2362,9 @@ body.fab-dragging { user-select:none; cursor:ns-resize; }
   box-shadow:none;
 }
 .rb-group { display:flex; align-items:center; gap:8px; min-width:0; }
-.rb-left { justify-self:start; }
+/* 左侧「关闭 + 阅读架」是一对 chrome 动作，按右侧 .rb-cluster 的簇内节奏（2px）排，
+   而不是 .rb-group 默认的 8px——8px 会让这两个按钮看着像两组，与右侧不成体系。 */
+.rb-left { justify-self:start; gap:2px; }
 .rb-controls { justify-self:end; gap:8px; }
 
 /* 关闭 × / 放入阅读架 🔖 图标按钮（v3.23，替代旧「← 返回」文字按钮）：30px 方形、带边框 */
@@ -2295,9 +2378,7 @@ body.fab-dragging { user-select:none; cursor:ns-resize; }
 .rb-chrome-btn:active { transform:translateY(1px); }
 .rb-chrome-btn svg { display:block; }
 /* 书签按钮：默认描边（未上架）→ .on 实心高亮（已在架上，点击移出） */
-.rb-shelf-toggle svg { fill:transparent; transition:fill .12s ease; }
-.rb-shelf-toggle.on { background:var(--accent); color:#fff; border-color:var(--accent); box-shadow:none; }
-.rb-shelf-toggle.on svg { fill:currentColor; }
+.rb-shelf-toggle.on { background:var(--accent); color:#fff; box-shadow:none; }
 .rb-shelf-toggle.on:hover { background:var(--accent-strong); color:#fff; }
 .rb-title {
   flex:1 1 auto; min-width:72px;          /* v3.25：独占左侧弹性空间；min-width 兜底窄屏不至于消失 */
@@ -3270,18 +3351,47 @@ html[data-theme='dark'] .fe-switch-track { background:#39465e; }
 .cms-thumb-failed::after { content:'预览加载失败'; position:absolute; inset:0; display:flex; align-items:center; justify-content:center; color:var(--muted2); font-size:12px; }
 .cms-thumb-status { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px; color:var(--accent-strong); font-size:12.5px; text-align:center; line-height:1.6; }
 .cms-thumb-status.cms-err { color:#dc2626; }
-.cms-thumb-badge { position:absolute; top:8px; left:8px; padding:1px 8px; border-radius:8px; font-size:10.5px; font-weight:700; background:#fef2f2; border:1px solid #fecaca; color:#dc2626; }
-.cms-card-body { display:flex; align-items:flex-start; justify-content:space-between; gap:8px; padding:10px 12px; }
-.cms-item-main { display:flex; flex-direction:column; gap:2px; min-width:0; }
-.cms-item-name { font-weight:600; font-size:13.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.cms-item-time { font-size:11px; color:var(--muted2); }
-.cms-item-actions { display:flex; gap:6px; flex:0 0 auto; flex-wrap:wrap; justify-content:flex-end; }
+.cms-thumb-badge { position:absolute; top:8px; left:8px; z-index:3; display:inline-flex; align-items:center; height:26px; padding:0 9px; border-radius:var(--ctl-r); font-size:12px; font-weight:500; background:var(--red-soft); border:0; box-shadow:inset 0 0 0 1px rgba(220,38,38,.24); color:var(--red); }
+/* 卡片底部（v3.59）：标题 + 元信息竖排，各自独占整宽。
+   操作簇已移到缩略图浮层，这里不再和按钮抢横向空间。 */
+.cms-card-body { display:flex; flex-direction:column; gap:3px; padding:10px 12px; min-width:0; }
+.cms-item-name {
+  font-weight:500; font-size:14px; color:var(--text);
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+}
+.cms-item-time { font-size:12px; color:var(--muted); }
+
+/* 操作簇：浮在缩略图右上角，hover 才现（制品网格的通行做法——
+   缩略图本身就是内容，操作不该在下面的信息行里常占一块版面）。
+   半透明底 + 模糊，保证在任意配色的制品缩略图上都读得清。 */
+.cms-item-actions {
+  position:absolute; top:8px; right:8px; z-index:3;
+  display:flex; align-items:center; gap:2px; padding:2px;
+  border-radius:var(--ctl-r); background:var(--surface-veil);
+  backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px);
+  box-shadow:inset 0 0 0 1px var(--ring), 0 2px 8px rgba(15,23,42,.14);
+}
+.cms-act {
+  display:inline-grid; place-items:center; width:26px; height:26px; padding:0;
+  border:0; border-radius:6px; background:transparent; color:var(--muted); cursor:pointer;
+  transition:background .12s ease, color .12s ease;
+}
+.cms-act svg { width:15px; height:15px; display:block; }
+.cms-act:hover { background:var(--fill-ghost-hover); color:var(--text); }
+.cms-act.danger:hover { background:var(--red-soft); color:var(--red); }
+.cms-act:focus-visible { outline:2px solid var(--accent); outline-offset:-2px; }
+/* 暗色：--surface-veil 只有 10% 不透明度，浮在深色缩略图上按钮会糊成一团。
+   浮层要的是「压住底下的图」，不是「透出底下的图」，这里给一个足够实的底。 */
+html[data-theme="dark"] .cms-item-actions {
+  background:rgba(21,28,42,.82);
+  box-shadow:inset 0 0 0 1px rgba(230,234,242,.16), 0 2px 8px rgba(0,0,0,.4);
+}
 /* 制品后台生成中 / 失败状态（v3.14） */
 .cms-card.is-generating { border-color:#c7d2fe; background:linear-gradient(0deg, rgba(99,102,241,.04), rgba(99,102,241,.04)), var(--panel); }
 .cms-item-time.cms-generating { display:inline-flex; align-items:center; gap:6px; color:var(--accent-strong); }
 .cms-spinner { width:14px; height:14px; border:2px solid var(--accent-soft); border-top-color:var(--accent-strong); border-radius:50%; animation:cms-spin .9s linear infinite; flex:0 0 auto; }
 @keyframes cms-spin { to { transform:rotate(360deg); } }
-.cms-item-time.cms-error { color:#dc2626; max-width:200px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.cms-item-time.cms-error { color:var(--red); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 /* 概念地图查看覆盖层（iframe srcdoc 全屏） */
 .concept-map-overlay { display:none; position:fixed; inset:0; z-index:1500; background:#fff; flex-direction:column; }
 .concept-map-overlay.open { display:flex; }
@@ -3792,16 +3902,10 @@ iframe.pdf { width:100%; height:calc(100vh - 200px); border:1px solid var(--bord
    我们照此在 .settings-overlay 内建一层局部 token：Indigo 仍是产品的主色，但在设置页里
    只出现在焦点环与开关开启态——设置项本身应该让位于内容。产品其余页面不受影响。 */
 .settings-overlay {
-  --s-ink:15, 23, 42;                            /* 墨色（浅色态 = slate-900） */
-  --s-paper:#fff;                              /* 面板底 */
+  /* 只保留设置页独有的面（模态是纯白卡片，不跟随 --panel）；
+     文字/线/填充等行式令牌继承 :root，见那里的说明。 */
+  --s-paper:#fff;                              /* 模态面板底 */
   --s-nav:#fafafa;                             /* 左导航底 */
-  --s-t1:rgba(var(--s-ink), 1);                    /* 主文：行标签、值 */
-  --s-t2:rgba(var(--s-ink), .60);              /* 次要：行描述、分组标题 */
-  --s-t3:rgba(var(--s-ink), .42);              /* 弱：占位、元信息 */
-  --s-line:rgba(var(--s-ink), .07);            /* 行间发丝线 */
-  --s-edge:rgba(var(--s-ink), .13);            /* 输入框/容器边框 */
-  --s-fill:rgba(var(--s-ink), .05);            /* 导航激活 / chip 底 */
-  --s-fill-hover:rgba(var(--s-ink), .08);
 
   position:fixed; inset:0; z-index:80;
   display:flex; align-items:center; justify-content:center; padding:min(4vh, 40px) min(4vw, 48px);
@@ -4477,13 +4581,8 @@ iframe.pdf { width:100%; height:calc(100vh - 200px); border:1px solid var(--bord
 /* ---- 暗色（v3.56）：同一套阶梯换一个墨色。设置页不需要第二组暗色规则，
    因为所有面/线/字都是从 --s-ink 派生的。 ---- */
 html[data-theme="dark"] .settings-overlay {
-  --s-ink:226, 232, 240;
   --s-paper:#1b1f26;
   --s-nav:#171a20;
-  --s-line:rgba(var(--s-ink), .10);
-  --s-edge:rgba(var(--s-ink), .16);
-  --s-fill:rgba(var(--s-ink), .06);
-  --s-fill-hover:rgba(var(--s-ink), .11);
   background:rgba(0,0,0,.56);
 }
 html[data-theme="dark"] .settings-shell { box-shadow:0 16px 48px rgba(0,0,0,.5), 0 0 0 1px rgba(var(--s-ink), .09); }
@@ -4885,6 +4984,11 @@ html[data-theme="dark"] {
   --fill-primary:#6366f1;
   --fill-primary-hover:#7c7ff5;
   --on-primary:#fff;
+  /* 深底上 7% 的发丝线几乎不可见，行式令牌整体加一档 */
+  --s-line:rgba(var(--ink), .10);
+  --s-edge:rgba(var(--ink), .16);
+  --s-fill:rgba(var(--ink), .06);
+  --s-fill-hover:rgba(var(--ink), .11);
   color-scheme:dark;
 }
 html[data-theme="dark"] ::selection { background:rgba(129,140,248,.4); }
@@ -5085,8 +5189,7 @@ html[data-theme="dark"] .topic { border-color:rgba(99,102,241,.4); }
 /* ===== v3.41：制品卡工具按钮统一 qbtn 语言 =====
    与概念/公式卡同款：静默弱色 → hover 浮现（卡片悬停时），删除红。
    生成中态常显（用户需要明确的取消出口），其余状态 hover 才现。 */
-.cms-card-body { align-items:center; }
-.cms-item-actions { opacity:0; pointer-events:none; transition:opacity .12s ease; align-items:center; }
+.cms-item-actions { opacity:0; pointer-events:none; transition:opacity .12s ease; }
 .cms-card:hover .cms-item-actions { opacity:1; pointer-events:auto; }
 /* 生成中：动作常显（唯一的「取消」出口不能藏） */
 .cms-card.is-generating .cms-item-actions { opacity:1; pointer-events:auto; }
