@@ -38,6 +38,17 @@ function buildChatParamsBody(cp) {
   return chatParams;
 }
 
+/** 调用方回调隔离（v3.54）：onToken/onDone/onFail 里任何渲染异常都不能中断协议层——
+ *  否则 busy 复位代码永远跑不到（曾表现为「聊一两轮后输入框永久锁死」）。
+ *  异常吞掉但 console.error 保留线索；状态复位由调用方保证（reader 的 finish 在 finally）。 */
+function safeCall(fn, ...args) {
+  try {
+    fn(...args);
+  } catch (e) {
+    console.error('[stream] 回调异常（已隔离）', e);
+  }
+}
+
 /** 流式读取 AI 对话：GET /api/papers/:id/chat?message=（EventSource，discover 同款模式）。
  *  - 用 EventSource 而非 fetch+ReadableStream：POST+fetch SSE 在浏览器有挂起/缓冲问题（实测 await fetch
  *    promise 不 resolve），EventSource 是 SSE 原生可靠通道。
@@ -66,27 +77,27 @@ export function streamChatFetch(paperId, message, { onToken, onDone, onFail, reg
   es.addEventListener('token', (e) => {
     let obj = null;
     try { obj = JSON.parse(e.data); } catch { return; }
-    if (obj && obj.t && typeof onToken === 'function') onToken(obj.t, obj.kind || 'content');
+    if (obj && obj.t && typeof onToken === 'function') safeCall(onToken, obj.t, obj.kind || 'content');
   });
   es.addEventListener('done', (e) => {
     finished = true;
     try { es.close(); } catch {}
     let obj = {};
     try { obj = JSON.parse(e.data); } catch {}
-    if (typeof onDone === 'function') onDone(obj);
+    if (typeof onDone === 'function') safeCall(onDone, obj);
   });
   es.addEventListener('fail', (e) => {
     finished = true;
     try { es.close(); } catch {}
     let msg = 'AI 回答失败';
     try { msg = JSON.parse(e.data).error || msg; } catch {}
-    if (typeof onFail === 'function') onFail(msg);
+    if (typeof onFail === 'function') safeCall(onFail, msg);
   });
   es.onerror = () => {
     if (finished) return; // 正常结束后的关闭
     finished = true;
     try { es.close(); } catch {}
-    if (typeof onFail === 'function') onFail('连接中断，请重试');
+    if (typeof onFail === 'function') safeCall(onFail, '连接中断，请重试');
   };
   return () => { finished = true; try { es.close(); } catch {} }; // 返回中止函数
 }
@@ -148,9 +159,9 @@ export function streamVisionFetch(paperId, message, { onToken, onDone, onFail, r
       }
       if (!dataStr) return;
       let obj = null; try { obj = JSON.parse(dataStr); } catch { return; }
-      if (event === 'token' && obj && obj.t && typeof onToken === 'function') onToken(obj.t, obj.kind || 'content');
-      else if (event === 'done') { finished = true; if (typeof onDone === 'function') onDone(obj); }
-      else if (event === 'fail') { finished = true; if (typeof onFail === 'function') onFail((obj && obj.error) || 'AI 回答失败'); }
+      if (event === 'token' && obj && obj.t && typeof onToken === 'function') safeCall(onToken, obj.t, obj.kind || 'content');
+      else if (event === 'done') { finished = true; if (typeof onDone === 'function') safeCall(onDone, obj); }
+      else if (event === 'fail') { finished = true; if (typeof onFail === 'function') safeCall(onFail, (obj && obj.error) || 'AI 回答失败'); }
     };
     try {
       for (;;) {
@@ -166,8 +177,12 @@ export function streamVisionFetch(paperId, message, { onToken, onDone, onFail, r
         }
         if (finished) break;
       }
+      // 断流兜底（v3.54）：后端/代理半途掐断连接（没发 done/fail，如网关 idle 超时）时
+      // read() 会正常结束——不补 onFail 的话 busy 永久卡死、输入框锁死。close() 主动中止
+      // 会先置 finished 并以 AbortError 进 catch，不会误报。
+      if (!finished && typeof onFail === 'function') safeCall(onFail, '连接中断，请重试');
     } catch (e) {
-      if (!finished && typeof onFail === 'function') onFail('连接中断，请重试');
+      if (!finished && typeof onFail === 'function') safeCall(onFail, '连接中断，请重试');
     }
   })();
   return close;
@@ -223,9 +238,9 @@ export function streamPostSse(url, body, { onToken, onDone, onFail } = {}) {
       }
       if (!dataStr) return;
       let obj = null; try { obj = JSON.parse(dataStr); } catch { return; }
-      if (event === 'token' && typeof onToken === 'function') onToken(obj);
-      else if (event === 'done') { finished = true; if (typeof onDone === 'function') onDone(obj); }
-      else if (event === 'fail') { finished = true; if (typeof onFail === 'function') onFail((obj && obj.error) || '生成失败'); }
+      if (event === 'token' && typeof onToken === 'function') safeCall(onToken, obj);
+      else if (event === 'done') { finished = true; if (typeof onDone === 'function') safeCall(onDone, obj); }
+      else if (event === 'fail') { finished = true; if (typeof onFail === 'function') safeCall(onFail, (obj && obj.error) || '生成失败'); }
     };
     try {
       for (;;) {
@@ -241,8 +256,10 @@ export function streamPostSse(url, body, { onToken, onDone, onFail } = {}) {
         }
         if (finished) break;
       }
+      // 断流兜底（v3.54，与 streamVisionFetch 同款）：没收到 done/fail 就断流 → onFail
+      if (!finished && typeof onFail === 'function') safeCall(onFail, '连接中断，请重试');
     } catch {
-      if (!finished && typeof onFail === 'function') onFail('连接中断，请重试');
+      if (!finished && typeof onFail === 'function') safeCall(onFail, '连接中断，请重试');
     }
   })();
   return close;

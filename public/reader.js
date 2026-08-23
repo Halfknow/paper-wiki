@@ -1380,71 +1380,81 @@ const { AnnotationEditorType, AnnotationEditorParamsType, PixelsPerInch } = pdfj
         },
         onDone: (data) => {
           if (!(this.paper && this.paper.id === myPaperId)) return;
-          // 用服务端权威 chat 更新本地（供复制/重新生成读取）
-          if (data && Array.isArray(data.chat)) this.paper.chat = data.chat;
-          // 重渲最后一条 assistant 为定型结构（含时间戳 + 复制 + 重新生成按钮），补全流式占位缺失的字段
-          if (data && data.reply != null) {
-            accumulated = data.reply;
-            const livePh = document.querySelector('#reader-chat-list .chat-msg.assistant[data-req="1"]');
-            if (livePh && this.paper.chat && this.paper.chat.length) {
-              const lastMsg = this.paper.chat[this.paper.chat.length - 1];
-              // 流式占位气泡没有 data-mi（appendChild 时未赋），其正确索引即末位——
-              // 占位总在列表最后，data.chat 是服务端权威数组，lastMsg 必在 chat.length-1。
-              // 历史上读 livePh.dataset.mi 恒得 0，导致「存入笔记/复制/编辑」错取首条消息。
-              const mi = this.paper.chat.length - 1;
-              const hadReasoning = !!accumulatedReasoning;
-              const finalizeBubble = () => {
-                if (!livePh.isConnected) return; // 已被切论文/关抽屉重建，放弃
-                const tmp = document.createElement('div');
-                tmp.innerHTML = chatMsgHtml(lastMsg, mi, { regenerable: true });
-                if (tmp.firstElementChild) {
-                  livePh.replaceWith(tmp.firstElementChild);
-                  // 思考过程：完成后自动收起 + 显示「思考了 X 秒」
-                  if (hadReasoning) {
-                    const newBody = tmp.firstElementChild.querySelector('.chat-body');
-                    if (newBody) {
-                      const dur = Math.max(1, Math.round((Date.now() - reasoningStart) / 1000));
-                      const rEl = document.createElement('div');
-                      rEl.className = 'chat-reasoning';
-                      rEl.innerHTML = `<details><summary><span class="rs-label">思考过程</span><span class="rs-duration">思考了 ${dur} 秒</span></summary><div class="chat-reasoning-body"></div></details>`;
-                      rEl.querySelector('.chat-reasoning-body').textContent = accumulatedReasoning;
-                      newBody.insertBefore(rEl, newBody.firstChild);
+          // try/finally 保 finish（v3.54）：渲染链任何异常都不能跳过解锁——finish 原来在
+          // 末尾裸奔，一旦 onDone 中途抛错 _chatBusy 永真、输入框永久锁死。
+          try {
+            // 用服务端权威 chat 更新本地（供复制/重新生成读取）
+            if (data && Array.isArray(data.chat)) this.paper.chat = data.chat;
+            // 重渲最后一条 assistant 为定型结构（含时间戳 + 复制 + 重新生成按钮），补全流式占位缺失的字段
+            if (data && data.reply != null) {
+              accumulated = data.reply;
+              const livePh = document.querySelector('#reader-chat-list .chat-msg.assistant[data-req="1"]');
+              if (livePh && this.paper.chat && this.paper.chat.length) {
+                const lastMsg = this.paper.chat[this.paper.chat.length - 1];
+                // 流式占位气泡没有 data-mi（appendChild 时未赋），其正确索引即末位——
+                // 占位总在列表最后，data.chat 是服务端权威数组，lastMsg 必在 chat.length-1。
+                // 历史上读 livePh.dataset.mi 恒得 0，导致「存入笔记/复制/编辑」错取首条消息。
+                const mi = this.paper.chat.length - 1;
+                const hadReasoning = !!accumulatedReasoning;
+                const finalizeBubble = () => {
+                  if (!livePh.isConnected) return; // 已被切论文/关抽屉重建，放弃
+                  const tmp = document.createElement('div');
+                  tmp.innerHTML = chatMsgHtml(lastMsg, mi, { regenerable: true });
+                  if (tmp.firstElementChild) {
+                    livePh.replaceWith(tmp.firstElementChild);
+                    // 思考过程：完成后自动收起 + 显示「思考了 X 秒」
+                    if (hadReasoning) {
+                      const newBody = tmp.firstElementChild.querySelector('.chat-body');
+                      if (newBody) {
+                        const dur = Math.max(1, Math.round((Date.now() - reasoningStart) / 1000));
+                        const rEl = document.createElement('div');
+                        rEl.className = 'chat-reasoning';
+                        rEl.innerHTML = `<details><summary><span class="rs-label">思考过程</span><span class="rs-duration">思考了 ${dur} 秒</span></summary><div class="chat-reasoning-body"></div></details>`;
+                        rEl.querySelector('.chat-reasoning-body').textContent = accumulatedReasoning;
+                        newBody.insertBefore(rEl, newBody.firstChild);
+                      }
                     }
                   }
-                }
-              };
-              // 用户正在气泡里选中文字：replaceWith 会摧毁选区——推迟到选区释放再定型
-              if (selectionWithin(livePh)) runAfterSelectionRelease(livePh, finalizeBubble);
-              else finalizeBubble();
-            } else {
-              renderAccumulated();
+                };
+                // 用户正在气泡里选中文字：replaceWith 会摧毁选区——推迟到选区释放再定型
+                if (selectionWithin(livePh)) runAfterSelectionRelease(livePh, finalizeBubble);
+                else finalizeBubble();
+              } else {
+                renderAccumulated();
+              }
             }
-          }
-          if (!accumulated) {
-            const bubble = getBubble();
-            if (bubble) {
-              bubble.classList.remove('thinking-skeleton', 'streaming');
-              let cc = bubble.querySelector('.chat-content');
-              if (!cc) { cc = document.createElement('div'); cc.className = 'chat-content'; bubble.appendChild(cc); }
-              cc.classList.remove('thinking', 'streaming');
-              cc.textContent = '（无回复）';
+            if (!accumulated) {
+              const bubble = getBubble();
+              if (bubble) {
+                bubble.classList.remove('thinking-skeleton', 'streaming');
+                let cc = bubble.querySelector('.chat-content');
+                if (!cc) { cc = document.createElement('div'); cc.className = 'chat-content'; bubble.appendChild(cc); }
+                cc.classList.remove('thinking', 'streaming');
+                cc.textContent = '（无回复）';
+              }
             }
+          } finally {
+            finish(true);
           }
-          finish(true);
         },
         onFail: (err) => {
           if (!(this.paper && this.paper.id === myPaperId)) return;
-          if (!accumulated) {
-            const bubble = getBubble();
-            if (bubble) {
-              bubble.classList.remove('thinking-skeleton', 'streaming');
-              let cc = bubble.querySelector('.chat-content');
-              if (!cc) { cc = document.createElement('div'); cc.className = 'chat-content'; bubble.appendChild(cc); }
-              cc.classList.remove('thinking', 'streaming');
-              cc.textContent = '（' + (err || 'AI 回答失败') + '）';
+          try {
+            if (!accumulated) {
+              const bubble = getBubble();
+              if (bubble) {
+                bubble.classList.remove('thinking-skeleton', 'streaming');
+                let cc = bubble.querySelector('.chat-content');
+                if (!cc) { cc = document.createElement('div'); cc.className = 'chat-content'; bubble.appendChild(cc); }
+                cc.classList.remove('thinking', 'streaming');
+                cc.textContent = '（' + (err || 'AI 回答失败') + '）';
+              }
+            } else {
+              toast(err || 'AI 回答失败', 'error'); // 已有部分回复：保留内容 + toast 提示不完整（对齐 detail 版）
             }
+          } finally {
+            finish(true);
           }
-          finish(true);
         },
       });
       this._chatClose = myClose;

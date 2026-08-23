@@ -714,6 +714,19 @@ arXiv 导入 (POST /api/import { url, meta? }):
     渲染路径手拼 HTML（KaTeX 输出以外的兜底必须走 `escapeHtml`）。单测
     `tests/markdown-math.test.js`（快套件，DOMPurify 恒等桩）。
 
+46. **流式回调不得裸调、busy 复位不得依赖渲染成功（v3.54 聊天输入框锁死根因）**：
+    聊天 SSE 的两类「永久 busy」陷阱——① POST 流（`streamVisionFetch`/`streamPostSse`）
+    读循环结束时**必须兜底** `!finished → onFail`（后端/网关半途掐断时不发 done/fail，
+    `read()` 却正常结束；GET 版有 `es.onerror` 兜底，POST 版曾没有——表现为聊一两轮后
+    输入框永久 disabled）；② `onDone/onFail/onToken` 回调一律经 `safeCall` 隔离（回调
+    渲染链抛异常会中断分发或掉进外层 catch 后静默）。调用方结构要求：**状态复位（busy/
+    解锁）不得放在渲染之后裸奔**——reader 的 `finish` 曾在 `onDone` 末尾，渲染一抛
+    `_chatBusy` 永真；现 try/finally 保底，detail 版本就是「复位先行」的正确样板。
+    新增流式端点照抄 `streamPostSse` 的三件套（safeCall + 断流兜底 + close 先置
+    finished），单测 `tests/stream-protocol.test.js`。另注意 Playwright 拦截带 query 的
+    URL 时 glob pattern 要带尾 `*`（`**/chat/vision*`），否则 `?space=` 挂尾巴永不命中、
+    拦截悄悄失效。
+
 ## 工程化
 
 - **测试分层（v3.13）**：`npm test` = 快速套件（默认跳过 >5s 慢文件：6 个 jsdom UI + scanner，经 `tests/helpers/slow.js`

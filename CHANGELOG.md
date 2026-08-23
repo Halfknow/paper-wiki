@@ -4,6 +4,29 @@
 
 ## [Unpublished]
 
+### Fixed — 聊天输入框永久锁死（v3.54 流式协议层双兜底）
+
+用户报告「AI 聊天问答一两次之后输入框无法选中继续输入」。定位为**流式协议层两个叠加
+缺陷**，任一命中即 busy 永久为真、textarea 永久 disabled（发送键虽显示为停止键可点，
+但用户无从知晓）：
+
+- **断流静默**：POST 流（视觉问答 `streamVisionFetch` / 概念解读 `streamPostSse`）的
+  读循环在 `read()` 正常结束但**没收到 done/fail** 时静默退出——后端/网关半途掐断连接
+  （如 AI 网关 idle 超时、视觉模型长 prefill 无字节）时正是如此。GET 版有 `es.onerror`
+  兜底，POST 版没有。Playwright 拦截半截流已在 reader 抽屉稳定复现（busy 卡死、气泡
+  停在半截回复）。修复：读循环结束后 `!finished → onFail('连接中断，请重试')`
+  （`close()` 主动中止先置 finished + AbortError 进 catch，不误报）。
+- **回调异常中断协议**：`onDone/onFail/onToken` 裸调——reader 的 `onDone` 把解锁
+  (`finish`) 放在末尾，渲染链任何异常都会跳过解锁。修复两层：① stream.js 三个流式
+  函数统一 `safeCall` 隔离回调（异常 console.error 留痕但不中断分发）；② reader 的
+  `onDone/onFail` 改 try/finally 保 `finish`（对齐 detail 版「状态复位先行」的顺序）。
+  另补齐 reader `onFail` 有部分回复时的 toast 提示（对齐 detail）。
+
+验证：新增 `tests/stream-protocol.test.js`（6 例：断流兜底/回调隔离/主动中止不误报/
+EventSource 三态）；Playwright 线上复现「拦截半截流 → 旧代码卡死」→ 修复后同样场景
+输入框正常解锁、保留半截回复；两表面（detail tab / reader 抽屉）各两轮真实问答回归
+正常；chat-ui 等慢 UI 测试 43/43。
+
 ### Fixed — 总结里成片红字公式（v3.53 渲染管线根因修复）
 
 总结/笔记/聊天里的公式大面积红显（KaTeX 解析失败的 `#cc0000` 降级）：全库 177 篇总结实测
