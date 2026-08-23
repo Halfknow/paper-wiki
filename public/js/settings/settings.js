@@ -114,22 +114,45 @@ function fmtDef(v) {
 // ---- 设置页自定义下拉（v3.10：原生 <select> 改自定义按钮+菜单，与顶栏「全部状态」同设计语言）----
 // sdRegistry：wrapId → { value, opts }，供 saveXxx 读当前值
 export const sdRegistry = {};
+/** wrapId → 控制器 { get, set }。需要「外部改值后回填触发器标签」的地方用它
+ *  （如深链 ?sort= 还原）——sdRegistry 只存值，改它不会重绘触发器。 */
+export const sdControllers = {};
 
 /** 在 .sd-wrap 容器挂载自定义下拉（触发按钮 + 菜单，仿 filter-status-menu/fsm-item）。
  *  options: [{value, label}]，initialValue: 初始选中值，onChange(value): 选中回调。
  *  返回控制器 { get, set }，供 loadSettings/save 读写当前值。 */
-export function mountSettingDropdown(wrapId, options, initialValue, onChange) {
+export function mountSettingDropdown(wrapId, options, initialValue, onChange, opts0 = {}) {
   const wrap = $(('' + wrapId).replace(/^#/, ''));
   if (!wrap) return null;
+  const cfg = opts0 || {};
   const opts = Array.isArray(options) ? options : [];
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
-  const labelOf = (v) => { const o = opts.find((x) => x.value === v); return o ? o.label : v; };
+  const fixedLabel = cfg.fixedLabel || '';
+  // fixedLabel：触发器常驻显示「控件叫什么」而不是「当前选了什么」。
+  // 用于排序这类**永远有值**的控件——它的值一直在那儿显示等于一直在说废话；
+  // 筛选类不同（默认无值），显示值本身就是「有筛选生效」的信号，故不用此模式。
+  const labelOf = (v) => {
+    if (fixedLabel) return fixedLabel;
+    const o = opts.find((x) => x.value === v);
+    return o ? o.label : v;
+  };
+  // 分组支持（v3.58）：选项带 group 时插入分组小标题，用于替换带 <optgroup> 的原生
+  // select（论文列表排序）。同组连续排列，group 变化处起一个新标题。
+  let lastGroup = null;
+  const menuHtml = opts
+    .map((o) => {
+      let head = '';
+      if (o.group && o.group !== lastGroup) head = '<div class="sd-group">' + esc(o.group) + '</div>';
+      lastGroup = o.group || lastGroup;
+      return head + '<button class="fsm-item" type="button" data-v="' + esc(o.value) + '">' + esc(o.label) + '</button>';
+    })
+    .join('');
   wrap.innerHTML =
     '<button class="filter-trigger sd-trigger" type="button">' +
     '<span class="ft-label sd-label">' + esc(labelOf(initialValue)) + '</span>' +
     '<span class="ft-chev"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></span>' +
     '</button>' +
-    '<div class="sd-menu" hidden>' + opts.map((o) => '<button class="fsm-item" type="button" data-v="' + esc(o.value) + '">' + esc(o.label) + '</button>').join('') + '</div>';
+    '<div class="sd-menu" hidden>' + menuHtml + '</div>';
   const trigger = wrap.querySelector('.sd-trigger');
   const menu = wrap.querySelector('.sd-menu');
   const labelEl = wrap.querySelector('.sd-label');
@@ -138,7 +161,16 @@ export function mountSettingDropdown(wrapId, options, initialValue, onChange) {
   const syncActive = () => {
     menu.querySelectorAll('.fsm-item').forEach((it) => it.classList.toggle('active', it.dataset.v === state.value));
     if (labelEl) labelEl.textContent = labelOf(state.value);
-    trigger.classList.toggle('active', !!state.value && state.value !== opts[0]?.value);
+    const baseline = cfg.defaultValue !== undefined ? cfg.defaultValue : opts[0]?.value;
+    const on = !!state.value && state.value !== baseline;
+    trigger.classList.toggle('active', on);
+    // mirrorActiveTo：触发器透明、由外层容器承担视觉时（排序控件），active 态
+    // 得画在那个容器上。放这里而不是用 MutationObserver——值变化时本来就走到这，
+    // 观察者既多余又依赖 jsdom 里不存在的全局。
+    if (cfg.mirrorActiveTo) {
+      const host = wrap.closest(cfg.mirrorActiveTo);
+      if (host) host.classList.toggle('active', on);
+    }
   };
   syncActive();
   trigger.onclick = (e) => { e.stopPropagation(); menu.hidden = !menu.hidden; };
@@ -152,10 +184,12 @@ export function mountSettingDropdown(wrapId, options, initialValue, onChange) {
     };
   });
   document.addEventListener('click', (e) => { if (!wrap.contains(e.target)) menu.hidden = true; });
-  return {
+  const ctl = {
     get: () => state.value,
     set: (v) => { state.value = v; syncActive(); },
   };
+  sdControllers[wrapId] = ctl;
+  return ctl;
 }
 
 export async function loadSettingsData() {

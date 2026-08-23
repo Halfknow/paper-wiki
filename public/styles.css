@@ -549,6 +549,25 @@ input,select,textarea { font:inherit; color:var(--text); }
    选中时 active 态 Indigo 强调 + 计数徽标。 */
 /* v3.56：与 .btn.ghost 同规格（32px / r8 / 1px 内环）。静默是中性的——
    「这里有个下拉」不是信息；.active 才用 Indigo，因为「筛选已生效」是真信息。 */
+/* ============================================================================
+   下拉触发器统一规格（v3.58）
+   ============================================================================
+   全站的下拉按钮只有两种原型，区别不在长相而在**标签说什么**：
+
+   原型 A「类别触发器」——标签是控件的名字，当前值点开才看（菜单里打勾）。
+     用于工具条：排序 / 状态 / 标签 / 主题 / 批量操作。
+     判据是**这个控件是否永远有值**：排序永远在排，把 addedDesc 常驻显示等于
+     一直在说废话；筛选默认无值，所以「显示出值」本身就是「有筛选生效」的信号，
+     那种情况才该显示值（状态即如此）。多选维度用 .ft-count 计数徽标代替值。
+     视觉：极浅底 + 1px 内环（工具条上没有别的框，控件得自带边界）。
+
+   原型 B「值触发器」——标签就是当前值。
+     用于设置行 / 空间切换 / 模型选择：那里一行只讲一件事，值即答案。
+     视觉：完全无框，hover 才浮底（行分隔线已经提供了边界，再加框就是框中框）。
+
+   两者共用同一套尺寸与交互态，只在「有没有环」和「标签内容」上分叉。
+   .active 一律表示「这一维度已偏离默认」，是全站唯一还用 Indigo 的下拉态。
+   ---------------------------------------------------------------------------- */
 .filter-trigger {
   display:inline-flex; align-items:center; gap:6px; flex:0 0 auto;
   height:var(--ctl-h); padding:0 10px; cursor:pointer;
@@ -658,26 +677,11 @@ input,select,textarea { font:inherit; color:var(--text); }
 }
 /* 列表排序 select：包在 .sort-field 外壳里，自身透明无边框（外壳提供视觉），
    只保留字体/箭头/对齐；option 面板样式走下面的统一规则。 */
-/* 列表排序 select：包在 .sort-field 外壳里，自身透明无边框（外壳提供视觉）。
-   flex:1 填满外壳宽度，让原生下拉面板宽度接近外壳（不被外壳的图标挤压变窄）。
-   min-height 对齐 seg-group/多选按钮高度，padding 收紧避免叠加变高。 */
-.list-toolbar select {
-  appearance:none; -webkit-appearance:none; -moz-appearance:none;
-  border:0; background-color:transparent; color:var(--text);
-  font-size:12px; font-weight:600; cursor:pointer;
-  flex:1 1 auto; min-width:0; width:100%;
-  min-height:20px; padding:0 18px 0 0;
-  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
-  background-repeat:no-repeat; background-position:right center; background-size:12px;
-}
-.list-toolbar select:focus { outline:none; }
 /* 统一交互态（分类排序 / 通用下拉） */
 .ui-select:hover { box-shadow:inset 0 0 0 1px var(--ring-hover); background-color:var(--fill-secondary-hover); }
 .ui-select:focus { outline:none; box-shadow:inset 0 0 0 1px var(--accent), 0 0 0 3px var(--accent-soft); }
 /* 弹出面板内的分组标题/选项（系统支持部分定制：字重/颜色） */
-.list-toolbar select optgroup,
 .ui-select optgroup { color:var(--muted); font-weight:700; font-size:11px; }
-.list-toolbar select option,
 .ui-select option { color:var(--text); font-weight:500; }
 .stats { display:flex; align-items:center; gap:4px; color:var(--muted); font-size:12px; white-space:nowrap; }
 
@@ -1053,36 +1057,86 @@ body.is-resizing { cursor:col-resize; user-select:none; }
    换行时落在第二行仍然右对齐，两行都整齐（取代旧 .toolbar-spacer 撑子）。 */
 .toolbar-actions { display:flex; align-items:center; gap:6px; margin-left:auto; flex:0 0 auto; flex-wrap:nowrap; }
 /* 分段控件（视图密度切换）：与设置中心 .tax-seg 同设计语言——圆角胶囊外壳 + 两格按钮，当前格 Indigo 强调 */
-.seg-group {
-  display:inline-flex; align-items:stretch; flex:0 0 auto;
+.seg-group,
+.concepts-toolbar .icon-seg,
+.concepts-toolbar .text-seg {
+  display:inline-flex; align-items:center; gap:2px; flex:0 0 auto;
+  height:var(--ctl-h-sm); padding:2px;
   border:0; box-shadow:inset 0 0 0 1px var(--ring); border-radius:var(--ctl-r-sm);
-  background:var(--fill-secondary); overflow:hidden; min-height:var(--ctl-h-sm);
+  background:var(--fill-secondary);
 }
-.seg-btn {
-  display:inline-flex; align-items:center; gap:5px;
-  padding:0 9px; border:0; background:transparent; cursor:pointer;
-  color:var(--muted); font-size:13px; font-weight:400; white-space:nowrap;
-  border-left:1px solid var(--ring);
+.seg-btn,
+.concepts-toolbar .icon-seg button,
+.concepts-toolbar .text-seg button {
+  display:inline-flex; align-items:center; justify-content:center; gap:5px;
+  height:100%; padding:0 9px; border:0; border-radius:5px;
+  background:transparent; cursor:pointer;
+  color:var(--muted); font:inherit; font-size:13px; font-weight:400; white-space:nowrap;
   transition:background .12s ease, color .12s ease;
 }
-.seg-btn:first-child { border-left:0; }
-.seg-btn svg { flex:0 0 auto; }
-.seg-btn:hover { background:var(--fill-ghost-hover); color:var(--text); }
-.seg-btn.active { background:var(--accent-soft); color:var(--accent-strong); }
-.seg-btn:focus-visible { outline:2px solid var(--accent); outline-offset:-2px; }
+.seg-btn svg,
+.concepts-toolbar .icon-seg button svg { flex:0 0 auto; }
+/* 纯图标格：正方形，不要文字用的横向 padding。三处布局切换都是图标格，
+   只有概念/公式的排序（.text-seg）是文字格，保留横向 padding。 */
+.concepts-toolbar .icon-seg button,
+.seg-group .seg-btn { width:28px; padding:0; }
+.seg-btn:hover,
+.concepts-toolbar .icon-seg button:hover,
+.concepts-toolbar .text-seg button:hover { background:var(--fill-ghost-hover); color:var(--text); }
+/* 选中：抬起的中性块（说「哪一格」）+ Indigo 图标/文字（说「这是当前项」） */
+.seg-btn.active,
+.concepts-toolbar .icon-seg button.active,
+.concepts-toolbar .text-seg button.active {
+  background:var(--panel); color:var(--accent);
+  box-shadow:0 1px 2px rgba(15,23,42,.10);
+  font-weight:500;
+}
+.seg-btn:focus-visible,
+.concepts-toolbar .icon-seg button:focus-visible,
+.concepts-toolbar .text-seg button:focus-visible { outline:2px solid var(--accent); outline-offset:-2px; }
 /* 排序（group by）控件：与 .filter-trigger 统一的设计语言，外壳 + 自定义下拉箭头 */
 /* 排序控件外壳：视觉对齐工具条内的 .filter-trigger（30px 高、12px 字、同 padding）+ 排序图标 */
+/* v3.58 排序控件：外壳承担视觉（环 + 底 + 排序图标），内部的 .sd-trigger 完全透明。
+   反过来做（外壳退役、触发器自带边框）会把图标甩到控件外面——它是这个控件语义的一半。 */
 .sort-field {
   display:inline-flex; align-items:center; gap:5px; flex:0 0 auto;
-  height:var(--ctl-h-sm); padding:0 9px; cursor:pointer;
+  height:var(--ctl-h-sm); padding:0 6px 0 9px; cursor:pointer;
   background:var(--fill-secondary); border:0; box-shadow:inset 0 0 0 1px var(--ring); border-radius:var(--ctl-r-sm);
   color:var(--text); font-size:13px; font-weight:400; white-space:nowrap;
   transition:background .12s ease, box-shadow .12s ease;
 }
+/* wrap 必须自己撑满外壳：它是 position:relative 的自动高度容器，
+   触发器写 height:100% 会相对它塌成一行文字的高度（实测 20px），
+   连带外壳两侧的 padding 区变成点不开菜单的死区。 */
+.list-toolbar .sd-wrap { width:auto; height:100%; display:flex; align-items:center; position:static; }
+.list-toolbar .sd-trigger {
+  width:auto; height:100%; padding:0 2px 0 0; font-size:13px;
+  background:transparent; box-shadow:none; border-radius:0;
+}
+.list-toolbar .sd-trigger:hover { background:transparent; }
+/* 菜单锚在外壳（.sort-field）而不是 wrap 上——wrap 被外壳左侧的排序图标推开约 19px，
+   锚在它身上菜单就会比按钮右移一截，看起来没对齐。static 的 wrap 让 absolute 的菜单
+   继续向上找到 position:relative 的外壳。 */
+.sort-field { position:relative; }
+.sort-field .sd-menu { left:0; right:auto; min-width:200px; }
+/* 外壳承担视觉、触发器透明 → 触发器的 active 态得由外壳来画（:has 不可用时
+   由 JS 兜底同步 .active 到外壳，见 bind.js） */
+.sort-field.active {
+  background:var(--accent-soft); color:var(--accent-strong);
+  box-shadow:inset 0 0 0 1px rgba(79,70,229,.28);
+}
+.sort-field.active .sort-ico { color:var(--accent); }
+.sort-field .sd-trigger.active { background:transparent; color:inherit; }
+.sort-field .sd-trigger.active .ft-chev { color:inherit; }
+/* 分组小标题（替代原生 <optgroup>） */
+.sd-group {
+  padding:8px 12px 4px; font-size:12px; color:var(--muted);
+  user-select:none; pointer-events:none;
+}
+.sd-menu > .sd-group:first-child { padding-top:4px; }
 .sort-field:hover { background:var(--fill-secondary-hover); box-shadow:inset 0 0 0 1px var(--ring-hover); }
 .sort-field:focus-within { box-shadow:inset 0 0 0 1px var(--accent), 0 0 0 3px var(--accent-soft); }
 .sort-field .sort-ico { flex:0 0 auto; color:var(--muted2); }
-/* .list-toolbar select 规则见顶部「下拉框统一设计语言」段（与顶栏/分类 select 同源） */
 /* 列表本身独立滚动：只有清单滚动，不会带动整页 */
 .paper-list { list-style:none; margin:0; padding:6px; flex:1 1 auto; overflow:auto; min-height:0; }
 .paper-item {
@@ -2087,17 +2141,17 @@ body.is-resizing { cursor:col-resize; user-select:none; }
    top 由 JS 内联样式覆盖（持久化）；默认 calc(50% - 22px) 居中（44px 按钮的 -50% translateY 等价）。 */
 /* v3.5 quiet FAB：中性阴影（按钮"抬起"而非"发光"），hover 微缩放 + 加深底色 */
 .reader-chat-fab {
-  position:absolute; top:calc(50% - 22px); right:14px;
-  width:44px; height:44px; border-radius:50%;
-  background:var(--accent); color:#fff; border:0; cursor:grab; z-index:7;
+  position:absolute; top:calc(50% - 20px); right:14px;
+  width:40px; height:40px; border-radius:12px;
+  background:var(--fill-primary); color:var(--on-primary); border:0; cursor:grab; z-index:7;
   display:flex; align-items:center; justify-content:center;
-  box-shadow:0 2px 8px rgba(15,23,42,.10);
+  box-shadow:0 2px 10px rgba(15,23,42,.16);
   transition:transform .14s ease, box-shadow .14s ease, background .14s ease;
   touch-action:none;                 /* 拖动不被浏览器转成滚动 */
 }
-.reader-chat-fab:hover { background:var(--accent-strong); box-shadow:0 4px 12px rgba(15,23,42,.13); }
+.reader-chat-fab:hover { background:var(--fill-primary-hover); box-shadow:0 4px 14px rgba(15,23,42,.20); }
 .reader-chat-fab:active, .reader-chat-fab.dragging { cursor:grabbing; }
-.reader-chat-fab.active { background:var(--accent-strong); }
+.reader-chat-fab.active { background:var(--fill-primary-hover); }
 /* 抽屉打开时隐藏 FAB（#reader-view.chat-open 标记态由 reader.js 设置） */
 #reader-view.chat-open .reader-chat-fab { display:none; }
 /* FAB 拖动期间禁选文本 + 全屏纵向拖动光标（body 类由 reader.js wireFabDrag 增删） */
@@ -2222,10 +2276,9 @@ body.fab-dragging { user-select:none; cursor:ns-resize; }
   position:absolute; top:0; left:0; right:0; z-index:6; height:var(--rdr-bar-h);
   display:grid; grid-template-columns:minmax(0,1fr) auto;
   align-items:center; gap:10px; padding:0 12px;
-  background:linear-gradient(180deg, rgba(255,255,255,.95), rgba(248,250,252,.86));
-  backdrop-filter:saturate(1.6) blur(16px); -webkit-backdrop-filter:saturate(1.6) blur(16px);
-  border-bottom:1px solid rgba(226,232,240,.9);
-  box-shadow:0 4px 16px rgba(15,23,42,.07);
+  background:var(--panel);
+  border-bottom:1px solid var(--border);
+  box-shadow:none;
 }
 .rb-group { display:flex; align-items:center; gap:8px; min-width:0; }
 .rb-left { justify-self:start; }
@@ -2248,26 +2301,26 @@ body.fab-dragging { user-select:none; cursor:ns-resize; }
 .rb-shelf-toggle.on:hover { background:var(--accent-strong); color:#fff; }
 .rb-title {
   flex:1 1 auto; min-width:72px;          /* v3.25：独占左侧弹性空间；min-width 兜底窄屏不至于消失 */
-  margin-left:4px; padding-left:12px; border-left:1px solid var(--border2);  /* 与按钮组的清晰分界 */
+  margin-left:4px; padding-left:12px; border-left:1px solid var(--border);  /* 与按钮组的清晰分界 */
   min-height:1em;
   overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
-  font-weight:650; font-size:13.5px; color:#1e293b; letter-spacing:.01em;
+  font-weight:500; font-size:14px; color:var(--text); letter-spacing:0;
 }
 
 /* 操作簇：圆角分段容器，内嵌图标按钮 */
 .rb-cluster {
   display:inline-flex; align-items:center; gap:2px; flex:0 0 auto;
-  padding:2px; border-radius:10px;
-  background:var(--surface-veil-soft); border:1px solid var(--border);
-  box-shadow:0 1px 2px rgba(15,23,42,.04) inset;
+  padding:2px; border-radius:var(--ctl-r);
+  background:var(--fill-secondary); border:0;
+  box-shadow:inset 0 0 0 1px var(--ring);
 }
 .rb-icon {
   width:30px; height:30px; padding:0; display:grid; place-items:center;
   border:0; border-radius:7px; background:transparent; color:var(--muted);
   transition:background .12s ease, color .12s ease;
 }
-.rb-icon:hover { background:var(--surface-hover); color:var(--accent-strong); box-shadow:none; }
-.rb-icon:active { background:var(--accent-soft); }
+.rb-icon:hover { background:var(--fill-ghost-hover); color:var(--text); box-shadow:none; }
+.rb-icon:active { background:var(--fill-secondary-hover); }
 .rb-icon svg { display:block; }
 
 /* 页码输入 */
@@ -2336,20 +2389,20 @@ body.fab-dragging { user-select:none; cursor:ns-resize; }
 /* 入口 FAB：与 .reader-chat-fab 同尺寸语言，但用浅色面板底（导航件，非 AI 件）区分 */
 .reader-shelf-fab {
   position:absolute; left:14px; bottom:18px;
-  width:44px; height:44px; border-radius:50%;
-  background:var(--panel); color:var(--text); border:1px solid var(--border2); cursor:pointer; z-index:61;
+  width:40px; height:40px; border-radius:12px;
+  background:var(--panel); color:var(--text); border:0; cursor:pointer; z-index:61;
   display:flex; align-items:center; justify-content:center;
-  box-shadow:0 2px 8px rgba(15,23,42,.10);
+  box-shadow:inset 0 0 0 1px var(--ring), 0 2px 10px rgba(15,23,42,.16);
   transition:transform .16s cubic-bezier(.34,1.56,.64,1), box-shadow .14s ease, border-color .14s ease, color .14s ease, background .14s ease;
   touch-action:none;                 /* 纵向拖动不被浏览器转成滚动 */
 }
-.reader-shelf-fab:hover { color:var(--accent-strong); border-color:#c7d2fe; box-shadow:0 4px 12px rgba(15,23,42,.13); }
+.reader-shelf-fab:hover { color:var(--text); background:var(--fill-secondary-hover); box-shadow:inset 0 0 0 1px var(--ring-hover), 0 4px 14px rgba(15,23,42,.20); }
 .reader-shelf-fab:active { transform:scale(.9); }
 .reader-shelf-fab.dragging { cursor:grabbing; }
 /* 面板开着：FAB 保持可见（它是面板的锚点）并点亮成 accent 态 */
 .reader-shelf-fab.active {
-  background:var(--accent); color:#fff; border-color:var(--accent);
-  box-shadow:0 2px 8px rgba(15,23,42,.12);
+  background:var(--accent); color:#fff;
+  box-shadow:0 2px 10px rgba(15,23,42,.18);
 }
 .reader-shelf-fab.active .rsf-count { background:#fff; color:var(--accent-strong); box-shadow:0 0 0 2px var(--accent); }
 /* 计数徽章：右上角小圆片 */
@@ -2911,38 +2964,9 @@ body.fab-dragging { user-select:none; cursor:ns-resize; }
   font:inherit; color:var(--text);
 }
 .concepts-toolbar input[type=search]:focus { outline:none; border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft); }
-.concepts-toolbar .seg { display:inline-flex; border:1px solid var(--border2); border-radius:8px; overflow:hidden; background:var(--panel); }
-.concepts-toolbar .seg button {
-  border:0; background:none; padding:6px 12px; font:inherit; font-size:12.5px; color:var(--muted);
-  cursor:pointer; transition:background .12s ease, color .12s ease;
-}
-.concepts-toolbar .seg button:hover { background:var(--panel2); color:var(--text); }
-.concepts-toolbar .seg button.active { background:var(--accent); color:#fff; font-weight:600; }
-/* 一级视图切换（清单/地图）：提升到标题区（.concepts-head 直接子元素），位置稳定不漂移。
-   带图标的 accent 胶囊分段，视觉最突出——主导航。位置紧邻标题（title 右侧），
-   工具栏用 margin-left:auto 整体推右，view-seg 不随工具栏内容增减漂移。 */
-.concepts-view-tabs { flex:0 0 auto; margin-left:14px; }
-.concepts-view-tabs.view-seg { border-color:#c7d2fe; padding:3px; gap:3px; background:var(--accent-soft); border-radius:10px; }
-.concepts-view-tabs.view-seg button {
-  display:inline-flex; align-items:center; gap:5px; padding:6px 13px; border-radius:7px;
-  color:var(--muted2); font-weight:600; font-size:13px;
-}
-.concepts-view-tabs.view-seg button:hover { background:var(--surface-veil-soft); color:var(--accent-strong); }
-.concepts-view-tabs.view-seg button.active { background:var(--accent); color:#fff; box-shadow:none; }
-.concepts-view-tabs.view-seg button svg { flex:0 0 auto; }
 /* 二级控件（仅清单视图）：图标排版（icon-seg）+ 文字排序（text-seg）。
    视觉退后于主导航，但 active 态有明确的 accent 色调（切换感强）。 */
-.concepts-toolbar .icon-seg { padding:2px; gap:2px; background:var(--panel2); border-color:var(--border2); border-radius:8px; }
-.concepts-toolbar .icon-seg button {
-  display:grid; place-items:center; width:30px; height:30px; padding:0; border-radius:6px;
-  color:var(--muted2); transition:background .12s ease, color .12s ease;
-}
-.concepts-toolbar .icon-seg button:hover { background:var(--panel); color:var(--text); }
-.concepts-toolbar .icon-seg button.active { background:var(--accent); color:#fff; box-shadow:none; }
-.concepts-toolbar .text-seg { border-color:transparent; background:transparent; gap:2px; }
-.concepts-toolbar .text-seg button { padding:5px 10px; font-size:12px; border-radius:6px; color:var(--muted2); white-space:nowrap; }
-.concepts-toolbar .text-seg button:hover { background:var(--panel2); color:var(--text); }
-.concepts-toolbar .text-seg button.active { background:var(--accent-soft); color:var(--accent-strong); font-weight:600; }
+/* icon-seg / text-seg 的几何与交互态已并入上面的「分段切换统一原语」，此处不再重复 */
 /* 下载 Markdown 图标按钮：纯图标，紧凑不占文字宽度 */
 .concepts-toolbar .icon-btn {
   display:inline-flex; align-items:center; justify-content:center; width:30px; height:30px;
@@ -3828,8 +3852,13 @@ iframe.pdf { width:100%; height:calc(100vh - 200px); border:1px solid var(--bord
 .settings-nav-empty { padding:10px; font-size:13px; color:var(--s-t3); }
 
 /* 内容区。行宽收在 ~700px：设置行是「标签 ↔ 控件」的对读，太宽会让眼睛在中间那段空白里迷路。 */
-.settings-body { overflow:auto; padding:26px 32px 44px; min-width:0; }
-.settings-panel { max-width:704px; }
+/* scrollbar-gutter:stable both-edges —— 两件事一起解决：
+   ① 各面板高矮不一，有的出滚动条有的不出，不预留槽的话切 tab 内容会横向跳 ~10px；
+   ② both-edges 让槽在两侧都预留，左右留白才真正相等（只写 stable 的话右边会多出一个槽宽）。 */
+.settings-body { overflow:auto; scrollbar-gutter:stable both-edges; padding:26px 32px 44px; min-width:0; }
+/* 铺满内容区：左右留白 = .settings-body 的 padding，两侧对称。
+   此前卡 704px 而可用宽 804px，右侧凭空多 100px，看着像内容整体偏左。 */
+.settings-panel { max-width:none; }
 .settings-panel[hidden] { display:none; }
 
 /* 表单（v3.10 现代化：卡片分组 + 更大输入 + 圆角聚焦环） */
@@ -3859,7 +3888,7 @@ iframe.pdf { width:100%; height:calc(100vh - 200px); border:1px solid var(--bord
 }
 
 /* 提示词编辑面板（复用并扩展现有 .prompt-panel） */
-.settings-panel .prompt-panel { max-width:760px; }
+
 .settings-panel .prompt-panel textarea {
   width:100%; min-height:340px; background:var(--panel); color:var(--text);
   border:1px solid var(--border2); border-radius:8px; padding:12px;
@@ -3884,7 +3913,7 @@ iframe.pdf { width:100%; height:calc(100vh - 200px); border:1px solid var(--bord
 .ref-grid .ref-v { color:var(--text); font-family:ui-monospace,Consolas,monospace; word-break:break-all; }
 
 /* 主题与标签管理（分段单栏 + 富信息行） */
-.tax-manager { max-width:760px; }
+.tax-manager { max-width:none; }
 .tax-seg { display:inline-flex; padding:3px; gap:2px; background:var(--panel2); border-radius:var(--radius-sm); margin-bottom:14px; }
 .tax-seg-btn {
   border:0; background:transparent; color:var(--muted); font-size:13px; font-weight:600;
@@ -3990,7 +4019,7 @@ iframe.pdf { width:100%; height:calc(100vh - 200px); border:1px solid var(--bord
 }
 
 /* ---- 模型渠道卡片（v3.13：多渠道 + 默认切换） ---- */
-.settings-panel-wide { max-width:832px; }
+.settings-panel-wide { max-width:none; }   /* 与普通面板同宽，不再单独放宽 */
 .settings-subhead {
   display:flex; align-items:baseline; gap:10px;
   margin:26px 0 12px; font-size:13.5px; font-weight:700; color:var(--text);
@@ -4008,7 +4037,7 @@ iframe.pdf { width:100%; height:calc(100vh - 200px); border:1px solid var(--bord
 .set-section:first-child { margin-top:0; }
 .set-section-sub {
   flex:1 1 100%; order:9;                 /* 说明整行独占，落在标题下方而不是挤在同一行尾 */
-  font-size:13px; font-weight:400; color:var(--s-t2); line-height:1.6; max-width:66ch; margin-top:2px;
+  font-size:13px; font-weight:400; color:var(--s-t2); line-height:1.6; margin-top:2px;
 }
 .set-section-sub code, .sr-hint code, .pane-lede code {
   background:var(--s-fill); padding:1px 5px; border-radius:4px;
@@ -4030,7 +4059,7 @@ iframe.pdf { width:100%; height:calc(100vh - 200px); border:1px solid var(--bord
 .set-row-top { align-items:flex-start; }
 .sr-main { min-width:0; flex:1 1 auto; }
 .sr-label { font-size:14px; font-weight:400; color:var(--s-t1); line-height:20px; display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
-.sr-hint { font-size:13px; color:var(--s-t2); line-height:1.6; margin-top:2px; max-width:62ch; }
+.sr-hint { font-size:13px; color:var(--s-t2); line-height:1.6; margin-top:2px; }
 .sr-ctl { flex:0 0 auto; display:flex; align-items:center; gap:8px; }
 .sr-ctl-col { flex-direction:column; align-items:flex-end; gap:8px; }
 /* 只读行的值（概览 / 系统信息） */
@@ -4089,7 +4118,7 @@ iframe.pdf { width:100%; height:calc(100vh - 200px); border:1px solid var(--bord
 .sr-ctl .sd-trigger .ft-label { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .sr-ctl .sd-trigger .ft-chev,
 .sr-ctl .sd-trigger.active .ft-chev { color:var(--s-t3); }
-/* 触发器右对齐 → 菜单也从右边缘展开，不然会顶到面板外 */
+/* 设置行里的触发器贴在面板右缘，菜单只能向左展开，否则会顶出面板 */
 .sr-ctl .sd-menu { left:auto; right:0; min-width:260px; border-color:var(--s-edge); }
 /* 设置页里的菜单项只换配色令牌（面板底是白的，用 --s-* 那套墨色阶梯），
    几何与交互态一律走「下拉内容统一规格」，不在这里重复定义。 */
@@ -4123,7 +4152,7 @@ iframe.pdf { width:100%; height:calc(100vh - 200px); border:1px solid var(--bord
 }
 .pane-back:hover { background:var(--s-fill); color:var(--s-t1); }
 .pane-title { font-size:15px; font-weight:600; color:var(--s-t1); line-height:20px; }
-.pane-lede { margin:0 0 16px 38px; font-size:13px; color:var(--s-t2); line-height:1.6; max-width:66ch; }
+.pane-lede { margin:0 0 16px 38px; font-size:13px; color:var(--s-t2); line-height:1.6; }
 
 /* 破坏性动作独立成行，落在所属分区的末尾（Claude 的 Account 页就是这么放
    Log out / Delete account 的）。此前它挤在节标题右侧，既和标题抢注意力，
@@ -4923,9 +4952,9 @@ html[data-theme="dark"] .qbtn.danger:hover { border-color:rgba(248,113,113,.5); 
    表面 token 已收敛高频面（51 处）；这里收编不适于 token 化的残留：
    阅读器玻璃顶栏的渐变/描边、pdf.js 内部工具条、开关旋钮、toast 描边等。 */
 html[data-theme="dark"] .reader-bar {
-  background:linear-gradient(180deg, rgba(21,28,42,.96), rgba(18,24,38,.9));
-  border-bottom-color:rgba(39,48,68,.9);
-  box-shadow:0 4px 16px rgba(0,0,0,.4);
+  background:var(--panel);
+  border-bottom-color:var(--border);
+  box-shadow:none;
 }
 html[data-theme="dark"] .rb-title { color:var(--text); }
 html[data-theme="dark"] .rb-chrome-btn { color:var(--muted); }

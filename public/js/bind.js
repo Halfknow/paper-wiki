@@ -121,7 +121,31 @@ export function bind() {
   if (tagTrig) tagTrig.onclick = () => openFilterPop('tag');
   const topicTrig = $('filter-topic-trigger');
   if (topicTrig) topicTrig.onclick = () => openFilterPop('topic');
-  $('sort').onchange = (e) => { state.filter.sort = e.target.value; refresh(); };
+  // 论文列表排序（v3.58：原生 select → 自定义下拉，弹层随全站统一规格）。
+  // 控制器存进 sdRegistry，URL 还原筛选时由 syncSortUi() 回填——原生 select 时代
+  // 深链 ?sort=titleAsc 只改了 state，触发器上仍显示「最近添加」，是个既有缺口。
+  mountSettingDropdown(
+    'sd-sort-wrap',
+    [
+      { value: 'addedDesc', label: '最近添加', group: '时间' },
+      { value: 'addedAsc', label: '最早添加', group: '时间' },
+      { value: 'updatedDesc', label: '最近更新', group: '时间' },
+      { value: 'titleAsc', label: '标题 A → Z', group: '标题' },
+      { value: 'titleDesc', label: '标题 Z → A', group: '标题' },
+      { value: 'yearDesc', label: '年份（新 → 旧）', group: '年份' },
+      { value: 'yearAsc', label: '年份（旧 → 新）', group: '年份' },
+      { value: 'progressDesc', label: '阅读进度', group: '阅读' },
+      { value: 'conceptDesc', label: '概念最多', group: '阅读' },
+      { value: 'ratingDesc', label: '评分最高', group: '阅读' },
+    ],
+    state.filter.sort || 'addedDesc',
+    (v) => { state.filter.sort = v; refresh(); },
+    // 排序永远有值，把当前值常驻显示在工具条上等于一直在说废话；改为常显控件名，
+    // 当前值点开菜单看勾。非默认排序用触发器 active 态表达（信息还在，只是不占字）。
+    // 排序的视觉由外壳（.sort-field，含排序图标）承担、触发器本身透明，
+    // 所以 active 态要画在外壳上，否则「非默认排序」只亮了一个看不见的元素。
+    { fixedLabel: '排序', defaultValue: 'addedDesc', mirrorActiveTo: '.sort-field' },
+  );
 
   // 侧栏视图项（展开态 .side-item + 收起态 rail .rail-btn 共用同一逻辑）
   const onSideViewClick = (el) => {

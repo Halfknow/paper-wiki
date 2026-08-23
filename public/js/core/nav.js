@@ -15,9 +15,16 @@ import { showFormulas } from '../formulas/formulas.js';
 import { showLibrary } from '../library/folders.js';
 import { renderList } from '../library/list.js';
 import { refresh } from '../library/refresh.js';
-import { openSettings } from '../settings/settings.js';
+import { openSettings, sdControllers } from '../settings/settings.js';
 
 let _routerSyncing = false;
+
+/** 把 state.filter.sort 回填到排序下拉的触发器标签（URL 深链还原后调用）。
+ *  自定义下拉不像原生 select 会自动跟随 value，得显式 set。 */
+function syncSortUi() {
+  const ctl = sdControllers['sd-sort-wrap'];
+  if (ctl) ctl.set(state.filter.sort || 'addedDesc');
+}
 
 /** 把当前 state.filter 回写到 URL query（仅库/详情路由；同址时 setQuery 自身早退）。 */
 export function syncFilterToUrl() {
@@ -46,6 +53,7 @@ export function syncPageQueryToUrl() {
 async function enterLibraryShell(query) {
   _routerSyncing = true;
   state.filter = { ...state.filter, ...queryToFilter(query) };
+  syncSortUi();
   const s = $('search');
   if (s) s.value = state.filter.q || '';
   if (!state.filter.q) state.ft = null; // 退出全文检索模式
