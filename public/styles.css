@@ -461,7 +461,23 @@ input,select,textarea { font:inherit; color:var(--text); }
   width:100%; min-width:0; padding:5px 8px; border:1px solid var(--border2); border-radius:6px; background:var(--panel2);
   font:13px/1.4 inherit; color:var(--text); transition:border-color .12s ease, box-shadow .12s ease;
 }
+/* v3.62：select 对齐 .filter-trigger 下拉触发器统一规格（v3.58：自定义 chevron +
+   fill-secondary 底色 + 1px 内环 + hover 加深 + focus Indigo 光环）——此前只复用
+   输入框的边框式样式，原生箭头与灰底和全站下拉不一致。
+   注意：选择器比 .ui-select（681 行）提一档——.ui-select 无差别覆盖所有 select
+   （样式表顺序靠后，同特异性稳赢），这里用双层类压住它。圆角取 --ctl-r-sm：
+   与列表工具条 .filter-trigger（1121 行，同 32px 紧凑档）对齐 */
+.advanced-search .sf-field select {
+  appearance:none; -webkit-appearance:none; -moz-appearance:none; cursor:pointer;
+  height:var(--ctl-h); padding:0 28px 0 10px;
+  background-color:var(--fill-secondary);
+  border:0; border-radius:var(--ctl-r-sm); box-shadow:inset 0 0 0 1px var(--ring);
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+  background-repeat:no-repeat; background-position:right 10px center; background-size:12px;
+}
+.sf-field select:hover { box-shadow:inset 0 0 0 1px var(--ring-hover); background-color:var(--fill-secondary-hover); }
 .sf-field input:focus, .sf-field select:focus { outline:none; border-color:var(--accent); box-shadow:0 0 0 2px var(--accent-soft); background:var(--panel); }
+.sf-field select:focus { box-shadow:inset 0 0 0 1px var(--accent), 0 0 0 3px var(--accent-soft); background-color:var(--fill-secondary); }
 /* 中和浏览器/密码管理器 autofill 的黄底 + 变色边框：即便 title/author 等语义字段被自动填充，
    也保持与其他字段一致的灰底外观（配合模板里的 autocomplete=off，双保险） */
 .sf-field input:-webkit-autofill,

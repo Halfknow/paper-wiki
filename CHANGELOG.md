@@ -4,6 +4,16 @@
 
 ## [Unpublished]
 
+### Fixed — 高级搜索面板 select 与全站下拉触发器对齐（v3.62）
+
+此前 `.sf-field select` 只复用输入框的边框式样式：原生下拉箭头、灰底、圆角与全站
+`.filter-trigger`（v3.58 统一规格）不一致。改为同款设计语言：自定义 chevron 箭头 +
+fill-secondary 底色 + 1px 内环 + hover 加深 + focus Indigo 光环，圆角取 `--ctl-r-sm`
+（与列表工具条触发器同 32px 紧凑档）。实现陷阱：`.ui-select` 类在样式表后段
+**无差别覆盖所有 select**（本页 select 未加该类也中招，圆角被压成 8px），故规则
+提一档特异性（`.advanced-search .sf-field select`）。Playwright 浅/深双主题
+computed-style 断言（箭头/底色/内环/圆角与 `.filter-trigger` 逐项一致）+ 截图。
+
 ### Fixed — MinerU 公式整篇降级 fm_lat：解析韧性 + 分批 + 自愈吸收（v3.61）
 
 事故形态：整篇论文的公式集体变成 `fm_lat_<hash>`。三层根因叠加——
