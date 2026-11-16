@@ -215,7 +215,12 @@ function _render(f) {
     }
   };
   panel.querySelector('.fdv-del').onclick = async () => {
-    if (!window.confirm(`删除公式「${f.name || f.canonicalName}」？此操作不可撤销。`)) return;
+    const yes = await PWDialog.confirm(`删除公式「${f.name || f.canonicalName}」？\n此操作不可撤销。`, {
+      title: '删除公式',
+      danger: true,
+      okText: '删除',
+    });
+    if (!yes) return;
     const r = await DEL('/api/formulas/' + f.id);
     if (r && r.ok) {
       toast('公式已删除');

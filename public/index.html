@@ -7,6 +7,7 @@
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%236366f1'/%3E%3Cstop offset='1' stop-color='%234338ca'/%3E%3C/linearGradient%3E%3C/defs%3E%3Cpath d='M19 9H42L51 18V49a6 6 0 0 1-6 6H19a6 6 0 0 1-6-6V15a6 6 0 0 1 6-6z' fill='none' stroke='url(%23g)' stroke-width='3.2' stroke-linejoin='round'/%3E%3Cpath d='M42 9V18H51' fill='none' stroke='url(%23g)' stroke-width='2.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M22.5 32.5 39.5 27.5M22.5 32.5 33.5 43M39.5 27.5 33.5 43' stroke='url(%23g)' stroke-width='2.5' stroke-linecap='round' fill='none'/%3E%3Ccircle cx='22.5' cy='32.5' r='3.6' fill='%234f46e5'/%3E%3Ccircle cx='39.5' cy='27.5' r='2.9' fill='%236366f1'/%3E%3Ccircle cx='33.5' cy='43' r='2.9' fill='%234338ca'/%3E%3C/svg%3E" />
   <link rel="stylesheet" href="/vendor/katex.css" />
   <link rel="stylesheet" href="/vendor/pdfjs-viewer.css" />
+  <link rel="stylesheet" href="/tokens.css" />
   <link rel="stylesheet" href="/styles.css" />
   <!-- 首帧视图选择（v3.17）：app.js 是 type=module（defer），且启动要先 await loadSpaces()，
        深链 /concepts 刷新时会先画出论文页再跳走。这里在解析阶段就把路径写给 CSS
@@ -328,7 +329,7 @@
         <!-- 页内搜索框已退役（v3.17）：统一走顶栏那个上下文搜索框，避免同屏两个搜索入口。 -->
         <!-- v3.29：新增（手动录入）与多选（批量删除/改分类）入口。二级控件（仅清单视图有意义）：
              排版（图标）+ 排序（文字）。地图视图下 switchConceptView 隐藏它们。 -->
-        <button class="btn sm" id="btn-concept-add" type="button" title="手动录入概念（纸面/组会/其它来源），可关联论文">
+        <button class="btn ghost sm" id="btn-concept-add" type="button" title="手动录入概念（纸面/组会/其它来源），可关联论文">
           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
           新增
         </button>
@@ -383,7 +384,7 @@
       <div class="concepts-toolbar">
         <!-- 页内搜索框已退役（v3.17）：统一走顶栏那个上下文搜索框。 -->
         <!-- v3.29：新增（手动录入，全字段编辑抽屉）与多选（批量删除/改分类）入口。 -->
-        <button class="btn sm" id="btn-formula-add" type="button" title="手动录入公式（全字段：LaTeX/符号表/绘图/概念关联）">
+        <button class="btn ghost sm" id="btn-formula-add" type="button" title="手动录入公式（全字段：LaTeX/符号表/绘图/概念关联）">
           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
           新增
         </button>
@@ -1165,8 +1166,8 @@
   <!-- 管理收藏夹 模态（v3.22）：入口在侧栏「收藏夹」标题行右侧 ⚙。
        新建 / 改名换色（行内编辑）/ 拖拽排序 / 删除一处收口，取代旧的 folder-modal 与行内铅笔。 -->
   <div class="modal-mask" id="folder-manager">
-    <div class="modal fm-modal">
-      <h3>管理收藏夹</h3>
+    <div class="modal fm-modal" role="dialog" aria-modal="true" aria-labelledby="fm-title">
+      <h3 id="fm-title">管理收藏夹</h3>
       <p class="fm-hint">拖拽调整顺序 · 编辑改名换色 · 删除不影响论文本身</p>
       <div class="fm-list" id="fm-list"></div>
       <button class="fm-new" id="fm-new" type="button">＋ 新建收藏夹</button>
@@ -1174,8 +1175,8 @@
   </div>
 
   <div class="modal-mask" id="import-modal">
-    <div class="modal">
-      <h3>从 arXiv 导入</h3>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="import-title">
+      <h3 id="import-title">从 arXiv 导入</h3>
       <div class="row">
         <label>arXiv 网址或 ID</label>
         <input type="text" id="import-url-input" placeholder="粘贴 abs / pdf / html 网址，或 ID 如 2401.12345" autocomplete="off" />
@@ -1191,8 +1192,8 @@
 
   <!-- 按主题发现 arXiv 论文（claude -p 生成检索式 + Semantic Scholar 引用量 + 去重 + 勾选批量导入） -->
   <div class="modal-mask" id="discover-modal">
-    <div class="modal modal-wide">
-      <h3>按主题发现论文</h3>
+    <div class="modal modal-wide" role="dialog" aria-modal="true" aria-labelledby="discover-modal-title">
+      <h3 id="discover-modal-title">按主题发现论文</h3>
       <div class="row discover-input-row">
         <input type="text" id="discover-topic-input" placeholder="输入研究主题或关键词，如 混合专家 / retrieval augmented generation / Mamba" autocomplete="off" />
         <button class="btn sm" id="discover-search-btn">搜索</button>
@@ -1211,8 +1212,8 @@
 
   <!-- 空间管理 模态：列出所有空间，改名 / 改绑定文件夹 / 新建 / 删除 -->
   <div class="modal-mask" id="space-modal">
-    <div class="modal modal-wide">
-      <h3>管理空间</h3>
+    <div class="modal modal-wide" role="dialog" aria-modal="true" aria-labelledby="space-title">
+      <h3 id="space-title">管理空间</h3>
       <p class="modal-hint">每个空间绑定独立的论文文件夹，论文 / 标签 / 主题 / 概念 / 设置 完全隔离。删除空间只清数据，保留物理 PDF 文件。</p>
       <div class="sa-list" id="space-admin-list"></div>
       <!-- 新建空间：内联表单（默认折叠为一个按钮，点击展开） -->
@@ -1233,7 +1234,7 @@
 
   <!-- 更改文件夹 三步向导：路径 → 预检报告+模式 → 结果（v3 绑定语义：预检→move/rebind→原子执行） -->
   <div class="modal-mask" id="dir-wizard">
-    <div class="modal">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="dw-title">
       <h3 id="dw-title">更改文件夹</h3>
       <!-- 步骤 1：输入新路径 -->
       <div class="dw-step" id="dw-step-input">

@@ -22,7 +22,9 @@ export async function select(id, tab) {
   state.current = id;
   // 切换论文的加载反馈（R7）：详情 fetch 期间旧内容一直挂着且无指示——先出与
   // renderDetail 同构的骨架（标题/元数据/tab 条/正文行），数据到达后整体替换。
-  if (state.detail && state.detail.id !== id) {
+  // 首次选中（state.detail 为空）同样要出骨架——否则 fetch 期间停在「从左侧选择一篇论文」，
+  // 像是点击没反应（v3.63）。
+  if (!state.detail || state.detail.id !== id) {
     $('detail').innerHTML = `
       <div class="detail-skel" aria-busy="true" aria-label="正在加载论文详情">
         <div class="skel ds-title"></div>

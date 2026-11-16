@@ -4,6 +4,27 @@
 
 ## [Unpublished]
 
+### Changed — 设计系统 P0：token 化 + 层级修正 + 护栏测试（v3.63）
+
+依据新增的 [`docs/DESIGN_SYSTEM.md`](docs/DESIGN_SYSTEM.md) §10 落地第一阶段：
+
+- **`public/tokens.css`**（先于 styles.css 加载）：§3 全部语义 token（surface/text/border/fill、
+  状态色 + subtle/border、chip 色槽、字号/行高/间距/圆角/阴影、z 层级、动效时长与曲线、
+  `--font-mono`）及暗色值集中于此；旧变量名保留为别名，值与新 token 不一致的标注「P1 归并」原样保留。
+- **z-index 全部 token 化**（37 处，裸数字 0）：新增 `--z-view`(50) 给阅读器/设置整屏视图。顺带修复
+  两处层级倒挂——PWDialog 原低于设置覆盖层、toast 原低于所有覆盖层（设置里弹的确认框会被遮住）。
+- scrim / 等宽字体栈 / transition 时长统一走 token；chip、cp-kind、toast、`.btn.danger` 改用 token，
+  删除 12 条暗色补丁；设置覆盖层暗色改用全局 slate 表面（此前自成一套偏紫灰色相）。
+- **原生弹窗清零**：公式删除改 `PWDialog.confirm`；阅读架/收藏夹管理删除 `window.confirm` 兜底
+  （顺带修掉 folder-manager 兜底分支里引号不匹配的文案）。PWDialog 危险确认**默认聚焦「取消」**，
+  焦点不在确定键时 Enter 视为取消；补 `aria-labelledby/-describedby`。
+- 5 个 `.modal` 补 `role="dialog" aria-modal aria-labelledby`；概念/公式页「新增」降为 ghost 按钮。
+- 侧栏底部入口（阅读架/设置）固定在滚动区外；首次点论文**立即**出详情骨架（此前只有切换论文才出）。
+- 删除被后定义覆盖的重复菜单规则、修正陈旧注释。
+- **`tests/design-lint.test.js`**：纯文本扫描护栏。硬约束：z-index 只用 `--z-*`、无原生弹窗、
+  dialog a11y、tokens.css 加载顺序；棘轮（只许减，降了也要求更新基线）：色值字面量 296、
+  半像素字号 127、px 字号 466、非标断点 2、关键帧 40、emoji 21、内联色值 7、无名图标按钮 14。
+
 ### Fixed — 高级搜索面板 select 与全站下拉触发器对齐（v3.62）
 
 此前 `.sf-field select` 只复用输入框的边框式样式：原生下拉箭头、灰底、圆角与全站

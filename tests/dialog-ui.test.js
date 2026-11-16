@@ -77,6 +77,51 @@ test('confirm：点取消 / Esc / 点遮罩 → false', async () => {
   assert.strictEqual(await p3, false);
 });
 
+test('confirm 普通：初始焦点在确定，Enter 直接确认', async () => {
+  const dom = boot();
+  const { document, PWDialog } = dom.window;
+  const p = PWDialog.confirm('x');
+  await sleep(50);
+  const [, ok] = [...document.querySelectorAll('.pwdlg-actions button')];
+  assert.strictEqual(document.activeElement, ok, '非危险：焦点在主按钮');
+  keydown(dom.window, 'Enter');
+  assert.strictEqual(await p, true);
+});
+
+test('confirm danger：初始焦点在取消，Enter 不执行危险操作；焦点移到危险按钮后 Enter 才确认', async () => {
+  const dom = boot();
+  const { document, PWDialog } = dom.window;
+  // 1) 默认焦点在取消，裸 Enter = 取消
+  const p1 = PWDialog.confirm('删除？', { danger: true, okText: '删除' });
+  await sleep(50);
+  const [cancel1] = [...document.querySelectorAll('.pwdlg-actions button')];
+  assert.strictEqual(document.activeElement, cancel1, '危险确认：焦点默认落在取消');
+  keydown(dom.window, 'Enter', document.activeElement);
+  assert.strictEqual(await p1, false, 'Enter 在取消上 = 取消');
+  // 2) 用户主动把焦点移到危险按钮再按 Enter = 确认
+  const p2 = PWDialog.confirm('删除？', { danger: true, okText: '删除' });
+  await sleep(50);
+  const masks = document.querySelectorAll('.pwdlg-mask');
+  const ok2 = masks[masks.length - 1].querySelector('.pwdlg-actions button.danger');
+  ok2.focus();
+  keydown(dom.window, 'Enter', ok2);
+  assert.strictEqual(await p2, true, '焦点在危险按钮上 Enter = 确认');
+});
+
+test('confirm：弹窗声明 aria-labelledby / aria-describedby 指向标题与正文', async () => {
+  const dom = boot();
+  const { document, PWDialog } = dom.window;
+  const p = PWDialog.confirm('正文', { title: '标题' });
+  await sleep(30);
+  const box = document.querySelector('.pwdlg');
+  const t = document.getElementById(box.getAttribute('aria-labelledby'));
+  const d = document.getElementById(box.getAttribute('aria-describedby'));
+  assert.ok(t && t.textContent === '标题', 'aria-labelledby → 标题');
+  assert.ok(d && d.textContent === '正文', 'aria-describedby → 正文');
+  keydown(dom.window, 'Escape');
+  await p;
+});
+
 test('prompt：输入后 Enter 提交返回值；Esc 返回 null', async () => {
   const dom = boot();
   const { document, PWDialog } = dom.window;

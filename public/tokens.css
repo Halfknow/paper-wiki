@@ -1,0 +1,245 @@
+/* ============================================================================
+   tokens.css —— 设计令牌单一事实源（docs/DESIGN_SYSTEM.md §3）
+   ----------------------------------------------------------------------------
+   · 组件 CSS（styles.css）只引用这里的**语义 token**，不写原始色值。
+   · 暗色主题 = 只在 html[data-theme="dark"] 里重新赋值语义 token，不写组件级暗色补丁。
+   · 「迁移别名」段保留 v3.59 之前的旧名，值与新名相同的直接 var() 指过去；
+     值不同的（实色 vs 墨色透明）暂保留原值并标注「P1 归并」，避免 P0 引入意外视觉变化。
+   · 必须先于 styles.css 加载（index.html 里 <link> 顺序）。
+   ============================================================================ */
+
+:root {
+  /* ---- 墨色：深浅两色各定义一次，填充/描边/发丝线都从它派生 ---- */
+  --ink:15, 23, 42;
+
+  /* ---- 3.2 颜色：表面 ---- */
+  --bg:#f1f5f9;
+  --surface-1:#ffffff;              /* 面板、卡片、列表 */
+  --surface-2:#f1f5f9;              /* 侧栏、凹陷区、表头 */
+  --surface-3:#e2e8f0;              /* 骨架、进度轨 */
+  --surface-raised:#ffffff;         /* 菜单、弹窗、抽屉、设置面板 */
+
+  /* ---- 文本（实色：保证任何底上对比度稳定） ---- */
+  --text-1:#0f172a;
+  --text-2:#64748b;                 /* 4.8:1 */
+  --text-3:#94a3b8;                 /* 占位/禁用，不得承载必读信息 */
+
+  /* ---- 描边 / 填充（墨色透明：自动适配任意底） ---- */
+  --border-subtle:rgba(var(--ink), .07);    /* 行间发丝线 */
+  --border-default:rgba(var(--ink), .13);   /* 控件内环、容器描边 */
+  --border-strong:rgba(var(--ink), .22);    /* hover 描边 */
+  --fill-hover:rgba(var(--ink), .05);       /* 无底元素 hover */
+  --fill-secondary:rgba(var(--ink), .04);   /* 次级按钮/输入底 */
+  --fill-pressed:rgba(var(--ink), .08);     /* 次级 hover / 按下 */
+  --fill-selected:rgba(var(--ink), .10);    /* 中性选中 */
+
+  /* ---- 品牌 Indigo：只用于主按钮、链接、焦点环、选中态 ---- */
+  --accent:#4f46e5;
+  --accent-hover:#4338ca;
+  --accent-subtle:#eef2ff;
+  --accent-border:rgba(79,70,229,.28);
+  --on-accent:#fff;
+
+  /* ---- 状态语义色（只表达状态，不做装饰） ---- */
+  --success:#16a34a; --success-subtle:#dcfce7; --success-border:rgba(22,163,74,.28);
+  --warning:#d97706; --warning-subtle:#fef3c7; --warning-border:rgba(217,119,6,.28);
+  --danger:#dc2626;  --danger-subtle:#fee2e2;  --danger-border:rgba(220,38,38,.24);
+  --info:#2563eb;    --info-subtle:#dbeafe;    --info-border:rgba(37,99,235,.28);
+  --star:#f59e0b;
+  --danger-hover:#b91c1c;           /* 危险实心按钮 hover、错误 toast 底 */
+  /* 浅底（-subtle）上的深一档文字（命令面板类型徽章等） */
+  --info-text:#1d4ed8; --success-text:#15803d; --violet-text:#6d28d9; --cyan-text:#0e7490;
+
+  /* ---- 反色面（toast）：两种主题都是深底白字 ---- */
+  --surface-inverse:#1e293b;
+  --on-inverse:#fff;
+
+  /* ---- 遮罩 / 选区 ---- */
+  --scrim:rgba(15,23,42,.40);
+  --selection:rgba(79,70,229,.28);
+
+  /* ---- 标签色槽原始色（用户内容身份色，不进语义层） ---- */
+  --cyan:#0891b2; --cyan-soft:#cffafe;
+  --violet:#7c3aed; --violet-soft:#f3e8ff;
+  --pink:#db2777; --pink-soft:#fce7f3;
+  /* .chip-N 稳定色槽（chipClass(name) → 同名标签跨页同色） */
+  --chip-0-bg:#eef2ff; --chip-0-fg:#4f46e5; --chip-0-border:#c7d2fe;
+  --chip-1-bg:#f3e8ff; --chip-1-fg:#7c3aed; --chip-1-border:#ddd6fe;
+  --chip-2-bg:#cffafe; --chip-2-fg:#0891b2; --chip-2-border:#a5f3fc;
+  --chip-3-bg:#dbeafe; --chip-3-fg:#2563eb; --chip-3-border:#bfdbfe;
+  --chip-4-bg:#fce7f3; --chip-4-fg:#db2777; --chip-4-border:#fbcfe8;
+  --chip-5-bg:#fef3c7; --chip-5-fg:#d97706; --chip-5-border:#fde68a;
+  --chip-6-bg:#dcfce7; --chip-6-fg:#16a34a; --chip-6-border:#bbf7d0;
+  --chip-7-bg:#ffe4e6; --chip-7-fg:#e11d48; --chip-7-border:#fecdd3;
+
+  /* ---- 3.3 字体与字号（禁止半像素、禁止 < 11px） ---- */
+  --font-sans:-apple-system, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font-mono:ui-monospace, "Cascadia Code", "JetBrains Mono", Consolas, monospace;
+  --fs-xs:11px;  --lh-xs:16px;
+  --fs-sm:12px;  --lh-sm:18px;
+  --fs-md:13px;  --lh-md:20px;
+  --fs-base:14px; --lh-base:22px;
+  --fs-lg:15px;  --lh-lg:26px;
+  --fs-xl:18px;  --lh-xl:26px;
+  --fs-2xl:22px; --lh-2xl:30px;
+
+  /* ---- 3.4 间距（4px 网格） ---- */
+  --sp-0:0; --sp-0_5:2px; --sp-1:4px; --sp-1_5:6px; --sp-2:8px; --sp-2_5:10px; --sp-3:12px;
+  --sp-4:16px; --sp-5:20px; --sp-6:24px; --sp-8:32px; --sp-10:40px; --sp-12:48px;
+
+  /* ---- 3.5 圆角（内层 = 外层 − 间距） ---- */
+  --r-xs:4px; --r-sm:6px; --r-md:8px; --r-lg:12px; --r-xl:16px; --r-full:9999px;
+
+  /* ---- 3.6 阴影（阴影色固定用深色，不跟 --ink 翻转，否则暗色下变成白光晕） ---- */
+  --shadow-0:none;
+  --shadow-1:0 1px 2px rgba(15,23,42,.06);
+  --shadow-2:0 4px 14px rgba(15,23,42,.10);
+  --shadow-3:0 16px 48px rgba(15,23,42,.18);
+
+  /* ---- 3.7 层级：必须用 token；组件内部局部叠放用 1–9 ---- */
+  --z-base:0;
+  --z-raised:10;      /* 吸顶头、阅读器内抽屉 */
+  --z-chrome:30;      /* 顶栏 */
+  --z-view:50;        /* 全屏视图：设置覆盖层、阅读器（盖住顶栏，但在所有浮层之下） */
+  --z-dropdown:100;   /* 菜单、popover、筛选浮层、模型选择、批量操作底栏 */
+  --z-drawer:200;     /* 侧滑抽屉：概念详情、公式编辑 */
+  --z-modal:300;      /* 居中模态、公式预览、全屏概念图、公式候选 */
+  --z-dialog:400;     /* PWDialog / 表单对话框（可叠在任何模态之上） */
+  --z-toast:500;
+  --z-tooltip:600;
+
+  /* ---- 3.8 动效 ---- */
+  --dur-fast:100ms;   /* 颜色/背景/透明度的 hover 反馈 */
+  --dur-base:160ms;   /* 菜单/popover/toast 出入、tab 切换 */
+  --dur-slow:240ms;   /* 抽屉、模态、布局变化 */
+  --ease-out:cubic-bezier(.2, .8, .2, 1);
+  --ease-in:cubic-bezier(.4, 0, 1, 1);
+  --ease-standard:cubic-bezier(.2, 0, 0, 1);
+
+  /* ---- 3.9 控件高度（只有四档） ---- */
+  --ctl-xs:24px; --ctl-sm:28px; --ctl-md:32px; --ctl-lg:36px;
+
+  /* ======================================================================
+     迁移别名（v3.63 前的旧名）——新代码不要再用；存量在触碰时换成新名
+     ====================================================================== */
+  --panel:var(--surface-1);
+  --panel2:var(--surface-2);
+  --panel3:var(--surface-3);
+  --surface-raise:var(--surface-raised);
+  --text:var(--text-1);
+  --muted:var(--text-2);
+  --muted2:var(--text-3);
+  --accent-soft:var(--accent-subtle);
+  --green:var(--success);  --green-soft:var(--success-subtle);
+  --red:var(--danger);     --red-soft:var(--danger-subtle);
+  --amber:var(--warning);  --amber-soft:var(--warning-subtle);
+  --blue:var(--info);      --blue-soft:var(--info-subtle);
+  --radius:var(--r-md); --radius-sm:var(--r-sm);
+  /* 控件令牌（v3.56） */
+  --ctl-h:var(--ctl-md); --ctl-h-sm:var(--ctl-sm);
+  --ctl-r:var(--r-md);
+  --ring:var(--border-default);
+  --ring-hover:var(--border-strong);
+  --fill-ghost-hover:var(--fill-hover);
+  --fill-secondary-hover:var(--fill-pressed);
+  --fill-active:var(--fill-selected);
+  --fill-primary-hover:var(--accent-hover);
+  --on-primary:var(--on-accent);
+  /* 行式布局令牌（v3.59）：文字改为实色（规范 §3.2「文字用实色」） */
+  --s-ink:var(--ink);
+  --s-t1:var(--text-1);
+  --s-t2:var(--text-2);
+  --s-t3:var(--text-3);
+  --s-line:var(--border-subtle);
+  --s-edge:var(--border-default);
+  --s-fill:var(--fill-hover);
+  --s-fill-hover:var(--fill-pressed);
+  --s-paper:var(--surface-raised);
+
+  /* P1 归并：以下旧名与语义 token 取值不同（实色 vs 墨色透明 / 独立暗色值），暂保留原值 */
+  --border:#e2e8f0;           /* → --border-default */
+  --border2:#cbd5e1;          /* → --border-strong */
+  --border-hover:#94a3b8;     /* → --border-strong */
+  --accent-strong:#4338ca;    /* 暗色下是强调文字色，不等于 --accent-hover */
+  --fill-primary:#4f46e5;     /* 主按钮底；暗色用 500 号保证白字对比 */
+  --ctl-r-sm:7px;             /* → --r-sm(6) */
+  --fill-field:rgba(255,255,255,.55);
+  --surface-veil:rgba(255,255,255,.82);
+  --surface-veil-soft:rgba(241,245,249,.86);
+  --surface-hover:#ffffff;
+  --shadow:0 1px 2px rgba(15,23,42,.04);      /* → --shadow-1 */
+  --shadow-lg:0 6px 20px rgba(15,23,42,.10);  /* → --shadow-2 */
+}
+
+html[data-theme="dark"] {
+  color-scheme:dark;
+  --ink:230, 234, 242;
+
+  --bg:#0e1420;
+  --surface-1:#151c2a;
+  --surface-2:#1b2334;
+  --surface-3:#253044;
+  --surface-raised:#1c2434;
+
+  --text-1:#e6eaf2;
+  --text-2:#9aa6bb;
+  --text-3:#67738a;
+
+  /* 深底上 7% 的发丝线几乎不可见，整体加一档 */
+  --border-subtle:rgba(var(--ink), .10);
+  --border-default:rgba(var(--ink), .16);
+  --border-strong:rgba(var(--ink), .26);
+  --fill-hover:rgba(var(--ink), .07);
+  --fill-secondary:rgba(var(--ink), .06);
+  --fill-pressed:rgba(var(--ink), .11);
+  --fill-selected:rgba(var(--ink), .14);
+
+  --accent:#818cf8;
+  --accent-hover:#7c7ff5;
+  --accent-subtle:rgba(99,102,241,.18);
+  --accent-border:rgba(129,140,248,.40);
+  --on-accent:#fff;
+
+  --success:#4ade80; --success-subtle:rgba(34,197,94,.16);  --success-border:rgba(74,222,128,.32);
+  --warning:#fbbf24; --warning-subtle:rgba(245,158,11,.16); --warning-border:rgba(251,191,36,.32);
+  --danger:#f87171;  --danger-subtle:rgba(239,68,68,.16);   --danger-border:rgba(248,113,113,.32);
+  --info:#60a5fa;    --info-subtle:rgba(59,130,246,.16);    --info-border:rgba(96,165,250,.32);
+  --star:#fbbf24;
+  --info-text:#93c5fd; --success-text:#86efac; --violet-text:#c4b5fd; --cyan-text:#67e8f9;
+
+  --scrim:rgba(0,0,0,.56);
+  --selection:rgba(129,140,248,.40);
+
+  --cyan:#22d3ee; --cyan-soft:rgba(6,182,212,.16);
+  --violet:#a78bfa; --violet-soft:rgba(139,92,246,.16);
+  --pink:#f472b6; --pink-soft:rgba(236,72,153,.16);
+  --chip-0-bg:rgba(99,102,241,.17); --chip-0-fg:#a5b4fc; --chip-0-border:rgba(99,102,241,.4);
+  --chip-1-bg:rgba(139,92,246,.17); --chip-1-fg:#c4b5fd; --chip-1-border:rgba(139,92,246,.4);
+  --chip-2-bg:rgba(6,182,212,.15);  --chip-2-fg:#67e8f9; --chip-2-border:rgba(6,182,212,.38);
+  --chip-3-bg:rgba(59,130,246,.17); --chip-3-fg:#93c5fd; --chip-3-border:rgba(59,130,246,.4);
+  --chip-4-bg:rgba(236,72,153,.15); --chip-4-fg:#f9a8d4; --chip-4-border:rgba(236,72,153,.38);
+  --chip-5-bg:rgba(245,158,11,.15); --chip-5-fg:#fcd34d; --chip-5-border:rgba(245,158,11,.38);
+  --chip-6-bg:rgba(34,197,94,.15);  --chip-6-fg:#86efac; --chip-6-border:rgba(34,197,94,.38);
+  --chip-7-bg:rgba(244,63,94,.15);  --chip-7-fg:#fda4af; --chip-7-border:rgba(244,63,94,.38);
+
+  /* 暗色层级主要靠表面明度表达，阴影同时加深 */
+  --shadow-1:0 1px 2px rgba(0,0,0,.5);
+  --shadow-2:0 6px 20px rgba(0,0,0,.55);
+  --shadow-3:0 16px 48px rgba(0,0,0,.6);
+
+  /* P1 归并：暗色独立值 */
+  --border:#253044;
+  --border2:#39465e;
+  --border-hover:#4d5b74;
+  --accent-strong:#a5b4fc;
+  --fill-primary:#6366f1;     /* 用 500 号而非 400 号，保证白字对比度 ≥ 4.5 */
+  --fill-field:rgba(var(--ink), .05);
+  --surface-veil:rgba(148,163,184,.10);
+  --surface-veil-soft:rgba(148,163,184,.08);
+  --surface-hover:rgba(148,163,184,.16);
+  --shadow:0 1px 2px rgba(0,0,0,.5);
+  --shadow-lg:0 6px 20px rgba(0,0,0,.55);
+}
+
+/* reduced-motion 的全局降级在 styles.css（R4：duration 0.01ms !important）。这里不把
+   --dur-* 置 0——0s 的 transition 不触发 transitionend，会卡住等它收尾的 JS。 */

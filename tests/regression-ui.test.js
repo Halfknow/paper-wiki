@@ -54,6 +54,35 @@ async function openTab(tab) {
   await sleep(40);
 }
 
+// 必须是本文件第一个用例：此时尚未选中过任何论文（state.detail 为空）
+test('首次点论文：详情 fetch 期间立即出骨架，不停留在「从左侧选择一篇论文」空状态', async () => {
+  const detailEl = $('detail');
+  assert.ok(detailEl.querySelector('.empty'), '前置：启动后详情是空状态');
+  // 用 p2（后续用例都以「首次打开 p1」为前提，这里不能先选中 p1）。
+  // 让 /api/papers/p2 的响应挂起，观察 fetch 进行中的界面
+  details.p2 = { ...LIST[1], summary: '## TL;DR\ny', notes: '', noteCards: [], conceptIds: [], annotations: null, chat: [] };
+  const w = ui.window;
+  const realFetch = w.fetch;
+  let release;
+  const gate = new Promise((r) => (release = r));
+  const slowFetch = async (url, opts) => {
+    if (/\/api\/papers\/p2(\?|$)/.test(String(url))) await gate;
+    return realFetch(url, opts);
+  };
+  globalThis.fetch = w.fetch = slowFetch;
+  try {
+    ui.document.querySelector('.paper-item[data-id="p2"]').click();
+    await sleep(30);
+    assert.ok(detailEl.querySelector('.detail-skel'), 'fetch 期间显示骨架');
+    assert.ok(!detailEl.querySelector('.empty'), '不再显示空状态');
+  } finally {
+    release();
+    globalThis.fetch = w.fetch = realFetch;
+  }
+  await sleep(40);
+  assert.ok(!detailEl.querySelector('.detail-skel'), '数据到达后骨架被替换');
+});
+
 test('回归 fixCjkStrong：聊天历史里 的**“引用”**的 渲染为 <strong>', async () => {
   resetDetail({
     chat: [

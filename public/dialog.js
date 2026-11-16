@@ -6,6 +6,7 @@
  *   await PWDialog.alert(message, opts?)    -> true
  * opts: { title, okText, cancelText, danger, value, placeholder, multiline }
  * message 中的 \n 以换行渲染（textContent + pre-line，无注入风险）。
+ * danger：初始焦点落在「取消」，Enter 仅在焦点位于危险按钮时确认（否则 = 取消）。
  * 键盘分层：常驻 document capture 监听，仅在弹窗打开时消费 Esc/Enter 并 stopPropagation，
  * 不会干扰阅读器/app 的全局 Esc 分层（见 AGENTS.md 陷阱 31）。
  */
@@ -13,6 +14,7 @@
   'use strict';
 
   const openStack = []; // 当前打开的弹窗（支持嵌套/连发，后开者在上）
+  let seq = 0; // aria-labelledby / aria-describedby 的唯一 id 后缀
 
   function el(tag, cls, text) {
     const n = document.createElement(tag);
@@ -38,7 +40,10 @@
         if (inMultiline && !(e.ctrlKey || e.metaKey)) return;
         e.preventDefault();
         e.stopPropagation();
-        top.ok();
+        // 危险确认：Enter 只在焦点确实落在危险按钮上时才确认，其余一律当取消——
+        // 防止「习惯性回车」误删（规范 §7 危险操作）
+        if (top.danger && t !== top.okBtn) top.cancel();
+        else top.ok();
       }
     },
     true
@@ -65,6 +70,11 @@
 
       const body = el('div', 'pwdlg-msg', String(message == null ? '' : message));
       box.appendChild(body);
+      const uid = ++seq;
+      title.id = 'pwdlg-t' + uid;
+      body.id = 'pwdlg-d' + uid;
+      box.setAttribute('aria-labelledby', title.id);
+      box.setAttribute('aria-describedby', body.id);
 
       // prompt 输入区（单行 input / 多行 textarea）
       let input = null;
@@ -95,6 +105,8 @@
       const entry = {
         multiline: !!opts.multiline,
         enterOk: true,
+        danger: !!opts.danger && !!cancelBtn,
+        okBtn,
         ok: () => settle(kind === 'prompt' ? input.value : true),
         cancel: () => settle(kind === 'prompt' ? null : false),
       };
@@ -123,11 +135,14 @@
       openStack.push(entry);
       // 下一帧加 .show 触发进场动画
       requestAnimationFrame(() => mask.classList.add('show'));
-      // 初始焦点：prompt 聚焦输入框并全选；confirm/alert 聚焦主按钮（Enter 即确认）
+      // 初始焦点：prompt 聚焦输入框并全选；危险确认聚焦「取消」（Enter = 取消）；
+      // 其余 confirm/alert 聚焦主按钮（Enter 即确认）
       setTimeout(() => {
         if (input) {
           input.focus();
           input.select();
+        } else if (entry.danger) {
+          cancelBtn.focus();
         } else {
           okBtn.focus();
         }

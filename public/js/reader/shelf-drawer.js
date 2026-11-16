@@ -339,9 +339,7 @@ export function createShelfDrawer(deps) {
   if (elClear) {
     elClear.onclick = async () => {
       if (!shelfState.ids.length) { if (d.notify) d.notify('阅读架已是空的'); return; }
-      const yes = typeof PWDialog !== 'undefined' && PWDialog.confirm
-        ? await PWDialog.confirm('清空阅读架？\n（只是移出阅读架，不删除论文；正在阅读的页面不受影响）', { title: '清空阅读架', danger: true, okText: '清空' })
-        : window.confirm('清空阅读架？（不删除论文本身）');
+      const yes = await PWDialog.confirm('清空阅读架？\n（只是移出阅读架，不删除论文；正在阅读的页面不受影响）', { title: '清空阅读架', danger: true, okText: '清空' });
       if (!yes) return;
       shelfClear();
       render();

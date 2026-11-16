@@ -124,9 +124,7 @@ async function saveEditing(editorEl) {
 }
 
 async function handleDelete(fo) {
-  const yes = typeof PWDialog !== 'undefined' && PWDialog.confirm
-    ? await PWDialog.confirm(`删除收藏夹「${fo.name}」？\n收藏关系会一并移除，论文本身不会被删除。`, { title: '删除收藏夹', danger: true, okText: '删除' })
-    : window.confirm(`删除收藏夹「${fo.name}”？（论文不受影响）`);
+  const yes = await PWDialog.confirm(`删除收藏夹「${fo.name}」？\n收藏关系会一并移除，论文本身不会被删除。`, { title: '删除收藏夹', danger: true, okText: '删除' });
   if (!yes) return;
   const r = await DEL('/api/folders/' + encodeURIComponent(fo.id));
   if (!r.ok) { toast(r.error || '收藏夹删除失败', 'error'); return; }

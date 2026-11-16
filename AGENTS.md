@@ -132,6 +132,10 @@ public/                零构建前端（原生 ESM，浏览器直接加载；�
   reader.js  ★         pdf.js PDFViewer 阅读器（双页/批注/缩放/续读/AI 抽屉 + 阅读架抽屉
                         与 [/] 切换）。本轮未拆
   search-dsl.js ★      高级搜索 DSL 解析（classic script，非 ESM）
+  tokens.css ★         设计 token 单一事实源（v3.63 设计系统 P0）：语义色/字号/间距/圆角/阴影/
+                        z 层级/动效 + 暗色值；旧变量名在此做别名。改 UI 前先读
+                        docs/DESIGN_SYSTEM.md；tests/design-lint.test.js 守 z-index/原生弹窗
+                        硬约束与色值/字号/emoji 等棘轮基线（只许减）
   styles.css ★         Indigo 主题（v3.31 UI 五轮迭代：R1 徽章降噪/标题提级、R2 加载骨架
                         （refresh._listLoading + 知识页空列表时先注 skel 卡，数据到达覆盖）、
                         R3 结构化空态（.es-* 图标+诊断+行动按钮，清除筛选/去抽取）、
