@@ -82,19 +82,19 @@ function _render(f) {
         ${freq ? `<span class="fdv-freq" title="出现在 ${freq} 篇论文中">${freq} 篇</span>` : ''}
       </div>
       <div class="fdv-head-actions">
-        <button type="button" class="qbtn icon fdv-copy" title="复制 LaTeX（$…$ 包裹，可直接粘进 Markdown）" aria-label="复制 LaTeX">${ICONS.copy}</button>
-        <button type="button" class="qbtn icon fdv-edit" title="编辑公式（LaTeX / 符号表 / 绘图 / 概念关联）" aria-label="编辑">${ICONS.edit}</button>
-        <button type="button" class="card-star${f.starred ? ' on' : ''} fdv-star" title="${f.starred ? '取消重点' : '标记为重点'}" aria-label="星标" aria-pressed="${!!f.starred}">${ICONS.star}</button>
-        <button type="button" class="qbtn icon fdv-close" title="关闭 (Esc)" aria-label="关闭">${ICONS.close}</button>
+        <button type="button" class="btn ghost xs icon qbtn fdv-copy" title="复制 LaTeX（$…$ 包裹，可直接粘进 Markdown）" aria-label="复制 LaTeX">${ICONS.copy}</button>
+        <button type="button" class="btn ghost xs icon qbtn fdv-edit" title="编辑公式（LaTeX / 符号表 / 绘图 / 概念关联）" aria-label="编辑">${ICONS.edit}</button>
+        <button type="button" class="btn ghost xs icon star-btn card-star${f.starred ? ' is-starred' : ''} fdv-star" title="${f.starred ? '取消重点' : '标记为重点'}" aria-label="星标" aria-pressed="${!!f.starred}">${ICONS.star}</button>
+        <button type="button" class="btn ghost xs icon qbtn fdv-close" title="关闭 (Esc)" aria-label="关闭">${ICONS.close}</button>
       </div>
     </header>
     <div class="fdv-body">
       <div class="fdv-meta">
         <code class="fdv-canon">${escapeHtml(f.canonicalName)}</code>
-        ${f.category ? `<span class="fdv-cat">${escapeHtml(f.category)}</span>` : ''}
-        ${f.source === 'vision' ? '<span class="fdv-src" title="由阅读器框选补录">框选</span>' : ''}
-        ${f.source === 'mineru' ? '<span class="fdv-src" title="由 MinerU 抽取">MinerU</span>' : ''}
-        ${f.source === 'manual' ? '<span class="fdv-src" title="已人工修订">人工</span>' : ''}
+        ${f.category ? `<span class="fdv-cat badge">${escapeHtml(f.category)}</span>` : ''}
+        ${f.source === 'vision' ? '<span class="fdv-src badge" title="由阅读器框选补录">框选</span>' : ''}
+        ${f.source === 'mineru' ? '<span class="fdv-src badge" title="由 MinerU 抽取">MinerU</span>' : ''}
+        ${f.source === 'manual' ? '<span class="fdv-src badge" title="已人工修订">人工</span>' : ''}
       </div>
       <div class="fdv-latex">${renderKatexSafe(f.latex, true)}</div>
       ${f.plottable && f.plotHint ? `<div class="fdv-plot">${plotSvg(f.plotHint, 640, 170) || ''}</div>` : ''}
@@ -142,8 +142,8 @@ function _render(f) {
       </section>` : ''}
     </div>
     <footer class="fdv-foot">
-      <button type="button" class="btn ghost sm danger fdv-merge">合并到…</button>
-      <button type="button" class="btn ghost sm danger fdv-del">删除</button>
+      <button type="button" class="btn secondary sm danger fdv-merge">合并到…</button>
+      <button type="button" class="btn secondary sm danger fdv-del">删除</button>
       <span class="fdv-spacer"></span>
       <button type="button" class="btn sm fdv-edit2">${ICONS.edit} 编辑</button>
     </footer>`;
@@ -176,7 +176,7 @@ function _render(f) {
     const r = await PATCH('/api/formulas/' + f.id, { starred: next });
     if (r && r.ok) {
       f.starred = next;
-      starBtn.classList.toggle('on', next);
+      starBtn.classList.toggle('is-starred', next);
       starBtn.title = next ? '取消重点' : '标记为重点';
       starBtn.setAttribute('aria-pressed', String(next));
       renderFormulaSidebar();

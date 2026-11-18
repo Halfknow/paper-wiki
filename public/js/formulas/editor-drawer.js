@@ -92,15 +92,15 @@ function _field(labelText, control, hint) {
 /** 开关（switch）：取代裸 checkbox 行——可绘图 / 重点 这类布尔项用它更可点、更可扫读。 */
 function _switch(labelText, checked) {
   const lab = document.createElement('label');
-  lab.className = 'fe-switch';
+  lab.className = 'switch';
   const cb = document.createElement('input');
   cb.type = 'checkbox';
   cb.checked = !!checked;
   const track = document.createElement('span');
-  track.className = 'fe-switch-track';
+  track.className = 'switch-track';
   track.setAttribute('aria-hidden', 'true');
   const txt = document.createElement('span');
-  txt.className = 'fe-switch-text';
+  txt.className = 'switch-label';
   txt.textContent = labelText;
   lab.append(cb, track, txt);
   return lab;
@@ -127,7 +127,7 @@ function _render(f) {
         <h3>${isCreate ? '新增公式' : '编辑公式'}</h3>
         ${isCreate ? '' : `<span class="fe-head-sub mono">${escapeHtml(f.canonicalName || '')}</span>`}
       </div>
-      <button type="button" class="btn ghost sm icon-btn fe-close" title="关闭 (Esc)" aria-label="关闭">
+      <button type="button" class="btn secondary sm icon-btn fe-close" title="关闭 (Esc)" aria-label="关闭">
         <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
       </button>
     </header>
@@ -141,9 +141,9 @@ function _render(f) {
       <section class="fe-card fe-papers-sec" ${isCreate ? '' : 'hidden'}><div class="fe-card-head"><span class="fe-card-title">关联论文</span></div><div class="fe-card-body fe-pickers"></div></section>
     </div>
     <footer class="fe-foot">
-      ${isCreate ? '' : '<button type="button" class="btn ghost sm danger fe-merge">合并到…</button>'}
+      ${isCreate ? '' : '<button type="button" class="btn secondary sm danger fe-merge">合并到…</button>'}
       <span class="fe-err"></span>
-      <button type="button" class="btn ghost sm fe-cancel">取消</button>
+      <button type="button" class="btn secondary sm fe-cancel">取消</button>
       <button type="button" class="btn sm fe-save">保存</button>
     </footer>`;
 
@@ -172,7 +172,7 @@ function _render(f) {
   panel._starredCb = starredCb; // 保存时读（新增模式默认 false）
   const swRow = document.createElement('div');
   swRow.className = 'fe-switch-row';
-  swRow.append(plottableCb.closest('.fe-switch'), starredSw);
+  swRow.append(plottableCb.closest('.switch'), starredSw);
   basic.appendChild(swRow);
 
   // --- LaTeX ---
@@ -219,7 +219,7 @@ function _render(f) {
     role.value = v.role || 'param';
     const del = document.createElement('button');
     del.type = 'button';
-    del.className = 'qbtn icon danger';
+    del.className = 'btn ghost xs icon danger qbtn';
     del.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>';
     del.title = '删除此符号';
     del.setAttribute('aria-label', '删除此符号');

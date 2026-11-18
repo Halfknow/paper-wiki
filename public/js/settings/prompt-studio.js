@@ -422,17 +422,17 @@ function mount(key) {
   box.innerHTML =
     `<div class="ps-head">` +
     `<span class="ps-src" title="当前生效的是自定义内容还是内置默认"></span>` +
-    `<button class="btn subtle sm ps-manual" type="button" title="直接编辑提示词原文">${EDIT_SVG}编辑</button>` +
+    `<button class="btn ghost sm ps-manual" type="button" title="直接编辑提示词原文">${EDIT_SVG}编辑</button>` +
     `</div>` +
     `<div class="ps-viewwrap"><div class="ps-view" tabindex="0" aria-label="当前${def.label}"></div></div>` +
     `<div class="ps-edit" hidden>` +
     `<textarea id="${def.ta}" placeholder="正在加载…" spellcheck="false" aria-label="编辑${def.label}"></textarea>` +
     `<div class="ps-edit-actions"><span class="save-hint" id="${def.hint}"></span>` +
-    `<button class="btn ghost sm ps-cancel" type="button">取消</button>` +
+    `<button class="btn secondary sm ps-cancel" type="button">取消</button>` +
     `<button class="btn sm" id="${def.saveBtn}" type="button">保存</button></div></div>` +
     `<div class="ps-draft" hidden>` +
     `<div class="ps-draft-head"><span class="ps-draft-title">AI 修改稿 <span class="ps-draft-status"></span></span>` +
-    `<span class="ps-draft-acts"><button class="btn ghost sm ps-discard" type="button">放弃</button>` +
+    `<span class="ps-draft-acts"><button class="btn secondary sm ps-discard" type="button">放弃</button>` +
     `<button class="btn sm ps-apply" type="button">采用并保存</button></span></div>` +
     `<div class="ps-draft-body" tabindex="0"></div></div>` +
     `<div class="ps-composer">` +

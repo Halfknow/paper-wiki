@@ -258,7 +258,7 @@ function taxEnterMerge(row, it, kind) {
   ok.textContent = '确认';
   row.appendChild(ok);
   const no = document.createElement('button');
-  no.className = 'btn ghost sm';
+  no.className = 'btn secondary sm';
   no.textContent = '取消';
   row.appendChild(no);
   sel.focus();
@@ -293,7 +293,7 @@ function taxConfirmDelete(row, it, kind) {
   del.textContent = '删除';
   row.appendChild(del);
   const no = document.createElement('button');
-  no.className = 'btn ghost sm';
+  no.className = 'btn secondary sm';
   no.textContent = '取消';
   row.appendChild(no);
   no.onclick = () => renderTaxonomy();
@@ -348,7 +348,7 @@ export function taxBatchMerge() {
   ok.textContent = '合并';
   pick.appendChild(ok);
   const no = document.createElement('button');
-  no.className = 'btn ghost sm';
+  no.className = 'btn secondary sm';
   no.textContent = '取消';
   pick.appendChild(no);
   bar.appendChild(pick);

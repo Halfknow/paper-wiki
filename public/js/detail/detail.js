@@ -4,6 +4,7 @@
 
 import { PATCH, jget } from '../core/api.js';
 import { $ } from '../core/dom.js';
+import { icon } from '../core/icons.js';
 import { escapeHtml, starSvg, statusDot } from '../core/format.js';
 import { truncateChatTitle } from '../core/markdown.js';
 import { gotoPaperRoute, router } from '../core/nav.js';
@@ -13,6 +14,9 @@ import { chatState, flushPendingNotes, notesState, state } from '../core/state.j
 import { chipList, progressPercent, readStatusLabel, setBusy, statusLabel, toast } from '../core/ui-kit.js';
 import { patch, reader } from './info-tab.js';
 import { renderTabBody } from './tab-body.js';
+
+/** 论文处理状态 → Badge 语义色（设计系统 §6.7）。busy 带脉冲点。 */
+const STATUS_TONE = { ready: 'success', error: 'danger', busy: 'warning is-live', missing: '' };
 import { renderList } from '../library/list.js';
 import { refresh } from '../library/refresh.js';
 
@@ -69,8 +73,8 @@ export function renderDetail() {
   const tailCat = p.primaryCategory ? `<span class="badge">arXiv ${escapeHtml(p.primaryCategory)}</span>` : '';
   const tailLink = p.arxivUrl ? `<a href="${escapeHtml(p.arxivUrl)}" target="_blank">arXiv ${escapeHtml(p.arxivId || '')} ↗</a>` : '';
   const tailSrc = p.metaSource === 'ai-fallback'
-    ? '<span class="badge warn">元数据为 AI 推断</span>'
-    : (p.metaSource ? `<span class="badge src">${escapeHtml(p.metaSource)}</span>` : '');
+    ? '<span class="badge warning">元数据为 AI 推断</span>'
+    : (p.metaSource ? `<span class="badge info">${escapeHtml(p.metaSource)}</span>` : '');
   const metaTail = [tailYear, tailCat, tailLink, tailSrc].filter(Boolean).join(' · ');
   const meta = `<span class="meta-authors">${escapeHtml(authorsStr)}</span><span class="meta-tail">${metaTail}</span>`;
   const topics = chipList(p.topics, 'topic', 5);
@@ -98,10 +102,10 @@ export function renderDetail() {
         <div class="title-block">
           <div class="title-row">
             <h2>${escapeHtml(p.title || p.filename)}</h2>
-            <span class="status-badge ${statusDot(p)}">${statusLabel(p.status)}</span>
-            <span class="read-chip">${readStatusLabel(p.readStatus)}</span>
-            ${progress != null ? `<span class="mini-metric">读到 ${progress}%</span>` : ''}
-            ${p.conceptCount ? `<span class="mini-metric">${p.conceptCount} 概念</span>` : ''}
+            <span class="status-badge badge has-dot ${statusDot(p)} ${STATUS_TONE[statusDot(p)]}">${statusLabel(p.status)}</span>
+            <span class="read-chip badge">${readStatusLabel(p.readStatus)}</span>
+            ${progress != null ? `<span class="mini-metric badge">读到 ${progress}%</span>` : ''}
+            ${p.conceptCount ? `<span class="mini-metric badge">${p.conceptCount} 概念</span>` : ''}
           </div>
         </div>
       </div>
@@ -157,9 +161,9 @@ export function renderDetail() {
 }
 
 export const NOTE_CARD_TYPES = {
-  qa: { icon: '💬', label: '问答' },
-  skeleton: { icon: '✨', label: '骨架' },
-  manual: { icon: '📝', label: '笔记' },
+  qa: { icon: icon('message-circle', { size: 14 }), label: '问答' },
+  skeleton: { icon: icon('sparkles', { size: 14 }), label: '骨架' },
+  manual: { icon: icon('notebook-pen', { size: 14 }), label: '笔记' },
 };
 
 export const NC_ACT_SVGS = {

@@ -46,9 +46,13 @@
   --danger:#dc2626;  --danger-subtle:#fee2e2;  --danger-border:rgba(220,38,38,.24);
   --info:#2563eb;    --info-subtle:#dbeafe;    --info-border:rgba(37,99,235,.28);
   --star:#f59e0b;
+  /* 批注高亮色板（数据色：与 reader.js HL_COLORS / pdf.js highlightColors 一一对应，不随主题变） */
+  --hl-yellow:#fde68a; --hl-green:#bbf7d0; --hl-blue:#bfdbfe; --hl-purple:#ddd6fe;
+  --hl-pink:#fbcfe8; --hl-red:#fecdd3; --hl-cyan:#a5f3fc;
   --danger-hover:#b91c1c;           /* 危险实心按钮 hover、错误 toast 底 */
   /* 浅底（-subtle）上的深一档文字（命令面板类型徽章等） */
   --info-text:#1d4ed8; --success-text:#15803d; --violet-text:#6d28d9; --cyan-text:#0e7490;
+  --warning-text:#b45309; --danger-text:#b91c1c;
 
   /* ---- 反色面（toast）：两种主题都是深底白字 ---- */
   --surface-inverse:#1e293b;
@@ -206,6 +210,7 @@ html[data-theme="dark"] {
   --info:#60a5fa;    --info-subtle:rgba(59,130,246,.16);    --info-border:rgba(96,165,250,.32);
   --star:#fbbf24;
   --info-text:#93c5fd; --success-text:#86efac; --violet-text:#c4b5fd; --cyan-text:#67e8f9;
+  --warning-text:#fcd34d; --danger-text:#fca5a5;
 
   --scrim:rgba(0,0,0,.56);
   --selection:rgba(129,140,248,.40);

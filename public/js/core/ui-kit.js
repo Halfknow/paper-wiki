@@ -4,7 +4,19 @@
 
 import { $ } from './dom.js';
 import { chipClass, escapeHtml } from './format.js';
+import { icon } from './icons.js';
 import { state } from './state.js';
+
+const STATUS_ICON = { success: 'check-circle', danger: 'x-circle', warning: 'alert', info: 'info' };
+
+/** 就地状态（设计系统 §6.11 Inline status）：level 图标 + 文案，替代 ✓ / ✗ 字符前缀。
+ *  只写内容与 data-level，颜色由调用方既有的 class（good/bad 等）或 .inline-status[data-level] 决定。 */
+export function inlineStatus(el, level, text) {
+  if (!el) return;
+  const name = STATUS_ICON[level];
+  el.dataset.level = level;
+  el.innerHTML = (name ? icon(name, { size: 14 }) : '') + '<span>' + escapeHtml(String(text == null ? '' : text)) + '</span>';
+}
 
 export function toast(message, type = 'info') {
   const root = $('toast-root');

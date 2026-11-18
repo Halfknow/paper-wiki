@@ -81,7 +81,7 @@ function editorRow() {
       `<div class="fm-colors">${PALETTE.map((c) => `<span class="${c === editing.color ? 'sel' : ''}" data-c="${c}" style="background:${c}"></span>`).join('')}</div>` +
       `<div class="fm-editor-acts">` +
         `<button class="btn sm fm-save" type="button">保存</button>` +
-        `<button class="btn ghost sm fm-cancel" type="button">取消</button>` +
+        `<button class="btn secondary sm fm-cancel" type="button">取消</button>` +
       `</div>` +
     `</div>`;
   const input = div.querySelector('.fm-name-input');

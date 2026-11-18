@@ -336,7 +336,7 @@ test('概念卡（v3.28）：核心徽章 + 章节出处徽章上卡', async () 
   await openConcepts();
   const att = conceptCardByTerm('Scaled Dot-Product Attention');
   assert.ok(att.querySelector('.imp-badge'), 'importance=core 显示「核心」徽章');
-  assert.ok(att.querySelector('.ctx-badge'), 'context 显示 📍 出处徽章');
+  assert.ok(att.querySelector('.ctx-badge'), 'context 显示出处徽章（map-pin 图标）');
   assert.match(att.querySelector('.ctx-badge').textContent, /3\.2/);
 });
 
@@ -426,7 +426,7 @@ test('v3.29 手动新增概念：表单对话框 → POST → 卡片出现（人
   termInput.value = 'Flow Matching';
   termInput.dispatchEvent(new ui.window.Event('input', { bubbles: true }));
   // 点保存（.pwdlg-actions 里主按钮）
-  dlg.querySelector('.pwdlg-actions .btn:not(.ghost)').click();
+  dlg.querySelector('.pwdlg-actions .btn:not(.secondary)').click();
   await sleep(60);
   const sent = posts.find((p) => p.url === 'POST /api/concepts');
   assert.ok(sent, 'POST 已发出');
@@ -525,7 +525,7 @@ test('v3.29 公式多选批量改分类：pick → 改分类对话框 → bulk',
   assert.ok(dlg, '改分类对话框（自由文本，公式无枚举）');
   const inp = dlg.querySelector('.pfd-row input[type="text"]');
   inp.value = 'information-theory-x';
-  dlg.querySelector('.pwdlg-actions .btn:not(.ghost)').click();
+  dlg.querySelector('.pwdlg-actions .btn:not(.secondary)').click();
   await sleep(80);
   const sent = posts.find((p) => p.url === 'POST /api/formulas/bulk' && p.op.category);
   assert.ok(sent, 'bulk 分类已发出');
@@ -542,7 +542,7 @@ test('v3.30 概念卡星标：点击 → PATCH starred + 侧栏「重点」计�
   assert.ok(star, '卡片有星标按钮');
   star.click();
   await sleep(60);
-  assert.ok(star.classList.contains('on'), '翻转成点亮态（.on）');
+  assert.ok(star.classList.contains('is-starred'), '翻转成点亮态（.is-starred）');
   assert.ok(star.querySelector('svg'), '星标为 SVG 图形');
   const sideStar = ui.document.querySelector('#side-concepts .side-item[data-quality="star"]');
   assert.match(sideStar.textContent, /1/, '侧栏「重点」计数 = 1');
@@ -551,7 +551,7 @@ test('v3.30 概念卡星标：点击 → PATCH starred + 侧栏「重点」计�
   await sleep(40);
   assert.match($('search').value, /star:1/, '分面写进 DSL');
   assert.ok(
-    cards().every((c) => c.querySelector('[data-star].on')),
+    cards().every((c) => c.querySelector('[data-star].is-starred')),
     '只剩星标概念',
   );
   sideStar.click(); // 取消
@@ -585,7 +585,7 @@ test('v3.30 概念合并：抽屉「合并到…」→ 疑似重复置顶 → PO
   assert.ok(first.classList.contains('suspect'), '疑似重复候选置顶');
   assert.match(first.textContent, /Scaled Dot-Product Attention/);
   first.click(); // 选中
-  ui.document.querySelector('.pfdlg .pwdlg-actions .btn:not(.ghost)').click(); // 合并
+  ui.document.querySelector('.pfdlg .pwdlg-actions .btn:not(.secondary)').click(); // 合并
   await sleep(80);
   const sent = posts.find((p) => p.url === 'POST /api/concepts/merge');
   assert.ok(sent, 'merge 已发出');
@@ -618,7 +618,7 @@ test('v3.30 公式卡星标 + 侧栏「重点」分面', async () => {
   assert.ok(star, '公式卡星标按钮');
   star.click();
   await sleep(50);
-  assert.ok(star.classList.contains('on'), '公式星标点亮');
+  assert.ok(star.classList.contains('is-starred'), '公式星标点亮');
   const sideStar = ui.document.querySelector('#side-formulas .side-item[data-trait="star"]');
   assert.ok(sideStar, '公式侧栏「重点」分面');
   assert.match(sideStar.textContent, /1/);

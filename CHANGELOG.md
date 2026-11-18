@@ -4,6 +4,40 @@
 
 ## [Unpublished]
 
+### Changed — 设计系统 P1：组件收口 + 图标化 + 四档控件高度（v3.64）
+
+依据 [`docs/DESIGN_SYSTEM.md`](docs/DESIGN_SYSTEM.md) §10 落地第二阶段：
+
+- **新文件 `public/components.css`**（在 styles.css 之后加载）：规范组件的唯一定义处。
+  - **按钮**：`.btn` primary / `secondary` / `ghost` × `xs 24 / sm 28 / md 32 / lg 36 / icon`，修饰 `.danger / .active / .is-starred`。
+    存量变体改名 `ghost→secondary`、`subtle→ghost`。`qbtn`、`chat-tool-btn`、`chat-model-btn`、`chat-params-btn`、`notes-tb-btn`、`rb-chrome-btn`、`side-icon-btn`、`sa-btn`、星标、7 个关闭 × 钮全部并入；
+    `fp-op-toggle` 并入 `.seg`。
+  - **输入**：`.field` 一处定义：内环、36px、`--fs-base`，hover / focus / invalid / disabled 四态。
+    5 套存量输入（对话框、论文选择器、编辑抽屉、设置页、PWDialog）作为别名，styles.css 只留布局。
+  - **其余**：`.switch`（合并 `.fe-switch` / `.pp-switch`）、`.seg`（合并 `seg-group / tax-seg / theme-seg`）、
+    `.badge`（合并 14 种徽章 class，新增 `.violet / .cyan / .plain / .has-dot / .is-live`）、`.tag`。
+    Badge / Tag 统一无描边、20px。
+  - **Spinner**：`.spinner` 合并 5 套。
+- **图标化**：新增 `public/js/core/icons.js`（细线 SVG）。UI 中的 emoji / 字符图标全部替换：
+  💬 ✨ 📝 📍 ⚙ 🔖 ✓ ✗ ⚠ ○ ☑ ☐ ＋，以及关闭钮的 ×，CSS `::before` 里藏的 📍 也算在内。
+  标签 / 筛选 chip 内的「移除 ×」字形暂留（10 处，P2 随 chip 组件一并换图标）。
+  渠道测试等就地反馈改用 `inlineStatus()`（level 图标 + 语义色）。
+- **字号 7 档**：px 字号与半像素字号全部换成 `--fs-*`（468 + 129 处 → 0）。
+- **控件高度四档**：顶栏搜索、导航、状态胶囊统一 32。阅读器工具条 30/26 → 32/28；卡内微钮 22/26 → 24；
+  对话框输入 34 → 36；设置页输入 42 → 36。
+- **a11y**：14 个无名图标按钮补 `aria-label`（阅读器翻页 / 缩放 / 工具、空间切换器带当前空间名）。
+  批注色块改为 `<button aria-pressed>`，`role=group`。
+- **新增 token**：`--warning-text / --danger-text`、批注色 `--hl-*`；7 处内联色值清零。
+- **修复**：
+  - 星标开态被同权重的弱色规则盖住（点亮后仍灰）。
+  - 表单对话框带提示的行（「关联论文」）输入被挤成 0 宽，并撑出横向滚动条。
+  - 渠道测试残留 `data-level` 导致成功态显示红色。
+- **`tests/design-lint.test.js` 升级**：
+  - 新增硬约束：半像素 / px 字号、emoji（含 CSS content）、内联色值、无名图标按钮、
+    规范组件只在 components.css 定义、已合并的老按钮 class 必须带 `.btn`，以及 components.css 的加载顺序。
+  - 字号种类上限 7。
+  - 棘轮：色值 297 → 211、关键帧 40 → 36、新增「非四档控件高度」4。
+
 ### Changed — 设计系统 P0：token 化 + 层级修正 + 护栏测试（v3.63）
 
 依据新增的 [`docs/DESIGN_SYSTEM.md`](docs/DESIGN_SYSTEM.md) §10 落地第一阶段：

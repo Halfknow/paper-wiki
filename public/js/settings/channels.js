@@ -5,7 +5,7 @@
 import { POST, PUT, api } from '../core/api.js';
 import { $ } from '../core/dom.js';
 import { escapeHtml } from '../core/format.js';
-import { setBusy, toast } from '../core/ui-kit.js';
+import { inlineStatus, setBusy, toast } from '../core/ui-kit.js';
 import { select } from '../detail/detail.js';
 import { APIKEY_MASK, loadSettingsData } from './settings.js';
 
@@ -65,9 +65,9 @@ function chCardHtml(c, active) {
     `</div>` +
     `<div class="ch-url" title="${escapeHtml(c.baseURL)}">${escapeHtml(chHost(c.baseURL))}</div>` +
     `<div class="ch-actions">` +
-    (active ? '' : '<button class="btn ghost sm" data-act="default">设为默认</button>') +
-    `<button class="btn ghost sm" data-act="edit">编辑</button>` +
-    `<button class="btn ghost sm" data-act="test">测试</button>` +
+    (active ? '' : '<button class="btn secondary sm" data-act="default">设为默认</button>') +
+    `<button class="btn secondary sm" data-act="edit">编辑</button>` +
+    `<button class="btn secondary sm" data-act="test">测试</button>` +
     `<span class="ch-test" aria-live="polite"></span>` +
     `<button class="ch-del" data-act="del" title="删除渠道"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg></button>` +
     `</div></div>`
@@ -96,11 +96,11 @@ function chEditCardHtml(c) {
     `<label>上下文 tokens<input type="number" class="chf-tokens" min="0" step="1000" value="${c.maxInputTokens || ''}" placeholder="跟随全局" /></label>` +
     `</div>` +
     `<div class="ch-form-actions">` +
-    `<button class="btn ghost sm" data-act="fetch-models" title="从上游 /v1/models 拉取可选模型与上下文长度">拉取模型</button>` +
-    `<button class="btn ghost sm" data-act="test">测试连接</button>` +
+    `<button class="btn secondary sm" data-act="fetch-models" title="从上游 /v1/models 拉取可选模型与上下文长度">拉取模型</button>` +
+    `<button class="btn secondary sm" data-act="test">测试连接</button>` +
     `<span class="ch-test" aria-live="polite"></span>` +
     `<span style="flex:1"></span>` +
-    `<button class="btn ghost sm" data-act="cancel">取消</button>` +
+    `<button class="btn secondary sm" data-act="cancel">取消</button>` +
     `<button class="btn sm" data-act="save">保存渠道</button>` +
     `</div></div></div>`
   );
@@ -215,17 +215,18 @@ async function chTest(card, id) {
   setBusy(btn, true, '测试中…');
   span.textContent = '…';
   span.className = 'ch-test';
+  delete span.dataset.level;
   try {
     const r = await POST('/api/settings/test', payload);
     if (r.ok) {
-      span.textContent = '✓ 连接成功';
+      inlineStatus(span, 'success', '连接成功');
       span.classList.add('good');
     } else {
-      span.textContent = '✗ ' + (r.error || '失败');
+      inlineStatus(span, 'danger', r.error || '失败');
       span.classList.add('bad');
     }
   } catch (e) {
-    span.textContent = '✗ ' + (e.message || e);
+    inlineStatus(span, 'danger', e.message || e);
     span.classList.add('bad');
   }
   setBusy(btn, false);
@@ -239,6 +240,7 @@ async function chFetchModels(card, id) {
   setBusy(btn, true, '拉取中…');
   span.textContent = '';
   span.className = 'ch-test';
+  delete span.dataset.level;
   try {
     const r = await POST('/api/settings/ai/models', {
       channelId: id === '__new__' ? undefined : id,
@@ -254,11 +256,11 @@ async function chFetchModels(card, id) {
       tokensInput.value = cur.contextLength;
       card.dataset.tokensFor = v.model;
     }
-    span.textContent = `已拉取 ${chEditModels.length} 个模型`;
+    inlineStatus(span, 'success', `已拉取 ${chEditModels.length} 个模型`);
     span.classList.add('good');
     openChModelMenu(card, ''); // 展开全量列表，所见即所得
   } catch (e) {
-    span.textContent = '✗ ' + (e.message || e);
+    inlineStatus(span, 'danger', e.message || e);
     span.classList.add('bad');
   }
   setBusy(btn, false);
@@ -283,7 +285,7 @@ function renderChModelMenu(card, filter) {
   const cur = card.querySelector('.chf-model').value.trim();
   if (!chEditModels.length) {
     menu.innerHTML =
-      '<div class="chf-mm-hint">尚未拉取模型列表 <button type="button" class="btn ghost sm" data-act="fetch-models">立即拉取</button></div>';
+      '<div class="chf-mm-hint">尚未拉取模型列表 <button type="button" class="btn secondary sm" data-act="fetch-models">立即拉取</button></div>';
     return;
   }
   const items = chMenuFiltered(filter);

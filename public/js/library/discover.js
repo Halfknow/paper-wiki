@@ -5,6 +5,7 @@
 
 import { POST, sp } from '../core/api.js';
 import { $ } from '../core/dom.js';
+import { icon } from '../core/icons.js';
 import { setBusy, toast } from '../core/ui-kit.js';
 import { refresh } from './refresh.js';
 
@@ -95,7 +96,7 @@ function renderDiscoverProgress(state) {
   root.style.display = 'block';
   root.innerHTML = DISCOVER_STEPS.map((s) => {
     const st = state[s.key] || {};
-    const ico = st.status === 'done' ? '✓' : st.status === 'active' ? '<span class="dsc-spin"></span>' : '○';
+    const ico = st.status === 'done' ? icon('check', { size: 14 }) : st.status === 'active' ? '<span class="spinner sm" aria-hidden="true"></span>' : icon('circle', { size: 14 });
     const cls = st.status === 'done' ? 'done' : st.status === 'active' ? 'active' : '';
     const detail = st.detail ? `<span class="dsc-detail">${escapeHtml(st.detail)}</span>` : '';
     return `<div class="dsc-step ${cls}"><span class="dsc-ico">${ico}</span><span class="dsc-label">${s.label}</span>${detail}</div>`;

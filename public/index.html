@@ -9,6 +9,7 @@
   <link rel="stylesheet" href="/vendor/pdfjs-viewer.css" />
   <link rel="stylesheet" href="/tokens.css" />
   <link rel="stylesheet" href="/styles.css" />
+  <link rel="stylesheet" href="/components.css" />
   <!-- 首帧视图选择（v3.17）：app.js 是 type=module（defer），且启动要先 await loadSpaces()，
        深链 /concepts 刷新时会先画出论文页再跳走。这里在解析阶段就把路径写给 CSS
        （styles.css 的 [data-boot-path^="/concepts"] 一族规则），首帧即选中正确视图。
@@ -49,7 +50,7 @@
     </div>
     <!-- 空间切换器：下拉选空间 + 新建 + 管理。每个空间绑定独立文件夹 + 完全隔离的论文/标签/主题/概念/设置 -->
     <div class="space-switcher" id="space-switcher">
-      <button class="space-current" id="space-current" type="button" title="切换空间（不同空间隔离论文/标签/主题/概念/设置）">
+      <button class="space-current" id="space-current" type="button" aria-label="切换空间" aria-haspopup="true" title="切换空间（不同空间隔离论文/标签/主题/概念/设置）">
         <svg class="space-ico" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
         <span class="space-name" id="space-name"></span>
         <svg class="space-chev" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
@@ -96,14 +97,14 @@
            改矢量——色点语义太弱），处理中 / 出错时**自己把文案顶出来**——后台任务失败却完全静默
            是可用性红线，不允许把异常全藏进 hover。明细与「立即扫描」收进 popover。 -->
       <div class="status-chip-wrap" id="status-chip-wrap">
-        <button class="status-chip" id="status-chip" type="button" data-level="idle" aria-expanded="false" aria-haspopup="true" title="索引状态">
+        <button class="status-chip" id="status-chip" aria-label="索引状态" type="button" data-level="idle" aria-expanded="false" aria-haspopup="true" title="索引状态">
           <svg class="sc-ico" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
           <span class="sc-text" id="sc-text"></span>
         </button>
         <div class="status-pop" id="status-pop" hidden>
           <div class="sp-rows" id="sp-rows"></div>
           <div class="sp-foot">
-            <button class="btn ghost sm" id="btn-scan" type="button" title="立即扫描 papers 目录并处理新论文">立即扫描</button>
+            <button class="btn secondary sm" id="btn-scan" type="button" title="立即扫描 papers 目录并处理新论文">立即扫描</button>
           </div>
         </div>
       </div>
@@ -146,7 +147,7 @@
           <div class="side-title">
             <span>视图</span>
             <span class="side-actions">
-              <button class="side-icon-btn" id="btn-collapse" title="收起侧栏" aria-label="收起侧栏"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 18 9 12 15 6"/></svg></button>
+              <button class="btn ghost xs icon side-icon-btn" id="btn-collapse" title="收起侧栏" aria-label="收起侧栏"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 18 9 12 15 6"/></svg></button>
             </span>
           </div>
           <div class="side-item active" data-folder="" data-mode="all"><span class="ico"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></span><span>全部论文</span><span class="count" id="cnt-all"></span></div>
@@ -159,7 +160,7 @@
           <div class="side-title">
             <span>收藏夹</span>
             <span class="side-actions">
-              <button class="side-icon-btn" id="btn-manage-folders" title="管理收藏夹（新建 / 改名 / 换色 / 排序 / 删除）" aria-label="管理收藏夹"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg></button>
+              <button class="btn ghost xs icon side-icon-btn" id="btn-manage-folders" title="管理收藏夹（新建 / 改名 / 换色 / 排序 / 删除）" aria-label="管理收藏夹"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg></button>
             </span>
           </div>
           <div id="folder-list"></div>
@@ -261,7 +262,7 @@
           <div class="sd-wrap" id="sd-sort-wrap" aria-label="排序方式"></div>
         </div>
         <div class="toolbar-actions">
-          <div class="seg-group" role="group" aria-label="视图密度">
+          <div class="seg icon-seg" role="group" aria-label="视图密度">
             <button class="seg-btn" id="view-compact" title="紧凑视图（一行一篇，仅 3 标签）" aria-label="紧凑视图" aria-pressed="false">
               <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="6" width="18" height="12" rx="2"/><line x1="3" y1="12" x2="21" y2="12"/></svg>
             </button>
@@ -269,14 +270,14 @@
               <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="3.5" rx="1"/><rect x="3" y="11" width="18" height="3.5" rx="1"/><rect x="3" y="17" width="18" height="2.5" rx="1"/></svg>
             </button>
           </div>
-          <button class="btn ghost sm" id="btn-pick" title="多选论文以追加概念" aria-label="多选"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg></button>
+          <button class="btn secondary sm" id="btn-pick" title="多选论文以追加概念" aria-label="多选"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg></button>
         </div>
       </div>
       <ul id="paper-list" class="paper-list"></ul>
       <div class="bulk-bar" id="bulk-bar">
         <span class="sel-count" id="sel-count">已选 0 篇</span>
-        <button class="btn ghost sm" id="btn-pick-all" title="全选当前列表的论文">全选</button>
-        <button class="btn ghost sm" id="btn-pick-cancel">取消</button>
+        <button class="btn secondary sm" id="btn-pick-all" title="全选当前列表的论文">全选</button>
+        <button class="btn secondary sm" id="btn-pick-cancel">取消</button>
         <span class="spacer" style="flex:1"></span>
         <span class="bulk-progress" id="bulk-progress" hidden>
           <span class="bp-text" id="bp-text"></span>
@@ -300,7 +301,7 @@
             <button class="bulk-menu-item" id="btn-pick-export-csv" type="button" title="导出已选论文的 CSV（Excel 可直接打开）"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="15" y2="17"/></svg><span>导出选中 → CSV</span></button>
           </div>
         </div>
-        <button class="btn ghost sm danger" id="btn-pick-delete" title="删除已选论文（连同本地 PDF 与全文，不可恢复）"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg> 删除</button>
+        <button class="btn secondary sm danger" id="btn-pick-delete" title="删除已选论文（连同本地 PDF 与全文，不可恢复）"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg> 删除</button>
       </div>
     </section>
 
@@ -329,11 +330,11 @@
         <!-- 页内搜索框已退役（v3.17）：统一走顶栏那个上下文搜索框，避免同屏两个搜索入口。 -->
         <!-- v3.29：新增（手动录入）与多选（批量删除/改分类）入口。二级控件（仅清单视图有意义）：
              排版（图标）+ 排序（文字）。地图视图下 switchConceptView 隐藏它们。 -->
-        <button class="btn ghost sm" id="btn-concept-add" type="button" title="手动录入概念（纸面/组会/其它来源），可关联论文">
+        <button class="btn secondary sm" id="btn-concept-add" type="button" title="手动录入概念（纸面/组会/其它来源），可关联论文">
           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
           新增
         </button>
-        <button class="btn ghost sm icon-btn subtle" id="btn-concept-pick" type="button" title="多选概念以批量删除 / 改分类" aria-label="多选">
+        <button class="btn secondary sm icon-btn ghost" id="btn-concept-pick" type="button" title="多选概念以批量删除 / 改分类" aria-label="多选">
           <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 11 12 14 22 4"/><path d="M19 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
         </button>
         <div class="seg icon-seg" id="concept-layout" role="group" aria-label="显示方式">
@@ -349,7 +350,7 @@
           <button type="button" data-sort="recent">最新</button>
           <button type="button" data-sort="alpha">按字母</button>
         </div>
-        <button class="btn ghost sm icon-btn" id="btn-concepts-md" type="button" title="导出 Markdown（有筛选时导出当前筛选集，否则全量）" aria-label="导出 Markdown">
+        <button class="btn secondary sm icon-btn" id="btn-concepts-md" type="button" title="导出 Markdown（有筛选时导出当前筛选集，否则全量）" aria-label="导出 Markdown">
           <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
         </button>
       </div>
@@ -384,11 +385,11 @@
       <div class="concepts-toolbar">
         <!-- 页内搜索框已退役（v3.17）：统一走顶栏那个上下文搜索框。 -->
         <!-- v3.29：新增（手动录入，全字段编辑抽屉）与多选（批量删除/改分类）入口。 -->
-        <button class="btn ghost sm" id="btn-formula-add" type="button" title="手动录入公式（全字段：LaTeX/符号表/绘图/概念关联）">
+        <button class="btn secondary sm" id="btn-formula-add" type="button" title="手动录入公式（全字段：LaTeX/符号表/绘图/概念关联）">
           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
           新增
         </button>
-        <button class="btn ghost sm icon-btn subtle" id="btn-formula-pick" type="button" title="多选公式以批量删除 / 改分类" aria-label="多选">
+        <button class="btn secondary sm icon-btn ghost" id="btn-formula-pick" type="button" title="多选公式以批量删除 / 改分类" aria-label="多选">
           <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 11 12 14 22 4"/><path d="M19 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
         </button>
         <div class="seg icon-seg" id="formula-layout" role="group" aria-label="显示方式">
@@ -405,7 +406,7 @@
           <button type="button" data-sort="alpha">按名称</button>
           <button type="button" data-sort="category">按分类</button>
         </div>
-        <button class="btn ghost sm icon-btn" id="btn-formulas-md" type="button" title="导出 Markdown（有筛选时导出当前筛选集，否则全量）" aria-label="导出 Markdown">
+        <button class="btn secondary sm icon-btn" id="btn-formulas-md" type="button" title="导出 Markdown（有筛选时导出当前筛选集，否则全量）" aria-label="导出 Markdown">
           <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
         </button>
       </div>
@@ -420,7 +421,7 @@
        点遮罩或 Esc 关闭，回到打开它之前的那个页面。 -->
   <div class="settings-overlay view-hidden" id="settings-view" role="dialog" aria-modal="true" aria-label="设置">
     <div class="settings-shell">
-      <button class="settings-x" id="btn-settings-x" title="关闭设置（Esc）" aria-label="关闭设置" type="button">
+      <button class="btn ghost sm icon settings-x" id="btn-settings-x" title="关闭设置（Esc）" aria-label="关闭设置" type="button">
         <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
       </button>
       <!-- 左导航（v3.56）：搜索在最上，分组标题克制，条目 = 32px 中性圆角块。
@@ -468,7 +469,7 @@
 
           <div class="ov-override-bar" id="ov-override-bar" hidden>
             <span class="ov-override-text" id="ov-override-text"></span>
-            <button class="btn ghost sm danger" id="btn-reset-all">全部恢复默认</button>
+            <button class="btn secondary sm danger" id="btn-reset-all">全部恢复默认</button>
           </div>
         </div>
 
@@ -546,7 +547,7 @@
                 <div class="sr-label">恢复 config.json 默认</div>
                 <div class="sr-hint">清除模型渠道与全局参数的运行时覆盖，改回 config.json 里的值。已保存的渠道会被移除。</div>
               </div>
-              <div class="sr-ctl"><button class="btn ghost sm danger" id="btn-ai-reset" type="button">恢复默认</button></div>
+              <div class="sr-ctl"><button class="btn secondary sm danger" id="btn-ai-reset" type="button">恢复默认</button></div>
             </div>
           </div>
         </div>
@@ -575,7 +576,7 @@
             <div class="set-rows set-rows-foot">
               <div class="set-row set-row-reset">
                 <div class="sr-main"><div class="sr-hint">清除当前自定义内容，改回内置默认提示词。</div></div>
-                <div class="sr-ctl"><button class="btn subtle sm danger" id="btn-summary-prompt-default" type="button">恢复默认</button></div>
+                <div class="sr-ctl"><button class="btn ghost sm danger" id="btn-summary-prompt-default" type="button">恢复默认</button></div>
               </div>
             </div>
           </div>
@@ -595,7 +596,7 @@
             <div class="set-rows set-rows-foot">
               <div class="set-row set-row-reset">
                 <div class="sr-main"><div class="sr-hint">清除当前自定义内容，改回内置默认提示词。</div></div>
-                <div class="sr-ctl"><button class="btn subtle sm danger" id="btn-tags-prompt-default" type="button">恢复默认</button></div>
+                <div class="sr-ctl"><button class="btn ghost sm danger" id="btn-tags-prompt-default" type="button">恢复默认</button></div>
               </div>
             </div>
           </div>
@@ -615,7 +616,7 @@
             <div class="set-rows set-rows-foot">
               <div class="set-row set-row-reset">
                 <div class="sr-main"><div class="sr-hint">清除当前自定义内容，改回内置默认提示词。</div></div>
-                <div class="sr-ctl"><button class="btn subtle sm danger" id="btn-formula-prompt-default" type="button">恢复默认</button></div>
+                <div class="sr-ctl"><button class="btn ghost sm danger" id="btn-formula-prompt-default" type="button">恢复默认</button></div>
               </div>
             </div>
           </div>
@@ -635,7 +636,7 @@
             <div class="set-rows set-rows-foot">
               <div class="set-row set-row-reset">
                 <div class="sr-main"><div class="sr-hint">清除当前自定义内容，改回内置默认提示词。</div></div>
-                <div class="sr-ctl"><button class="btn subtle sm danger" id="btn-concept-prompt-default" type="button">恢复默认</button></div>
+                <div class="sr-ctl"><button class="btn ghost sm danger" id="btn-concept-prompt-default" type="button">恢复默认</button></div>
               </div>
             </div>
           </div>
@@ -655,7 +656,7 @@
             <div class="set-rows set-rows-foot">
               <div class="set-row set-row-reset">
                 <div class="sr-main"><div class="sr-hint">清除当前自定义内容，改回内置默认提示词。</div></div>
-                <div class="sr-ctl"><button class="btn subtle sm danger" id="btn-concept-map-prompt-default" type="button">恢复默认</button></div>
+                <div class="sr-ctl"><button class="btn ghost sm danger" id="btn-concept-map-prompt-default" type="button">恢复默认</button></div>
               </div>
             </div>
           </div>
@@ -675,7 +676,7 @@
             <div class="set-rows set-rows-foot">
               <div class="set-row set-row-reset">
                 <div class="sr-main"><div class="sr-hint">清除当前自定义内容，改回内置默认提示词。</div></div>
-                <div class="sr-ctl"><button class="btn subtle sm danger" id="btn-notes-prompt-default" type="button">恢复默认</button></div>
+                <div class="sr-ctl"><button class="btn ghost sm danger" id="btn-notes-prompt-default" type="button">恢复默认</button></div>
               </div>
             </div>
           </div>
@@ -695,7 +696,7 @@
             <div class="set-rows set-rows-foot">
               <div class="set-row set-row-reset">
                 <div class="sr-main"><div class="sr-hint">清除当前自定义内容，改回内置默认提示词。</div></div>
-                <div class="sr-ctl"><button class="btn subtle sm danger" id="btn-chat-prompt-default" type="button">恢复默认</button></div>
+                <div class="sr-ctl"><button class="btn ghost sm danger" id="btn-chat-prompt-default" type="button">恢复默认</button></div>
               </div>
             </div>
           </div>
@@ -715,7 +716,7 @@
             <div class="set-rows set-rows-foot">
               <div class="set-row set-row-reset">
                 <div class="sr-main"><div class="sr-hint">清除当前自定义内容，改回内置默认提示词。</div></div>
-                <div class="sr-ctl"><button class="btn subtle sm danger" id="btn-translate-prompt-default" type="button">恢复默认</button></div>
+                <div class="sr-ctl"><button class="btn ghost sm danger" id="btn-translate-prompt-default" type="button">恢复默认</button></div>
               </div>
             </div>
           </div>
@@ -735,7 +736,7 @@
             <div class="set-rows set-rows-foot">
               <div class="set-row set-row-reset">
                 <div class="sr-main"><div class="sr-hint">清除当前自定义内容，改回内置默认提示词。</div></div>
-                <div class="sr-ctl"><button class="btn subtle sm danger" id="btn-mineru-naming-default" type="button">恢复默认</button></div>
+                <div class="sr-ctl"><button class="btn ghost sm danger" id="btn-mineru-naming-default" type="button">恢复默认</button></div>
               </div>
             </div>
           </div>
@@ -759,7 +760,7 @@
             </div>
             <div class="set-row set-row-reset">
               <div class="sr-main"><div class="sr-hint">恢复本节的 config.json 默认值。</div></div>
-              <div class="sr-ctl"><button class="btn subtle sm danger" id="btn-scan-reset" type="button">恢复默认</button></div>
+              <div class="sr-ctl"><button class="btn ghost sm danger" id="btn-scan-reset" type="button">恢复默认</button></div>
             </div>
           </div>
 
@@ -774,7 +775,7 @@
                 <label>自动补全元数据 <span class="ovr-badge" id="ovr-arxiv-enabled" hidden>已覆盖</span></label>
                 <span class="hint">关闭后不再请求 arXiv API。</span>
               </div>
-              <label class="switch"><input type="checkbox" id="arxiv-enabled" /><span class="switch-track"></span></label>
+              <label class="switch"><input type="checkbox" id="arxiv-enabled" /><span class="switch-track" aria-hidden="true"></span></label>
             </div>
             <div class="set-row">
               <div class="sr-main">
@@ -792,7 +793,7 @@
             </div>
             <div class="set-row set-row-reset">
               <div class="sr-main"><div class="sr-hint">恢复本节的 config.json 默认值。</div></div>
-              <div class="sr-ctl"><button class="btn subtle sm danger" id="btn-arxiv-reset" type="button">恢复默认</button></div>
+              <div class="sr-ctl"><button class="btn ghost sm danger" id="btn-arxiv-reset" type="button">恢复默认</button></div>
             </div>
           </div>
 
@@ -821,11 +822,11 @@
                 <div class="sr-label">MinerU 命名提示词</div>
                 <div class="sr-hint">决定 MinerU 产出的 LaTeX 如何被命名与解读。正文在「提示词」页编辑。</div>
               </div>
-              <div class="sr-ctl"><button class="btn ghost sm" type="button" data-goto-prompt="mineruNaming">编辑</button></div>
+              <div class="sr-ctl"><button class="btn secondary sm" type="button" data-goto-prompt="mineruNaming">编辑</button></div>
             </div>
             <div class="set-row set-row-reset">
               <div class="sr-main"><div class="sr-hint">恢复本节的 config.json 默认值。</div></div>
-              <div class="sr-ctl"><button class="btn subtle sm danger" id="btn-formula-engine-reset" type="button">恢复默认</button></div>
+              <div class="sr-ctl"><button class="btn ghost sm danger" id="btn-formula-engine-reset" type="button">恢复默认</button></div>
             </div>
           </div>
         </div>
@@ -867,7 +868,7 @@
                   <div class="weight-cell"><span>权威 auth</span><input type="number" id="disc-w-auth" min="0" max="1" step="0.05" /></div>
                   <div class="weight-cell"><span>新近 rec</span><input type="number" id="disc-w-rec" min="0" max="1" step="0.05" /></div>
                 </div>
-                <button class="btn ghost sm" type="button" id="btn-w-norm" title="把三个权重按比例缩放为和=1">归一化为 1</button>
+                <button class="btn secondary sm" type="button" id="btn-w-norm" title="把三个权重按比例缩放为和=1">归一化为 1</button>
               </div>
             </div>
           </div>
@@ -894,14 +895,14 @@
                   <label>Semantic Scholar 来源 <span class="ovr-badge" id="ovr-discover-semanticScholar" hidden>已覆盖</span></label>
                   <span class="hint">作为召回与权威度来源之一。</span>
                 </div>
-                <label class="switch"><input type="checkbox" id="disc-s2" /><span class="switch-track"></span></label>
+                <label class="switch"><input type="checkbox" id="disc-s2" /><span class="switch-track" aria-hidden="true"></span></label>
               </div>
               <div class="toggle-field">
                 <div class="toggle-main">
                   <label>OpenAlex 来源 <span class="ovr-badge" id="ovr-discover-openAlex" hidden>已覆盖</span></label>
                   <span class="hint">开放学术图谱，补充引用与机构信号。</span>
                 </div>
-                <label class="switch"><input type="checkbox" id="disc-openalex" /><span class="switch-track"></span></label>
+                <label class="switch"><input type="checkbox" id="disc-openalex" /><span class="switch-track" aria-hidden="true"></span></label>
               </div>
               <div class="set-row">
                 <div class="sr-main">
@@ -915,7 +916,7 @@
           <div class="set-rows set-rows-foot">
             <div class="set-row set-row-reset">
               <div class="sr-main"><div class="sr-hint">恢复主题发现的 config.json 默认值（含权重与数据源开关）。</div></div>
-              <div class="sr-ctl"><button class="btn subtle sm danger" id="btn-discover-reset" type="button">恢复默认</button></div>
+              <div class="sr-ctl"><button class="btn ghost sm danger" id="btn-discover-reset" type="button">恢复默认</button></div>
             </div>
           </div>
         </div>
@@ -944,7 +945,7 @@
             </div>
             <div class="set-row set-row-reset">
               <div class="sr-main"><div class="sr-hint">恢复划线翻译的 config.json 默认值。</div></div>
-              <div class="sr-ctl"><button class="btn subtle sm danger" id="btn-translate-reset" type="button">恢复默认</button></div>
+              <div class="sr-ctl"><button class="btn ghost sm danger" id="btn-translate-reset" type="button">恢复默认</button></div>
             </div>
           </div>
         </div>
@@ -953,9 +954,9 @@
         <div class="settings-panel" data-panel="taxonomy" hidden>
           <div class="set-section">主题与标签<span class="set-section-sub">重命名 / 合并 / 删除全局主题与标签，改动同步到所有论文。点名称即可就地重命名。</span></div>
           <div class="tax-manager">
-            <div class="tax-seg" id="tax-seg">
-              <button class="tax-seg-btn active" data-kind="tag">标签 <span class="tax-seg-count" id="tax-tag-count">0</span></button>
-              <button class="tax-seg-btn" data-kind="topic">主题 <span class="tax-seg-count" id="tax-topic-count">0</span></button>
+            <div class="seg" id="tax-seg" role="group" aria-label="类别">
+              <button class="tax-seg-btn active" data-kind="tag">标签 <span class="seg-count" id="tax-tag-count">0</span></button>
+              <button class="tax-seg-btn" data-kind="topic">主题 <span class="seg-count" id="tax-topic-count">0</span></button>
             </div>
             <div class="tax-toolbar">
               <div class="tax-search">
@@ -965,15 +966,15 @@
               <!-- v3.58：原生 select 的弹出面板由系统渲染，CSS 完全够不着——
                    换成与设置页同款的自定义下拉，弹层才能走「下拉内容统一规格」。 -->
               <div class="sd-wrap" id="sd-tax-sort-wrap" aria-label="排序"></div>
-              <button class="btn ghost sm" id="tax-select-toggle">多选</button>
+              <button class="btn secondary sm" id="tax-select-toggle">多选</button>
             </div>
             <div class="tax-rows" id="tax-rows"></div>
             <div class="tax-batch" id="tax-batch" hidden>
               <span class="tax-batch-info">已选 <b id="tax-sel-count">0</b></span>
-              <button class="btn ghost sm" id="tax-batch-merge">合并到…</button>
-              <button class="btn ghost sm danger" id="tax-batch-delete">删除选中</button>
+              <button class="btn secondary sm" id="tax-batch-merge">合并到…</button>
+              <button class="btn secondary sm danger" id="tax-batch-delete">删除选中</button>
               <span style="flex:1"></span>
-              <button class="btn ghost sm" id="tax-batch-cancel">退出多选</button>
+              <button class="btn secondary sm" id="tax-batch-cancel">退出多选</button>
             </div>
           </div>
         </div>
@@ -983,7 +984,7 @@
           <div class="set-section">
             系统
             <span class="set-section-sub">服务级配置运行时只读，修改需改 config.json 并重启 <code>pm2 restart paper-wiki</code>。</span>
-            <button class="btn ghost sm set-section-btn" id="btn-system-health" type="button">刷新状态</button>
+            <button class="btn secondary sm set-section-btn" id="btn-system-health" type="button">刷新状态</button>
           </div>
           <div class="set-rows" id="system-card"></div>
           <details class="raw-config">
@@ -1001,10 +1002,10 @@
       <!-- v3.25 顶栏重构：两列（身份左 / 工具右）。标题独占左侧弹性空间不再被工具簇切分遮挡；
            状态反馈（保存/页码等 transient 提示）移出顶栏，成为顶栏下方居中的浮动胶囊。 -->
       <div class="rb-group rb-left">
-        <button class="rb-chrome-btn" id="reader-close" title="关闭阅读器（Esc）" aria-label="关闭阅读器">
+        <button class="btn ghost icon rb-chrome-btn" id="reader-close" title="关闭阅读器（Esc）" aria-label="关闭阅读器">
           <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
         </button>
-        <button class="rb-chrome-btn rb-shelf-toggle" id="reader-shelf-toggle" title="放入阅读架（Ctrl+D）" aria-pressed="false" aria-label="放入阅读架">
+        <button class="btn ghost icon rb-chrome-btn rb-shelf-toggle" id="reader-shelf-toggle" title="放入阅读架（Ctrl+D）" aria-pressed="false" aria-label="放入阅读架">
           <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="21 13.5 15.5 13.5 14 16 10 16 8.5 13.5 3 13.5"/><path d="M3 13.5v4a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-4"/><polyline points="8.8 7.2 12 10.4 15.2 7.2"/><line x1="12" y1="2.6" x2="12" y2="10.4"/></svg>
         </button>
         <span class="rb-title" id="reader-title"></span>
@@ -1012,69 +1013,69 @@
 
       <div class="rb-group rb-controls" role="toolbar" aria-label="阅读工具">
         <div class="rb-cluster" role="group" aria-label="翻页">
-          <button class="rb-icon" id="reader-prev" title="上一页（←）">
+          <button class="rb-icon" id="reader-prev" aria-label="上一页" title="上一页（←）">
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
           </button>
           <span class="rb-page">
             <input id="reader-page-input" type="number" min="1" value="1" aria-label="页码" />
             <span id="reader-page-total" class="rb-total">/ -</span>
           </span>
-          <button class="rb-icon" id="reader-next" title="下一页（→）">
+          <button class="rb-icon" id="reader-next" aria-label="下一页" title="下一页（→）">
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
           </button>
         </div>
         <button class="rb-toggle active" id="reader-spread" title="切换单页 / 双页">双页</button>
         <div class="rb-cluster" role="group" aria-label="缩放">
-          <button class="rb-icon" id="reader-zoom-out" title="缩小（-）">
+          <button class="rb-icon" id="reader-zoom-out" aria-label="缩小" title="缩小（-）">
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M5 12h14"/></svg>
           </button>
           <button class="rb-zoom" id="reader-zoom-label" title="点击适应宽度">100%</button>
-          <button class="rb-icon" id="reader-zoom-in" title="放大（+）">
+          <button class="rb-icon" id="reader-zoom-in" aria-label="放大" title="放大（+）">
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
           </button>
-          <button class="rb-icon" id="reader-zoom-fit" title="适应宽度（双页全宽）">
+          <button class="rb-icon" id="reader-zoom-fit" aria-label="适应宽度" title="适应宽度（双页全宽）">
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 9V5a2 2 0 0 1 2-2h4M21 9V5a2 2 0 0 0-2-2h-4M3 15v4a2 2 0 0 0 2 2h4M21 15v4a2 2 0 0 1-2 2h-4"/></svg>
           </button>
         </div>
         <span class="rb-sep" aria-hidden="true"></span>
         <div class="rb-tools" role="group" aria-label="批注工具">
-          <button class="rb-tool active" id="reader-tool-cursor" title="选择：点选已有批注，Delete 删除">
+          <button class="rb-tool active" id="reader-tool-cursor" aria-label="选择" title="选择：点选已有批注，Delete 删除">
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M4 3l7 17 2.5-7L20 10.5 4 3z"/></svg>
           </button>
-          <button class="rb-tool" id="reader-tool-highlight" title="高亮：拖选文字创建高亮">
+          <button class="rb-tool" id="reader-tool-highlight" aria-label="高亮" title="高亮：拖选文字创建高亮">
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M15 3l6 6-9 9H6v-6l9-9z"/><path d="M14 4l6 6"/><path d="M4 21h16" stroke-width="2.4"/></svg>
           </button>
-          <button class="rb-tool" id="reader-tool-note" title="便签：点击添加文字备注">
+          <button class="rb-tool" id="reader-tool-note" aria-label="便签" title="便签：点击添加文字备注">
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M4 4h16v12l-4 4H4V4z"/><path d="M8 9h8M8 13h5"/></svg>
           </button>
-          <button class="rb-tool" id="reader-tool-ink" title="手写：自由绘制">
+          <button class="rb-tool" id="reader-tool-ink" aria-label="手写" title="手写：自由绘制">
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 21c4-1 6-5 9-9 2-3 5-4 8-2-2 4-4 7-9 8-3 .5-5 2-8 3z"/><path d="M14 7l3 3"/></svg>
           </button>
           <span class="rb-tool-sep" aria-hidden="true"></span>
-          <button class="rb-tool rb-tool-delete" id="reader-tool-delete" title="选择模式下点选批注后删除" aria-disabled="true">
+          <button class="rb-tool rb-tool-delete" id="reader-tool-delete" aria-label="删除选中批注" title="选择模式下点选批注后删除" aria-disabled="true">
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18"/><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>
           </button>
         </div>
-        <span class="reader-colors" id="reader-colors" title="批注颜色">
-          <span class="reader-color active" data-color="#fde68a" style="--c:#fde68a"></span>
-          <span class="reader-color" data-color="#bbf7d0" style="--c:#bbf7d0"></span>
-          <span class="reader-color" data-color="#bfdbfe" style="--c:#bfdbfe"></span>
-          <span class="reader-color" data-color="#ddd6fe" style="--c:#ddd6fe"></span>
-          <span class="reader-color" data-color="#fbcfe8" style="--c:#fbcfe8"></span>
-          <span class="reader-color" data-color="#fecdd3" style="--c:#fecdd3"></span>
-          <span class="reader-color" data-color="#a5f3fc" style="--c:#a5f3fc"></span>
+        <span class="reader-colors" id="reader-colors" role="group" aria-label="批注颜色" title="批注颜色">
+          <button type="button" class="reader-color active" data-color="#fde68a" style="--c:var(--hl-yellow)" aria-label="黄色" aria-pressed="true"></button>
+          <button type="button" class="reader-color" data-color="#bbf7d0" style="--c:var(--hl-green)" aria-label="绿色" aria-pressed="false"></button>
+          <button type="button" class="reader-color" data-color="#bfdbfe" style="--c:var(--hl-blue)" aria-label="蓝色" aria-pressed="false"></button>
+          <button type="button" class="reader-color" data-color="#ddd6fe" style="--c:var(--hl-purple)" aria-label="紫色" aria-pressed="false"></button>
+          <button type="button" class="reader-color" data-color="#fbcfe8" style="--c:var(--hl-pink)" aria-label="粉色" aria-pressed="false"></button>
+          <button type="button" class="reader-color" data-color="#fecdd3" style="--c:var(--hl-red)" aria-label="红色" aria-pressed="false"></button>
+          <button type="button" class="reader-color" data-color="#a5f3fc" style="--c:var(--hl-cyan)" aria-label="青色" aria-pressed="false"></button>
         </span>
         <span class="rb-sep" aria-hidden="true"></span>
         <!-- 整篇公式/概念抽取（下拉菜单：查看本篇 / 追加抽取 / 重新抽取）。
              包在 .rb-tools 药丸容器内，与批注工具组观感完全对齐。 -->
         <div class="rb-tools" role="group" aria-label="整篇抽取">
           <div class="rb-extract-wrap" id="rb-extract-formulas-wrap">
-            <button class="rb-tool" id="reader-extract-formulas" type="button" title="公式：查看本篇 / 抽取（追加）/ 重新抽取" aria-haspopup="true" aria-expanded="false">
+            <button class="rb-tool" id="reader-extract-formulas" aria-label="公式抽取" type="button" title="公式：查看本篇 / 抽取（追加）/ 重新抽取" aria-haspopup="true" aria-expanded="false">
               <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 4h9"/><path d="M13 4L8 20"/><path d="M4 12h8"/><path d="M15.5 10.5l5 7"/><path d="M20.5 10.5l-5 7"/></svg>
             </button>
           </div>
           <div class="rb-extract-wrap" id="rb-extract-concepts-wrap">
-            <button class="rb-tool" id="reader-extract-concepts" type="button" title="概念：查看本篇 / 抽取（追加）/ 重新抽取" aria-haspopup="true" aria-expanded="false">
+            <button class="rb-tool" id="reader-extract-concepts" aria-label="概念抽取" type="button" title="概念：查看本篇 / 抽取（追加）/ 重新抽取" aria-haspopup="true" aria-expanded="false">
               <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18h6"/><path d="M10 21h4"/><path d="M12 3a6 6 0 0 0-4 10.5c.6.6 1 1.4 1 2.5h6c0-1.1.4-1.9 1-2.5A6 6 0 0 0 12 3z"/></svg>
             </button>
           </div>
@@ -1083,8 +1084,7 @@
     </div>
     <div class="reader-canvas-wrap pane" id="reader-canvas-wrap">
       <div class="reader-loading" id="reader-loading">
-        <span class="rdr-spinner" aria-hidden="true"></span>
-        <span class="rdr-loading-text">正在加载 PDF…</span>
+        <span class="sr-only">正在加载 PDF…</span>
       </div>
       <!-- pdf.js PDFViewer 挂载点：内部自动生成 .page > canvas/textLayer/annotationEditorLayer -->
       <div id="viewer" class="pdfViewer"></div>
@@ -1101,7 +1101,7 @@
         <span class="rcd-title"><span class="rcd-title-text">AI 对话</span><span class="rcd-model-pill" id="rcd-model-pill" title="当前模型">默认模型</span></span>
         <div class="rcd-actions">
           <!-- 大纲/清空按钮由 reader.js 注入到此容器（关闭键之前），保持 [大纲 清空 关闭] 顺序 -->
-          <button class="rcd-close" id="reader-chat-close" title="收起" aria-label="收起"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+          <button class="btn ghost sm icon rcd-close" id="reader-chat-close" type="button" title="收起" aria-label="收起"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
         </div>
       </div>
       <div class="rcd-list" id="reader-chat-list"></div>
@@ -1116,17 +1116,17 @@
           <textarea id="reader-chat-input" rows="1" placeholder="边读边问…  @ 引用其它论文"></textarea>
           <div class="chat-composer-footer">
             <div class="chat-composer-left">
-              <button class="chat-tool-btn" id="rcd-presets-btn" type="button" title="快捷提问">
+              <button class="btn ghost sm chat-tool-btn" id="rcd-presets-btn" type="button" title="快捷提问">
                 <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L3 14h9l-1 8 10-12h-9z"/></svg>
                 <span>快捷</span>
               </button>
-              <button class="chat-tool-btn" id="rcd-attach-btn" type="button" title="上传图片提问（也可在输入框 Ctrl+V 粘贴）">
+              <button class="btn ghost sm chat-tool-btn" id="rcd-attach-btn" type="button" title="上传图片提问（也可在输入框 Ctrl+V 粘贴）">
                 <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
                 <span>图片</span>
               </button>
             </div>
             <div class="chat-composer-right">
-              <button class="chat-model-btn" id="rcd-model-btn" type="button" title="切换模型" aria-expanded="false">
+              <button class="btn secondary sm chat-model-btn" id="rcd-model-btn" type="button" title="切换模型" aria-expanded="false">
                 <span class="cm-name">默认模型</span>
                 <svg class="cm-chev" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
               </button>
@@ -1151,7 +1151,7 @@
         <span class="rsd-title">阅读架</span>
         <div class="rsd-actions">
           <button class="rsd-act" id="reader-shelf-clear" type="button" title="清空阅读架（不删除论文本身）">清空</button>
-          <button class="rsd-close" id="reader-shelf-close" title="收起" aria-label="收起"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+          <button class="btn ghost sm icon rsd-close" id="reader-shelf-close" type="button" title="收起" aria-label="收起"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
         </div>
       </div>
       <div class="rsd-search">
@@ -1170,7 +1170,7 @@
       <h3 id="fm-title">管理收藏夹</h3>
       <p class="fm-hint">拖拽调整顺序 · 编辑改名换色 · 删除不影响论文本身</p>
       <div class="fm-list" id="fm-list"></div>
-      <button class="fm-new" id="fm-new" type="button">＋ 新建收藏夹</button>
+      <button class="fm-new" id="fm-new" type="button"><svg class="pw-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14"/><path d="M5 12h14"/></svg>新建收藏夹</button>
     </div>
   </div>
 
@@ -1184,7 +1184,7 @@
       <p class="import-hint" id="import-hint">支持 abs / pdf / html 网址或裸 ID，会自动下载 PDF 并开始 AI 处理。</p>
       <div class="actions">
         <span class="spacer"></span>
-        <button class="btn ghost sm" id="import-modal-cancel">取消</button>
+        <button class="btn secondary sm" id="import-modal-cancel">取消</button>
         <button class="btn sm" id="import-modal-ok">导入</button>
       </div>
     </div>
@@ -1204,7 +1204,7 @@
       <div class="actions discover-actions" id="discover-actions" style="display:none;">
         <label class="discover-select-all"><input type="checkbox" id="discover-select-all" /> 全选</label>
         <span class="spacer"></span>
-        <button class="btn ghost sm" id="discover-modal-cancel">关闭</button>
+        <button class="btn secondary sm" id="discover-modal-cancel">关闭</button>
         <button class="btn sm" id="discover-import-btn">导入所选</button>
       </div>
     </div>
@@ -1218,7 +1218,7 @@
       <div class="sa-list" id="space-admin-list"></div>
       <!-- 新建空间：内联表单（默认折叠为一个按钮，点击展开） -->
       <div class="sa-create" id="space-create">
-        <button class="btn ghost sm sa-create-btn" id="space-create-toggle" type="button"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M12 11.5v4.5M9.75 13.75h4.5"/></svg>新建空间</button>
+        <button class="btn secondary sm sa-create-btn" id="space-create-toggle" type="button"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M12 11.5v4.5M9.75 13.75h4.5"/></svg>新建空间</button>
         <div class="sa-create-form" id="space-create-form" hidden>
           <input type="text" id="space-create-name" placeholder="空间名称（如：AI 论文）" autocomplete="off" />
           <input type="text" id="space-create-dir" placeholder="文件夹（可选，留空 = 与空间名一致）" autocomplete="off" />
@@ -1246,7 +1246,7 @@
         <p class="dw-error" id="dw-input-error" hidden></p>
         <div class="actions">
           <span class="spacer"></span>
-          <button class="btn ghost sm" id="dw-cancel-1">取消</button>
+          <button class="btn secondary sm" id="dw-cancel-1">取消</button>
           <button class="btn sm" id="dw-preview-btn">预检</button>
         </div>
       </div>
@@ -1271,9 +1271,9 @@
         </div>
         <p class="dw-error" id="dw-report-error" hidden></p>
         <div class="actions">
-          <button class="btn ghost sm" id="dw-back">上一步</button>
+          <button class="btn secondary sm" id="dw-back">上一步</button>
           <span class="spacer"></span>
-          <button class="btn ghost sm" id="dw-cancel-2">取消</button>
+          <button class="btn secondary sm" id="dw-cancel-2">取消</button>
           <button class="btn sm" id="dw-apply-btn">执行</button>
         </div>
       </div>

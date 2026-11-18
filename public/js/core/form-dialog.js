@@ -162,7 +162,7 @@ export function openFormDialog({ title, fields, okText = '保存', cancelText = 
     actions.className = 'pwdlg-actions';
     const cancelBtn = document.createElement('button');
     cancelBtn.type = 'button';
-    cancelBtn.className = 'btn ghost sm';
+    cancelBtn.className = 'btn secondary sm';
     cancelBtn.textContent = cancelText;
     const okBtn = document.createElement('button');
     okBtn.type = 'button';
@@ -259,7 +259,7 @@ export function openMergeDialog({ title, selfLabel, candidates }) {
     actions.className = 'pwdlg-actions';
     const cancel = document.createElement('button');
     cancel.type = 'button';
-    cancel.className = 'btn ghost sm';
+    cancel.className = 'btn secondary sm';
     cancel.textContent = '取消';
     const okBtn = document.createElement('button');
     okBtn.type = 'button';

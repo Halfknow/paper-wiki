@@ -55,8 +55,8 @@ function ensureAdvancedPanel() {
     // 外壳：grid 容器 + footer（footer 按视图显隐「保存为预设」）
     root.innerHTML = `<div class="sf-grid" id="sf-grid"></div>
       <div class="sf-footer">
-        <button class="btn ghost sm" id="sf-clear" type="button">清空</button>
-        <button class="btn ghost sm" id="sf-save" type="button">保存为预设…</button>
+        <button class="btn secondary sm" id="sf-clear" type="button">清空</button>
+        <button class="btn secondary sm" id="sf-save" type="button">保存为预设…</button>
         <span class="sf-spacer"></span>
         <span class="sf-dsl-preview" id="sf-dsl-preview" title="等效查询语法"></span>
         <button class="btn sm" id="sf-search" type="button">搜索</button>

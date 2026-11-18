@@ -300,7 +300,7 @@ export function renderFormulaSidebar() {
       <div class="side-title">
         <span>视图</span>
         <span class="side-actions">
-          <button class="side-icon-btn" id="btn-collapse-formulas" title="收起侧栏" aria-label="收起侧栏"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 18 9 12 15 6"/></svg></button>
+          <button class="btn ghost xs icon side-icon-btn" id="btn-collapse-formulas" title="收起侧栏" aria-label="收起侧栏"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 18 9 12 15 6"/></svg></button>
         </span>
       </div>
       <div class="side-item${_formulaCats.size ? '' : ' active'}" data-cat=""><span class="ico"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 4h9"/><path d="M13 4L8 20"/><path d="M4 12h8"/><path d="M15.5 10.5l5 7"/><path d="M20.5 10.5l-5 7"/></svg></span><span>全部公式</span><span class="count">${total || ''}</span></div>
@@ -474,7 +474,7 @@ export function renderFormulas() {
       <div class="es-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 4h9"/><path d="M13 4L8 20"/><path d="M4 12h8"/><path d="M15.5 10.5l5 7"/><path d="M20.5 10.5l-5 7"/></svg></div>
       <p class="es-main">${hasAny ? '没有匹配的公式' : '公式清单还是空的'}</p>
       <p class="es-sub">${hasAny ? '当前搜索 / 分面筛选过窄，试试放宽条件。' : '公式在扫描时自动抽取；也可以手动录入一条（工具条「+ 新增」），或在阅读器里框选公式区域补录。'}</p>
-      <div class="es-actions">${hasAny ? '<button class="btn sm es-clear" type="button">清除筛选</button>' : '<button class="btn sm es-goto" type="button">去论文库抽取</button><button class="btn ghost sm es-add" type="button">手动新增公式</button>'}</div>
+      <div class="es-actions">${hasAny ? '<button class="btn sm es-clear" type="button">清除筛选</button>' : '<button class="btn sm es-goto" type="button">去论文库抽取</button><button class="btn secondary sm es-add" type="button">手动新增公式</button>'}</div>
     </div>`;
     const clearBtn = g.querySelector('.es-clear');
     if (clearBtn) clearBtn.onclick = () => {
@@ -537,7 +537,7 @@ function _buildFormulaCard(f, layout) {
   // 函数曲线（v3.29）：plottable 且 plotExpr 可求值时直接在卡上画形状（求值失败静默降级）
   const plotHtml = f.plottable && f.plotHint ? plotSvg(f.plotHint, 460, 150) || '' : '';
 
-  const starBtn = `<button class="card-star${f.starred ? ' on' : ''}" data-star="${f.id}" title="${f.starred ? '取消重点' : '标记为重点'}" aria-label="星标" aria-pressed="${!!f.starred}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg></button>`;
+  const starBtn = `<button class="btn ghost xs icon star-btn card-star${f.starred ? ' is-starred' : ''}" data-star="${f.id}" title="${f.starred ? '取消重点' : '标记为重点'}" aria-label="星标" aria-pressed="${!!f.starred}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg></button>`;
   if (layout === 'list') {
     card.innerHTML = `
       <span class="lc-freq ${freq > 1 ? '' : 'dim'}"${freq ? ` title="出现在 ${freq} 篇论文中"` : ''}>${freq || '·'}</span>
@@ -545,21 +545,21 @@ function _buildFormulaCard(f, layout) {
       <span class="lc-formula">${renderKatex(f.latex, false)}</span>
       <span class="lc-count">${occs.length} 篇</span>
       <div class="row-actions">
-        <button class="qbtn icon" data-copy="${f.id}" title="复制 LaTeX（$…$ 包裹，可直接粘进 Markdown 笔记）" aria-label="复制 LaTeX"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
-        <button class="qbtn icon" data-edit="${f.id}" title="编辑公式（LaTeX / 符号表 / 绘图 / 概念关联）" aria-label="编辑"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg></button>
-        <button class="qbtn icon danger" data-del="${f.id}" title="删除公式" aria-label="删除"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>
+        <button class="btn ghost xs icon qbtn" data-copy="${f.id}" title="复制 LaTeX（$…$ 包裹，可直接粘进 Markdown 笔记）" aria-label="复制 LaTeX"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
+        <button class="btn ghost xs icon qbtn" data-edit="${f.id}" title="编辑公式（LaTeX / 符号表 / 绘图 / 概念关联）" aria-label="编辑"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg></button>
+        <button class="btn ghost xs icon danger qbtn" data-del="${f.id}" title="删除公式" aria-label="删除"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>
       </div>${starBtn}`;
   } else {
     card.innerHTML = `
       <div class="ct">
-        <h3>${escapeHtml(f.name)}</h3>${freq ? `<span class="freq-badge" data-freq="${freq}" title="出现在 ${freq} 篇论文中">${freq} 篇</span>` : ''}
+        <h3>${escapeHtml(f.name)}</h3>${freq ? `<span class="freq-badge badge plain" data-freq="${freq}" title="出现在 ${freq} 篇论文中">${freq} 篇</span>` : ''}
         <div class="row-actions">
-          <button class="qbtn icon" data-copy="${f.id}" title="复制 LaTeX（$…$ 包裹，可直接粘进 Markdown 笔记）" aria-label="复制 LaTeX"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
-          <button class="qbtn icon" data-edit="${f.id}" title="编辑公式（LaTeX / 符号表 / 绘图 / 概念关联）" aria-label="编辑"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg></button>
-          <button class="qbtn icon danger" data-del="${f.id}" title="删除公式" aria-label="删除"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>
+          <button class="btn ghost xs icon qbtn" data-copy="${f.id}" title="复制 LaTeX（$…$ 包裹，可直接粘进 Markdown 笔记）" aria-label="复制 LaTeX"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
+          <button class="btn ghost xs icon qbtn" data-edit="${f.id}" title="编辑公式（LaTeX / 符号表 / 绘图 / 概念关联）" aria-label="编辑"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg></button>
+          <button class="btn ghost xs icon danger qbtn" data-del="${f.id}" title="删除公式" aria-label="删除"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>
         </div>${starBtn}
       </div>
-      <div class="fc-canon"><code>${escapeHtml(f.canonicalName)}</code>${f.category ? `<span class="fc-cat">${escapeHtml(f.category)}</span>` : ''}${f.source === 'vision' ? '<span class="fc-src" title="由阅读器框选补录">框选</span>' : ''}${f.source === 'mineru' ? '<span class="fc-src" title="由 MinerU 抽取">MinerU</span>' : ''}${f.source === 'manual' ? '<span class="fc-src" title="已人工修订">人工</span>' : ''}</div>
+      <div class="fc-canon"><code>${escapeHtml(f.canonicalName)}</code>${f.category ? `<span class="fc-cat badge">${escapeHtml(f.category)}</span>` : ''}${f.source === 'vision' ? '<span class="fc-src badge" title="由阅读器框选补录">框选</span>' : ''}${f.source === 'mineru' ? '<span class="fc-src badge" title="由 MinerU 抽取">MinerU</span>' : ''}${f.source === 'manual' ? '<span class="fc-src badge" title="已人工修订">人工</span>' : ''}</div>
       <div class="fc-latex">${renderKatex(f.latex, true)}</div>
       ${plotHtml ? `<div class="fc-plot">${plotHtml}</div>` : ''}
       ${f.description ? `<div class="fc-desc">${renderMd(f.description)}</div>` : '<div class="fc-desc muted">（无解读）</div>'}
@@ -780,7 +780,7 @@ function _wireFormulaGridOnce(g) {
       const r = await PATCH('/api/formulas/' + f.id, { starred: next });
       if (r && r.ok) {
         f.starred = next;
-        starBtn.classList.toggle('on', next);
+        starBtn.classList.toggle('is-starred', next);
         starBtn.title = next ? '取消重点' : '标记为重点';
         starBtn.setAttribute('aria-pressed', String(next));
         renderFormulaSidebar();

@@ -90,7 +90,7 @@
       const actions = el('div', 'pwdlg-actions');
       let cancelBtn = null;
       if (kind !== 'alert') {
-        cancelBtn = el('button', 'btn ghost sm', opts.cancelText || '取消');
+        cancelBtn = el('button', 'btn secondary sm', opts.cancelText || '取消');
         cancelBtn.type = 'button';
         actions.appendChild(cancelBtn);
       }

@@ -34,7 +34,9 @@ export async function loadSpaces() {
 function renderSpaceSwitcher() {
   const cur = state.spaces.find((s) => s.id === state.space) || state.spaces[0];
   if (cur) localStorage.setItem('pw-space-name', cur.name);
-  $('space-name').textContent = cur ? cur.name : localStorage.getItem('pw-space-name') || '空间';
+  const spaceName = cur ? cur.name : localStorage.getItem('pw-space-name') || '空间';
+  $('space-name').textContent = spaceName;
+  $('space-current')?.setAttribute('aria-label', '切换空间（当前：' + spaceName + '）');
   const list = $('space-list');
   list.innerHTML = '';
   for (const s of state.spaces) {
@@ -130,8 +132,8 @@ export function renderSpaceAdmin() {
         <span class="sa-count" title="${escapeHtml(scanIntervalText(s.scanIntervalMinutes))}">${s.paperCount != null ? s.paperCount : 0} 篇</span>
         ${isActive ? '<span class="sa-badge">当前</span>' : ''}
         <div class="sa-card-actions">
-          ${isActive ? '' : `<button class="sa-btn" data-act="switch">切换</button>`}
-          <button class="sa-btn" data-act="edit">编辑</button>
+          ${isActive ? '' : `<button class="btn secondary sm sa-btn" data-act="switch">切换</button>`}
+          <button class="btn secondary sm sa-btn" data-act="edit">编辑</button>
         </div>
       </div>`;
     const switchBtn = card.querySelector('[data-act="switch"]');
@@ -159,12 +161,12 @@ function renderSpaceAdminEdit(card, s, isDefault) {
     <div class="sa-edit-field dir">
       <span class="lbl">文件夹</span>
       <span class="sa-dir-ro" title="${escapeHtml(s.papersDir || '')}">${escapeHtml(s.papersDir || '')}</span>
-      <button class="sa-btn" data-act="chdir" title="预检 → 移动文件或仅重新绑定 → 原子执行">更改文件夹…</button>
+      <button class="btn secondary sm sa-btn" data-act="chdir" title="预检 → 移动文件或仅重新绑定 → 原子执行">更改文件夹…</button>
     </div>
     <div class="sa-edit-actions">
-      ${isDefault ? '' : '<button class="sa-btn danger" data-act="del">删除</button>'}
-      <button class="sa-btn" data-act="cancel">取消</button>
-      <button class="sa-btn" data-act="save">保存</button>
+      ${isDefault ? '' : '<button class="btn secondary sm danger sa-btn" data-act="del">删除</button>'}
+      <button class="btn secondary sm sa-btn" data-act="cancel">取消</button>
+      <button class="btn secondary sm sa-btn" data-act="save">保存</button>
     </div>`;
   const nameInput = card.querySelector('[data-k="name"]');
   const saveBtn = card.querySelector('[data-act="save"]');

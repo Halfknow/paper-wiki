@@ -148,7 +148,7 @@ export function createShelfDrawer(deps) {
     stepSwitch(dir) {
       const id = shelfStepId(dir);
       if (id && d.onSwitch) d.onSwitch(id);
-      else if (d.notify) d.notify('当前论文不在阅读架上（用 🔖 或 Ctrl+D 放入后可切换）', false);
+      else if (d.notify) d.notify('当前论文不在阅读架上（用工具栏书签按钮或 Ctrl+D 放入后可切换）', false);
     },
     render,
   };
@@ -165,7 +165,7 @@ export function createShelfDrawer(deps) {
     }
     if (!elList) return;
     if (!shelfState.ids.length) {
-      elList.innerHTML = '<div class="rsd-empty">架子是空的<br/><span>点工具栏 🔖（或 Ctrl+D）把当前论文放进来；也可用上方搜索框添加</span></div>';
+      elList.innerHTML = '<div class="rsd-empty">架子是空的<br/><span>点工具栏书签按钮（或 Ctrl+D）把当前论文放进来；也可用上方搜索框添加</span></div>';
       return;
     }
     elList.innerHTML = shelfState.ids

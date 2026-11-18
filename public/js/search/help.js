@@ -4,6 +4,7 @@
 // v3.20：按 currentView() 显示对应语法表（概念/公式页的字段与论文页不同）。
 
 import { $ } from '../core/dom.js';
+import { icon } from '../core/icons.js';
 import { currentView } from '../views/view-switch.js';
 
 /** 论文页语法内容（v3.2 原有）。 */
@@ -100,7 +101,7 @@ export function toggleSearchHelp() {
   const pop = document.createElement('div');
   pop.className = 'search-help-pop';
   pop.innerHTML = `
-    <div class="shp-head"><span>${title}</span><button class="shp-close" type="button" aria-label="关闭">×</button></div>
+    <div class="shp-head"><span>${title}</span><button class="btn ghost xs icon shp-close" type="button" aria-label="关闭">${icon('x', { size: 14 })}</button></div>
     <div class="shp-body">${body}</div>`;
   document.body.appendChild(pop);
   const btn = $('search-help');

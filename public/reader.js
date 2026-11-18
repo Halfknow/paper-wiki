@@ -50,7 +50,7 @@ const { AnnotationEditorType, AnnotationEditorParamsType, PixelsPerInch } = pdfj
 
   // 状态反馈静默清单（v3.26 setStatus 分流用）：这些成功/进度反馈在 UI 上已有可见的自证
   // （高亮可见、🔖 按钮亮灭、批注列表变化、加载遮罩 spinner），再弹提示纯属噪音。
-  const SILENT_STATUS_RE = /^(已记录：|已就绪$|加载中|✓ 批注已|已放入阅读架|已从阅读架移除|已加入阅读架$|阅读架已清空$|已删除批注$|已高亮|已钉住|已取消钉住)/;
+  const SILENT_STATUS_RE = /^(已记录：|已就绪$|加载中|批注已|已放入阅读架|已从阅读架移除|已加入阅读架$|阅读架已清空$|已删除批注$|已高亮|已钉住|已取消钉住)/;
 
   const ICON = {
     copy: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>',
@@ -263,7 +263,10 @@ const { AnnotationEditorType, AnnotationEditorParamsType, PixelsPerInch } = pdfj
         this.colorsEl.querySelectorAll('.reader-color').forEach((el) => {
           el.onclick = () => {
             this.applyColor(el.dataset.color);
-            this.colorsEl.querySelectorAll('.reader-color').forEach((n) => n.classList.toggle('active', n === el));
+            this.colorsEl.querySelectorAll('.reader-color').forEach((n) => {
+              n.classList.toggle('active', n === el);
+              n.setAttribute('aria-pressed', String(n === el));
+            });
           };
         });
       }
@@ -681,8 +684,8 @@ const { AnnotationEditorType, AnnotationEditorParamsType, PixelsPerInch } = pdfj
       let footer;
       if (mode === 'view') {
         footer = '<div class="fcp-actions"><span class="fcp-count">' + items.length + ' 个</span>' +
-          '<button class="btn ghost sm" data-fcp-append type="button">追加抽取</button>' +
-          '<button class="btn ghost sm danger" data-fcp-replace type="button">重新抽取</button></div>';
+          '<button class="btn secondary sm" data-fcp-append type="button">追加抽取</button>' +
+          '<button class="btn secondary sm danger" data-fcp-replace type="button">重新抽取</button></div>';
       } else {
         footer = '<div class="fcp-toolbar"><label class="fcp-all"><input type="checkbox" id="fcp-all" checked /> 全选</label></div>' +
           '<div class="fcp-actions"><span class="fcp-count" id="fcp-count"></span>' +
@@ -691,7 +694,7 @@ const { AnnotationEditorType, AnnotationEditorParamsType, PixelsPerInch } = pdfj
       pop.innerHTML =
         '<div class="fcp-head"><strong>' + titleText + '</strong>' +
         '<span class="fcp-sub">' + subText + '</span>' +
-        '<button class="fcp-x" type="button" aria-label="关闭">×</button></div>' +
+        '<button class="btn ghost xs icon fcp-x" type="button" aria-label="关闭"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button></div>' +
         '<div class="fcp-list">' + rows + '</div>' +
         footer;
       document.body.appendChild(pop);
@@ -861,7 +864,8 @@ const { AnnotationEditorType, AnnotationEditorParamsType, PixelsPerInch } = pdfj
       const modelBtn = this.elChatDrawer.querySelector('#rcd-model-btn');
       if (!right || !modelBtn) return;
       const btn = document.createElement('button');
-      btn.className = 'chat-params-btn rcd-params-btn';
+      btn.className = 'btn secondary sm icon chat-params-btn rcd-params-btn';
+      btn.setAttribute('aria-label', '模型参数');
       btn.id = 'rcd-params-btn';
       btn.type = 'button';
       btn.title = '模型参数';
@@ -877,7 +881,7 @@ const { AnnotationEditorType, AnnotationEditorParamsType, PixelsPerInch } = pdfj
         const inputHtml = f.kind === 'range'
           ? `<input type="range" class="pp-in" min="${f.min}" max="${f.max}" step="${f.step}" disabled />`
           : `<input type="number" class="pp-in" min="${f.min}" step="${f.step}" placeholder="不限" disabled />`;
-        return `<div class="pp-card" data-key="${f.key}"><div class="pp-card-head"><span class="pp-label">${f.label}</span><b class="pp-val">默认</b><label class="pp-switch-wrap"><input type="checkbox" class="pp-switch" /><span class="pp-track"></span></label></div>${inputHtml}</div>`;
+        return `<div class="pp-card" data-key="${f.key}"><div class="pp-card-head"><span class="pp-label">${f.label}</span><b class="pp-val">默认</b><label class="switch sm"><input type="checkbox" class="pp-switch" /><span class="switch-track" aria-hidden="true"></span></label></div>${inputHtml}</div>`;
       }).join('');
       pop.innerHTML = '<div class="pp-title">模型参数 <span class="pp-hint">仅启用的参数随请求发送</span></div>' + cards;
       this.elChatDrawer.appendChild(pop);
@@ -1067,7 +1071,7 @@ const { AnnotationEditorType, AnnotationEditorParamsType, PixelsPerInch } = pdfj
       pop.className = 'chat-outline-pop fixed';
       pop.innerHTML = `<div class="co-head">
         <span>问答大纲<span class="co-count"> · ${items.length} 个问题</span></span>
-        <button class="co-close" title="关闭" aria-label="关闭"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="6" y1="18" x2="18" y2="6"/></svg></button>
+        <button class="btn ghost xs icon co-close" type="button" title="关闭" aria-label="关闭"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="6" y1="18" x2="18" y2="6"/></svg></button>
       </div><div class="co-list"></div>`;
       const coList = pop.querySelector('.co-list');
       const trunc = (s, max = 24) => { const t = (s || '').replace(/\s+/g, ' ').trim(); return t.length > max ? t.slice(0, max) + '…' : (t || '（空问题）'); };
@@ -2524,7 +2528,7 @@ const { AnnotationEditorType, AnnotationEditorParamsType, PixelsPerInch } = pdfj
             console.warn('[PaperWiki] 批注序列化失败（跳过该条）', id, e && e.message);
           }
         }
-        if (skipped) this.setStatus('⚠ ' + skipped + ' 条批注数据损坏已跳过', true);
+        if (skipped) this.setStatus(skipped + ' 条批注数据损坏已跳过', true);
         if (!items.length) return { items: [], updatedAt: Date.now() };
         let hash = '';
         try { hash = (doc.annotationStorage.serializable && doc.annotationStorage.serializable.hash) || ''; } catch {}
@@ -2554,7 +2558,7 @@ const { AnnotationEditorType, AnnotationEditorParamsType, PixelsPerInch } = pdfj
         try { this.doc.annotationStorage.resetModified(); } catch {}
         // 给一个可见的「已保存」反馈，避免用户怀疑高亮没存住（呼应刚修的保存丢失 bug）
         const n = (payload && payload.items && payload.items.length) || 0;
-        this.setStatus(n ? ('✓ 批注已保存（' + n + '）') : '✓ 批注已清空');
+        this.setStatus(n ? ('批注已保存（' + n + '）') : '批注已清空');
       } catch (e) {
         // 保存失败要可见反馈，否则用户以为存了实际没存
         console.warn('[PaperWiki] 批注保存失败', e && e.message);

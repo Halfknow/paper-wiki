@@ -130,7 +130,7 @@ export function openFilterPop(kind) {
     let html = `<div class="fp-search"><input type="text" class="fp-search-input" placeholder="搜索${label}…" value="${escapeHtml(query || '')}" /></div>`;
     // 多选逻辑切换：AND（满足全部）/ OR（满足任一）。仅当选中 ≥2 时有意义，但始终可切（持久记忆）。
     const isAnd = op === 'and';
-    html += `<div class="fp-op-row"><span class="fp-op-label">多选匹配</span><div class="fp-op-toggle" role="tablist" aria-label="多选匹配模式"><button class="fp-op-btn${!isAnd ? ' active' : ''}" data-op="or" role="tab" aria-selected="${!isAnd}">满足任一 OR</button><button class="fp-op-btn${isAnd ? ' active' : ''}" data-op="and" role="tab" aria-selected="${isAnd}">满足全部 AND</button></div></div>`;
+    html += `<div class="fp-op-row"><span class="fp-op-label">多选匹配</span><div class="fp-op-toggle seg" role="tablist" aria-label="多选匹配模式"><button class="fp-op-btn${!isAnd ? ' active' : ''}" data-op="or" role="tab" aria-selected="${!isAnd}">满足任一 OR</button><button class="fp-op-btn${isAnd ? ' active' : ''}" data-op="and" role="tab" aria-selected="${isAnd}">满足全部 AND</button></div></div>`;
     html += `<div class="fp-toolbar"><label class="fp-all"><input type="checkbox" id="fp-all" ${allChecked ? 'checked' : ''} /><span>全选${matched.length ? ` (${matched.length})` : ''}</span></label>${selected.size ? `<button class="fp-clear" id="fp-clear">清除已选</button>` : ''}</div>`;
     html += '<div class="fp-list">';
     if (!matched.length) html += '<div class="fp-empty">无匹配</div>';
@@ -140,7 +140,7 @@ export function openFilterPop(kind) {
       html += `<div class="check-row${on ? ' on' : ''}" data-name="${escapeHtml(it.name)}"><span class="fp-check">${on ? CHECK_SVG : UNCHECK_SVG}</span><span class="fp-name ${cc}">${escapeHtml(it.name)}</span><span class="fp-count">${it.count}</span></div>`;
     }
     html += '</div>';
-    html += `<div class="fp-foot"><span class="fp-sel-count">已选 ${selected.size}</span><button class="btn ghost sm" id="fp-cancel">取消</button><button class="btn sm" id="fp-ok">确定</button></div>`;
+    html += `<div class="fp-foot"><span class="fp-sel-count">已选 ${selected.size}</span><button class="btn secondary sm" id="fp-cancel">取消</button><button class="btn sm" id="fp-ok">确定</button></div>`;
     return html;
   };
   pop.innerHTML = renderList('');

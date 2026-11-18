@@ -1,6 +1,8 @@
 # PaperWiki 设计系统规范（Design System v1）
 
-> 适用版本：v3.63 起　|　状态：**生效中的规范 + 迁移计划**　|　维护：所有 UI 改动的 PR 必须对照本文
+> 适用版本：v3.63 起（P1 组件收口 v3.64）　|　状态：**生效中的规范 + 迁移计划**　|　维护：所有 UI 改动的 PR 必须对照本文
+>
+> **现在去哪写组件**：规范组件（§6）唯一定义在 `public/components.css`（在 styles.css **之后**加载）；图标走 `public/js/core/icons.js`；token 在 `public/tokens.css`。`tests/design-lint.test.js` 会拦下：在 components.css 以外重定义 `.btn/.badge/.tag/.switch/.seg/.spinner/.field` 基座、老按钮 class 不带 `.btn`、emoji（含 CSS `content`）、px / 半像素字号、无名图标按钮、内联色值。
 >
 > 本文回答三个问题：**现在哪里不统一**（§1 审查）、**统一成什么样**（§2–§8 规范）、**怎么从现状走过去**（§9–§10 工程化与迁移）。
 > 规范用语：**必须 / 禁止** = 硬约束（会写进 lint / 测试）；**应当** = 默认做法，偏离需在 PR 里说明理由；**可以** = 允许的变体。
@@ -349,6 +351,9 @@ CSS 变量不能用于 `@media`，因此断点值以注释常量写在 tokens.cs
 - focus：`0 0 0 2px var(--surface-1), 0 0 0 4px var(--accent)`（现有实现保留）。
 - **每个视觉区域最多一个 primary。** 一个"区域"= 顶栏 / 页面头 / 一个弹窗 / 一张卡。概念页「+ 新增」改为 secondary（顶栏「+ 添加」才是全局 primary）。
 - **合并**：`.qbtn` → `.btn.ghost.xs`；`.chat-tool-btn / .notes-tb-btn / .rb-chrome-btn / .side-icon-btn / .fp-op-btn` → `.btn.ghost` 对应尺寸；`.sa-btn / .chat-text-btn` → `.btn.secondary.sm`；`.card-star / .cd-star` → `.btn.ghost.xs.icon` + `.is-starred` 修饰（`--star` 色）。
+- **P1 落地（v3.64）✅**：上述全部完成，另把 7 个关闭 × 钮（`.co-close/.cmp-close/.rcd-close/.rsd-close/.settings-x/.shp-close/.ft-banner-close`）并入 `.btn.ghost.icon`；`.chat-model-btn` → `.btn.secondary.sm`，`.fp-op-toggle` → `.seg`（`.chat-text-btn` 是死 CSS，已删）。老 class 保留在元素上**只作 JS / 测试钩子**，视觉 CSS 已从 styles.css 删除；`ui.legacyButtonWithoutBtn` 硬约束保证它们永远与 `.btn` 同现。
+- 星标：`.btn.ghost.xs.icon.star-btn` + `.is-starred`（实心金 + `star-pop` 弹跳）；JS 切换的是 `is-starred`，不再是 `on`。
+- 纯图标按钮内未声明 `width` 的 SVG 统一 16px（`.xs` 14px），不要再在上下文里写 13/15px 散值。
 
 ### 6.2 Segmented Control（分段控件）
 
@@ -377,6 +382,8 @@ disabled→ --fill-secondary 底、--text-3 文字、不响应 hover
 - 下拉选择一律用自定义 `.sd-*` 下拉（v3.58 规格），**禁止**裸 `<select>` 出现在 UI 中（UA 控件在暗色和 Windows 上不可控）。
 - 数值输入：右对齐 + tabular-nums + 固定 140px 宽（v3.45 保留）。
 - **合并**：`.pfd-row input`、`.fpk-input`、`.fe-input`、`.settings-form select/textarea`、`.pwdlg-input` → `.field`（`input.field` / `textarea.field`）。
+- **P1 落地（v3.64）✅**：`components.css` 的 `.field` 规则组同时列出上述存量选择器作**别名**（存量表单不必逐个改 markup，外观只在一处定义）；styles.css 只留它们的布局（宽度 / flex / 多行最小高）。新代码直接写 `class="field"`（工具条内 `.field.sm` = 28px）。非法态：`.is-invalid` / `[aria-invalid=true]`（存量 `.pfd-invalid` 同效）。
+- 设置页行式表单 `.sr-ctl` 内的输入（v3.59）已是内环 + `--r-md` 同一语言，高 32（行内控件档），保持现状。
 
 ### 6.4 Switch / Checkbox / Radio
 
@@ -393,6 +400,8 @@ disabled→ --fill-secondary 底、--text-3 文字、不响应 hover
 - 进场 `pw-pop-in`（`--dur-base`），退场无动画或 `--dur-fast` 淡出。
 
 ### 6.6 Badge / Tag / Count（徽章体系）
+
+> **P1 落地（v3.64）✅**：`.badge` 变体 `success / warning / danger / info / accent`，另有分类色 `.violet / .cyan`（命令面板类型）、`.plain`（去底纯计数）、`.has-dot`（前置 6px 圆点）、`.is-live`（脉冲点，处理中）；Badge / Tag 均无描边、`--r-xs`、高 20px。下表「合并」一行列出的老 class 全部改为 `.badge.{variant}`（老名只作钩子）。
 
 这是当前最混乱的区域（详情头一行 8 种样式）。今后只有三种物件：
 
@@ -681,7 +690,7 @@ public/css/
 | 阶段 | 内容 | 验收 |
 |---|---|---|
 | **P0 立规矩（1–2 天）✅ v3.63** | ① 建 `tokens.css`，补齐 §3 全部语义 token，旧名改为别名；② z-index / scrim / 动效 / `--font-mono` token 化；③ 设置覆盖层暗色改用全局 slate 底（修 P3）；④ 移除 3 处 `window.confirm`，PWDialog 危险确认默认聚焦取消；⑤ 概念页「+ 新增」降为 secondary；⑥ 侧栏底部入口固定；⑦ 详情加载立即出骨架；⑧ §1.3 小缺陷；⑨ 落地 `design-lint.test.js` 棘轮基线 | lint 测试通过；z-index 字面量 0；暗色设置与全站同色相 |
-| **P1 收组件（3–5 天）** | 按 §6 合并：Button 家族 → `.btn`；5 套输入 → `.field`；2 套开关 → `.switch`；分段控件 → `.seg`；徽章体系 → `.badge/.tag`；5 个 spinner → `.spinner`；`icons.js` + 替换全部 emoji | 字号取值 ≤ 7、半像素 0；控件高度 ≤ 4 档；emoji 0；按钮类家族 ≤ 1 |
+| **P1 收组件（3–5 天）✅ v3.64** | 按 §6 合并：Button 家族 → `.btn`；5 套输入 → `.field`；2 套开关 → `.switch`（含 `.switch.sm` 28×16）；分段控件 → `.seg`；徽章体系 → `.badge/.tag`；5 个 spinner → `.spinner`；`icons.js` + 替换全部 emoji。全部落在新文件 `public/components.css` | 字号 7 档（`--fs-*`，lint 上限）、半像素 / px 字号 0（硬约束）；控件高度 24/28/32/36（lint 棘轮，余 4 处：rail 38px 导航钮 + chip 内 × 微钮）；emoji 0（含 CSS content，硬约束）；已合并按钮族 100% 走 `.btn`（硬约束） |
 | **P2 收浮层与交互（3–4 天）** | `layers.js`：所有 Dialog/Drawer/Sheet 走统一外壳、焦点陷阱、Esc 栈；`feedback.js`：toast 分级 + 撤销、阅读器 `setStatus` 并轨；多选模式三页同构 | 模态 100% 具备 `role/aria`；`document` 级 keydown 监听 ≤ 2 处 |
 | **P3 拆文件与样板间（2–3 天）** | `styles.css` 进 `@layer legacy` → 按 §9.1 逐块迁出；`/__styleguide` + 视觉回归用例；`!important` 清理 | `styles.css` 删除；`!important` ≤ 3；断点 3 个；关键帧 ≤ 8 |
 

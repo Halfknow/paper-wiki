@@ -135,7 +135,98 @@ count('ui.emoji', () => {
   let n = 0;
   for (const { src } of jsAll) n += (src.match(EMOJI) || []).length;
   n += (HTML.replace(/<!--[\s\S]*?-->/g, '').match(EMOJI) || []).length;
+  // CSS 伪元素 content 里塞 emoji 同样算（P1 前 .ctx-badge::before 就是这么藏了个 📍）
+  for (const { css } of cssAll)
+    for (const { prop, value } of cssDecls(css)) if (prop === 'content') n += (value.match(EMOJI) || []).length;
   return n;
+});
+
+// 字号取值种类（规范 §3.3：--fs-xs…--fs-2xl 共 7 档；em 相对值不计）
+const fontSizeValues = new Set();
+count('css.fontSizeTokens', () => {
+  for (const { css } of cssAll)
+    for (const { prop, value } of cssDecls(css)) {
+      if (prop !== 'font-size') continue;
+      const v = value.replace(/\s*!important$/, '');
+      if (/^[\d.]+em$/.test(v) || v === 'inherit') continue;
+      fontSizeValues.add(v);
+    }
+  return fontSizeValues.size;
+});
+
+// 控件高度（规范 §3.6：只允许 24 / 28 / 32 / 36 四档，即 --ctl-xs/sm/md/lg）。
+// 只看选择器像控件的规则；多行 textarea（含 ≥60px 的 min-height 编辑区）、徽章、伪元素、图片不算控件高度。
+const CTL_SEL = /(btn|button|input|select|-act\b|toggle|close|-x\b|\bseg\b)/;
+const CTL_EXEMPT = /textarea|badge|annotationEditorLayer|textLayer|::|\bsvg\b|\bimg\b|\.switch input/;
+const offCtl = [];
+count('css.offScaleControlHeight', () => {
+  for (const { file, css } of cssAll) {
+    const re = /([^{}]+)\{([^{}]*)\}/g;
+    let m;
+    while ((m = re.exec(css))) {
+      const sel = m[1].trim();
+      if (!CTL_SEL.test(sel) || CTL_EXEMPT.test(sel)) continue;
+      for (const d of m[2].matchAll(/(?:^|;)\s*(min-height|height)\s*:\s*(\d+)px/g)) {
+        if (d[1] === 'min-height' && +d[2] >= 60) continue; // 多行编辑器的最小高，不是控件档位
+        if (!['24', '28', '32', '36'].includes(d[2]))
+          offCtl.push(`${file}: ${sel.replace(/\s+/g, ' ').slice(0, 60)} → ${d[2]}px`);
+      }
+    }
+  }
+  return offCtl.length;
+});
+
+// 组件唯一实现（规范 §6）：规范组件的基座选择器只能在 components.css 里定义
+const CANON = ['.btn', '.badge', '.tag', '.switch', '.seg', '.spinner', '.field'];
+const canonDup = [];
+count('css.canonicalOutsideComponents', () => {
+  for (const { file, css } of cssAll) {
+    if (file === 'components.css') continue;
+    const re = /([^{}]+)\{/g;
+    let m;
+    while ((m = re.exec(css)))
+      for (const s of m[1].split(',').map((x) => x.trim())) if (CANON.includes(s)) canonDup.push(`${file}: ${s}`);
+  }
+  return canonDup.length;
+});
+
+// 按钮族唯一（规范 §6.1）：已合并的老按钮 class 只作 JS / 测试钩子，必须与 .btn 同时出现
+const LEGACY_BTN = [
+  'qbtn',
+  'chat-tool-btn',
+  'chat-model-btn',
+  'chat-params-btn',
+  'notes-tb-btn',
+  'rb-chrome-btn',
+  'side-icon-btn',
+  'sa-btn',
+  'card-star',
+  'cd-star',
+  'co-close',
+  'cmp-close',
+  'rcd-close',
+  'rsd-close',
+  'settings-x',
+  'shp-close',
+  'ft-banner-close',
+  'fcp-x',
+];
+const orphanBtn = [];
+count('ui.legacyButtonWithoutBtn', () => {
+  const scan = (file, src) => {
+    for (const [, cls] of src.matchAll(/<button\b[^>]*?\bclass="([^"]*)"/g)) {
+      const c = cls.split(/\s+/);
+      if (!c.includes('btn') && c.some((x) => LEGACY_BTN.includes(x.replace(/\$\{.*$/, ''))))
+        orphanBtn.push(`${file}: ${cls}`);
+    }
+    for (const [, cls] of src.matchAll(/\.className\s*=\s*'([^']*)'/g)) {
+      const c = cls.split(/\s+/);
+      if (!c.includes('btn') && c.some((x) => LEGACY_BTN.includes(x))) orphanBtn.push(`${file}: ${cls}`);
+    }
+  };
+  scan('index.html', HTML);
+  for (const { file, src } of jsAll) scan(file, src);
+  return orphanBtn.length;
 });
 
 // 内联 style 写死色值（style="color:#…"、el.style.color = 'rgba(…)'）
@@ -166,18 +257,31 @@ count('html.iconButtonNoLabel', () => {
 
 // ---------------------------------------------------------------- 基线
 
-const HARD = ['css.zIndexLiteral', 'js.nativeDialog'];
+// 必须为 0。前两项有专门的断言（带违规明细）；其余由下方通用硬约束测试兜。
+// P1（v3.64）收口后升级为硬约束：半像素 / px 字号、emoji、内联色值、无名图标按钮、组件重复定义、孤儿老按钮。
+const HARD = [
+  'css.zIndexLiteral',
+  'js.nativeDialog',
+  'css.halfPxFontSize',
+  'css.rawFontSizePx',
+  'ui.emoji',
+  'ui.inlineStyleColor',
+  'html.iconButtonNoLabel',
+  'css.canonicalOutsideComponents',
+  'ui.legacyButtonWithoutBtn',
+];
 
-// 只许减不许增。降下来后把这里改成新值（测试会提示）。基线取自 v3.63 P0 落地时。
+// 上限型约束（不是 0，但不得超过规范给定的上限）
+const CAP = {
+  'css.fontSizeTokens': 7, // §3.3 字号 7 档
+};
+
+// 只许减不许增。降下来后把这里改成新值（测试会提示）。基线取自 v3.64 P1 落地时。
 const BASELINE = {
-  'css.colorLiteral': 296, //       P1：暗色补丁与散落字面量逐步收进 tokens.css
-  'css.halfPxFontSize': 127, //     P1：字号归一到 --fs-*（规范 §3.3 映射表）
-  'css.rawFontSizePx': 466, //      P1/P2：px 字号改 --fs-*
-  'css.offScaleMedia': 2, //        P2：断点收敛到 1240 / 1100 / 860，届时改硬约束
-  'css.keyframes': 40, //           P3：收敛到 pw-* 共享关键帧
-  'ui.emoji': 21, //                P1：换细线 SVG 图标
-  'ui.inlineStyleColor': 7, //      P1
-  'html.iconButtonNoLabel': 14, //  P1：补 aria-label
+  'css.colorLiteral': 211, //            P2：暗色补丁与散落字面量逐步收进 tokens.css
+  'css.offScaleMedia': 2, //             P2：断点收敛到 1240 / 1100 / 860，届时改硬约束
+  'css.keyframes': 36, //                P3：收敛到 pw-* 共享关键帧
+  'css.offScaleControlHeight': 4, //     P2：侧栏 rail 38px 与 chip 内 × 微钮（rail 属导航，非控件，评估后可豁免）
 };
 
 // ---------------------------------------------------------------- 断言
@@ -231,6 +335,36 @@ test('design-lint 硬约束：tokens.css 在 styles.css 之前加载，且定义
       assert.match(tokens, new RegExp(name + '\\s*:'), `未定义 ${name}`);
 });
 
+const HARD_DETAIL = {
+  'css.canonicalOutsideComponents': canonDup,
+  'ui.legacyButtonWithoutBtn': orphanBtn,
+};
+for (const name of HARD.slice(2)) {
+  test(`design-lint 硬约束：${name} = 0`, () => {
+    assert.strictEqual(
+      metrics[name],
+      0,
+      `${name} = ${metrics[name]}（必须为 0，见 docs/DESIGN_SYSTEM.md）${HARD_DETAIL[name] ? '\n  ' + HARD_DETAIL[name].join('\n  ') : ''}`,
+    );
+  });
+}
+
+for (const [name, cap] of Object.entries(CAP)) {
+  test(`design-lint 上限：${name} ≤ ${cap}`, () => {
+    assert.ok(metrics[name] <= cap, `${name} = ${metrics[name]}，超过上限 ${cap}：${[...fontSizeValues].join(' / ')}`);
+  });
+}
+
+test('design-lint：控件高度只用四档（违规明细不超过基线）', () => {
+  assert.ok(offCtl.length <= BASELINE['css.offScaleControlHeight'], offCtl.join('\n'));
+});
+
+test('design-lint：components.css 在 styles.css 之后加载（规范组件覆盖存量上下文规则）', () => {
+  const iSty = HTML.indexOf('href="/styles.css"');
+  const iCmp = HTML.indexOf('href="/components.css"');
+  assert.ok(iSty > 0 && iCmp > iSty, 'components.css 必须在 styles.css 之后');
+});
+
 for (const [name, base] of Object.entries(BASELINE)) {
   test(`design-lint 棘轮：${name} 不超过基线 ${base}`, () => {
     const n = metrics[name];
@@ -246,5 +380,5 @@ for (const [name, base] of Object.entries(BASELINE)) {
 }
 
 test('design-lint：硬约束与棘轮覆盖全部计数器', () => {
-  for (const k of Object.keys(metrics)) assert.ok(HARD.includes(k) || k in BASELINE, `计数器 ${k} 未登记`);
+  for (const k of Object.keys(metrics)) assert.ok(HARD.includes(k) || k in BASELINE || k in CAP, `计数器 ${k} 未登记`);
 });

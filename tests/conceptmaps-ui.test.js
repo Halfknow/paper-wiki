@@ -99,7 +99,7 @@ test('空制品网格提示 + 生成按钮 POST 后出现 generating 占位卡�
   const html = $('concept-maps-list').innerHTML;
   assert.ok(html.includes('cms-card'), '制品应以卡片网格渲染');
   assert.ok(html.includes('cms-thumb-status'), 'generating 卡应有缩略图占位区');
-  assert.ok(html.includes('cms-spinner'), 'generating 制品应有 spinner');
+  assert.ok(html.includes('class="spinner'), 'generating 制品应有 spinner');
   assert.ok(html.includes('取消'), '生成中制品只提供「取消」（=删除并中断任务）');
   assert.ok(!html.includes('data-cm-thumb='), '生成中不挂缩略图');
   const post = ui.backend.posts.find((x) => x.path.startsWith('/api/concepts/map'));

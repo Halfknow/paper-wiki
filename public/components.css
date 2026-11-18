@@ -1,0 +1,244 @@
+/* ==========================================================================
+   components.css —— 组件层（设计系统 §6，v3.64 P1）
+   --------------------------------------------------------------------------
+   加载顺序：tokens.css → styles.css → components.css（本文件最后加载）。
+   这里是「合并后的规范组件」的唯一定义处：.btn / .field / .switch / .seg /
+   .badge / .tag / .spinner / .pw-icon / inline status。
+   老 class 名（如 .chat-tool-btn、.stat-pill）可以继续作为 JS / 测试的钩子留在
+   DOM 上，但**样式只在这里写一份**；styles.css 中对应的旧定义已删除。
+   只引用 tokens.css 的变量，不写原始色值（tests/design-lint 守护）。
+   ========================================================================== */
+
+/* ---------- 共享关键帧（规范 §3.8） ---------- */
+@keyframes pw-spin { to { transform: rotate(360deg); } }
+
+/* ---------- 图标（icons.js 产出的 SVG） ---------- */
+.pw-icon { flex: none; display: inline-block; vertical-align: -2px; }
+button .pw-icon, .btn .pw-icon { vertical-align: middle; }
+
+/* ---------- Spinner（规范 §6.10）：14 / 16 / 20 三档，2px 环，.8s 线性 ---------- */
+.spinner {
+  --spinner-size: 16px;
+  display: inline-block; flex: none; box-sizing: border-box;
+  width: var(--spinner-size); height: var(--spinner-size); border-radius: 50%;
+  border: 2px solid var(--accent-soft); border-top-color: var(--accent-strong);
+  animation: pw-spin .8s linear infinite; vertical-align: -3px;
+}
+.spinner.sm { --spinner-size: 14px; vertical-align: -2px; }
+.spinner.lg { --spinner-size: 20px; vertical-align: -4px; }
+/* 依附在按钮 / 图标上的忙碌态：直接转动 SVG（阅读器工具栏等） */
+.is-spinning, [aria-busy="true"] > .pw-icon { animation: pw-spin .8s linear infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .spinner, .is-spinning, [aria-busy="true"] > .pw-icon { animation-duration: 2.4s; }
+}
+
+/* ---------- Inline status（规范 §6.11）：ui-kit.inlineStatus() 写 data-level + 图标 + 文案 ---------- */
+.inline-status, .ch-test[data-level] { display: inline-flex; align-items: center; gap: 4px; min-width: 0; }
+.ch-test[data-level] > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.inline-status[data-level="success"], .ch-test[data-level="success"] { color: var(--success); }
+.inline-status[data-level="danger"], .ch-test[data-level="danger"] { color: var(--danger); }
+.inline-status[data-level="warning"], .ch-test[data-level="warning"] { color: var(--warning); }
+.inline-status[data-level="info"], .ch-test[data-level="info"] { color: var(--accent-strong); }
+
+/* ---------- 工具类 ---------- */
+.sr-only {
+  position: absolute !important; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+
+/* ---------- Switch（规范 §6.4）：36×20，唯一开关实现 ----------
+   <label class="switch"><input type="checkbox"><span class="switch-track" aria-hidden="true"></span>
+     <span class="switch-label">文案（可选）</span></label>
+   .switch.sm（28×16）只给卡片内的微型开关（阅读器 / 聊天参数卡）。 */
+.switch {
+  --sw-w: 36px; --sw-h: 20px; --sw-pad: 2px;
+  position: relative; display: inline-flex; align-items: center; gap: var(--sp-2);
+  flex: none; cursor: pointer; user-select: none; vertical-align: middle;
+}
+.switch.sm { --sw-w: 28px; --sw-h: 16px; }
+.switch input { position: absolute; opacity: 0; width: 1px; height: 1px; margin: 0; pointer-events: none; }
+.switch-track {
+  position: relative; flex: none; width: var(--sw-w); height: var(--sw-h);
+  border-radius: var(--r-full); background: rgba(var(--ink), .20);
+  transition: background var(--dur-base) var(--ease-standard), box-shadow var(--dur-fast) ease;
+}
+.switch-track::before {
+  content: ""; position: absolute; top: var(--sw-pad); left: var(--sw-pad);
+  width: calc(var(--sw-h) - 2 * var(--sw-pad)); height: calc(var(--sw-h) - 2 * var(--sw-pad));
+  border-radius: 50%; background: var(--on-accent); box-shadow: var(--shadow-1);
+  transition: transform var(--dur-base) var(--ease-standard);
+}
+.switch:hover .switch-track { background: rgba(var(--ink), .28); }
+.switch input:checked + .switch-track { background: var(--accent); }
+.switch:hover input:checked + .switch-track { background: var(--accent-strong); }
+.switch input:checked + .switch-track::before { transform: translateX(calc(var(--sw-w) - var(--sw-h))); }
+.switch input:focus-visible + .switch-track { box-shadow: 0 0 0 3px var(--accent-soft); }
+.switch input:disabled + .switch-track { opacity: .5; }
+.switch:has(input:disabled) { cursor: not-allowed; }
+.switch-label { font-size: var(--fs-md); color: var(--text); }
+
+/* ---------- Segmented（规范 §6.5）：唯一分段控件 ----------
+   <div class="seg" role="group" aria-label="…"><button class="active">…</button>…</div>
+   .seg.icon-seg：纯图标格（正方形）。选中态 = 抬起的中性块 + Indigo 文字。 */
+.seg {
+  display: inline-flex; align-items: center; gap: 2px; flex: none;
+  height: var(--ctl-sm); padding: 2px; border-radius: var(--r-sm);
+  box-shadow: inset 0 0 0 1px var(--ring); background: var(--fill-secondary);
+}
+.seg > button {
+  display: inline-flex; align-items: center; justify-content: center; gap: 5px;
+  height: 100%; padding: 0 10px; border: 0; border-radius: var(--r-xs);
+  background: transparent; color: var(--muted); cursor: pointer;
+  font: inherit; font-size: var(--fs-md); font-weight: 400; white-space: nowrap;
+  transition: background var(--dur-fast) ease, color var(--dur-fast) ease;
+}
+.seg > button svg { flex: none; }
+.seg.icon-seg > button { width: 28px; padding: 0; }
+.seg > button:hover { background: var(--fill-ghost-hover); color: var(--text); }
+.seg > button.active, .seg > button[aria-pressed="true"] {
+  background: var(--surface-raised); color: var(--accent); font-weight: 500; box-shadow: var(--shadow-1);
+}
+.seg > button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.seg .seg-count { font-size: var(--fs-xs); font-weight: 500; color: var(--muted2); }
+.seg > button.active .seg-count { color: var(--accent); }
+
+/* ---------- Badge（规范 §6.6，无描边）：状态 / 元数据徽章，唯一实现 ----------
+   <span class="badge">中性</span>  语义：.success .warning .danger .info .accent
+   分类色（命令面板类型等）：.violet .cyan     去底（纯数字计数）：.plain
+   .is-live：前置脉冲点（处理中）。老 class（.read-chip / .freq-badge / .cp-kind …）只作 JS / 测试钩子。 */
+.badge {
+  display: inline-flex; align-items: center; gap: 4px; flex: none; vertical-align: middle;
+  padding: 1px 7px; border: 1px solid transparent; border-radius: var(--r-xs);
+  font-size: var(--fs-xs); font-weight: 500; line-height: 16px; white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  background: var(--surface-2); color: var(--text-2);
+}
+.badge.success { background: var(--success-subtle); color: var(--success-text); }
+.badge.warning { background: var(--warning-subtle); color: var(--warning-text); }
+.badge.danger { background: var(--danger-subtle); color: var(--danger-text); }
+.badge.info { background: var(--info-subtle); color: var(--info-text); }
+.badge.accent { background: var(--accent-subtle); color: var(--accent-strong); }
+.badge.violet { background: var(--violet-soft); color: var(--violet-text); }
+.badge.cyan { background: var(--cyan-soft); color: var(--cyan-text); }
+.badge.plain { background: transparent; padding-inline: 0; font-weight: 600; }
+.badge.has-dot::before, .badge.is-live::before {
+  content: ""; flex: none; width: 6px; height: 6px; border-radius: 50%; background: currentColor;
+}
+.badge.is-live::before { animation: pulse-dot 1.3s ease-in-out infinite; }
+
+/* ---------- Tag / Topic（规范 §6.6，无描边）：用户内容标签，颜色由 .chip-N 稳定色槽承载 ---------- */
+.tag, .topic {
+  display: inline-flex; align-items: center; vertical-align: middle;
+  padding: 0 7px; border: 1px solid transparent; border-radius: var(--r-xs);
+  font-size: var(--fs-xs); font-weight: 500; line-height: 18px; white-space: nowrap;
+  background: var(--surface-2); color: var(--text-2);
+}
+.topic { background: var(--accent-subtle); color: var(--accent-strong); }
+.tag.muted { color: var(--text-3); background: var(--surface-1); }
+.chip-0 { background: var(--chip-0-bg); color: var(--chip-0-fg); }
+.chip-1 { background: var(--chip-1-bg); color: var(--chip-1-fg); }
+.chip-2 { background: var(--chip-2-bg); color: var(--chip-2-fg); }
+.chip-3 { background: var(--chip-3-bg); color: var(--chip-3-fg); }
+.chip-4 { background: var(--chip-4-bg); color: var(--chip-4-fg); }
+.chip-5 { background: var(--chip-5-bg); color: var(--chip-5-fg); }
+.chip-6 { background: var(--chip-6-bg); color: var(--chip-6-fg); }
+.chip-7 { background: var(--chip-7-bg); color: var(--chip-7-fg); }
+
+/* ---------- Button（规范 §6.1）：全站唯一按钮族 ----------
+   变体：.btn（primary，实心，每个区域最多一个）/ .secondary（浅底 + 内环，最常用）/ .ghost（无底，工具条 / 卡内）
+   修饰：.danger（primary 上 = 红实心；secondary / ghost 上 = 红字，hover 出红底）  .active（切换按钮的开态）
+   尺寸：.xs 24（仅图标 / 卡内微钮）/ .sm 28 / 默认 32 / .lg 36；.icon = 正方形纯图标（必须 aria-label）
+   .is-starred：星标开态（--star 色）。busy 由 ui-kit.setBusy 管理（保宽 + disabled + .is-busy）。 */
+.btn {
+  --btn-h: var(--ctl-md);
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  min-height: var(--btn-h); padding: 0 12px; border: 0; border-radius: var(--r-md);
+  background: var(--fill-primary); color: var(--on-primary); box-shadow: none;
+  font: inherit; font-size: var(--fs-base); font-weight: 500; line-height: 1.2; white-space: nowrap;
+  cursor: pointer; text-decoration: none;
+  transition: background var(--dur-fast) ease, box-shadow var(--dur-fast) ease, color var(--dur-fast) ease;
+}
+.btn svg { flex: none; }
+.btn:hover:not(:disabled) { background: var(--fill-primary-hover); }
+.btn:active:not(:disabled) { transform: translateY(.5px); }
+.btn:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--surface-1), 0 0 0 4px var(--accent); }
+
+.btn.secondary { background: var(--fill-secondary); color: var(--text); font-weight: 400; box-shadow: inset 0 0 0 1px var(--ring); }
+.btn.secondary:hover:not(:disabled) { background: var(--fill-secondary-hover); color: var(--text); box-shadow: inset 0 0 0 1px var(--ring-hover); }
+.btn.ghost { background: transparent; color: var(--muted); font-weight: 400; }
+.btn.ghost:hover:not(:disabled) { background: var(--fill-ghost-hover); color: var(--text); }
+.btn.secondary:focus-visible, .btn.ghost:focus-visible { box-shadow: 0 0 0 2px var(--surface-1), 0 0 0 4px var(--accent); }
+
+.btn.active, .btn.active:hover:not(:disabled) {
+  background: var(--accent-subtle); color: var(--accent-strong); box-shadow: inset 0 0 0 1px var(--accent-border);
+}
+.btn.is-starred, .btn.is-starred:hover:not(:disabled) { color: var(--star); }
+
+.btn.danger { background: var(--danger); color: var(--on-accent); }
+.btn.danger:hover:not(:disabled) { background: var(--danger-hover); }
+.btn.secondary.danger, .btn.ghost.danger { background: transparent; color: var(--danger); }
+.btn.secondary.danger { box-shadow: inset 0 0 0 1px var(--ring); }
+.btn.secondary.danger:hover:not(:disabled) { background: var(--danger-subtle); color: var(--danger); box-shadow: inset 0 0 0 1px var(--danger-border); }
+.btn.ghost.danger:hover:not(:disabled) { background: var(--danger-subtle); color: var(--danger); }
+
+.btn:disabled, .btn[aria-disabled="true"] { opacity: .45; cursor: default; }
+.btn.is-busy { position: relative; cursor: progress; }
+
+.btn.xs { --btn-h: var(--ctl-xs); padding: 0 7px; gap: 4px; font-size: var(--fs-sm); border-radius: var(--r-xs); }
+.btn.sm { --btn-h: var(--ctl-sm); padding: 0 10px; font-size: var(--fs-md); border-radius: var(--r-sm); }
+.btn.lg { --btn-h: var(--ctl-lg); padding: 0 16px; }
+.btn.icon { width: var(--btn-h); min-width: var(--btn-h); padding: 0; }
+.btn.xs svg { max-width: 14px; max-height: 14px; }
+/* 纯图标按钮里未声明尺寸的内联 SVG：统一 16px（.xs 14px），告别各处 13/14/15px 的散值 */
+.btn.icon svg:not([width]) { width: 16px; height: 16px; }
+.btn.xs.icon svg:not([width]) { width: 14px; height: 14px; }
+
+/* 星标（§6.1 .btn.ghost.xs.icon.star-btn）：静默弱色 → hover 金色 → .is-starred 实心金 + 弹跳确认 */
+@keyframes star-pop { 0% { transform: scale(.55); } 60% { transform: scale(1.28); } 100% { transform: scale(1); } }
+.btn.star-btn { color: var(--muted2); }
+.btn.star-btn:hover:not(:disabled) { color: var(--star); }
+.btn.star-btn.is-starred, .btn.star-btn.is-starred:hover:not(:disabled) { color: var(--star); }
+.btn.star-btn.is-starred svg { fill: currentColor; }
+.btn.star-btn.is-starred { animation: star-pop var(--dur-slow) ease; }
+
+/* ---------- Text Field / Textarea / Select（规范 §6.3）：全站唯一输入规格 ----------
+   新代码直接写 <input class="field">；下列老 class / 上下文选择器是存量表单的别名（只作 JS / 测试钩子），
+   外观一律在此定义，styles.css 里只保留它们的布局（宽度 / flex / 最小高）。
+   内环而非 border（与按钮同一语言，hover / focus 不产生 1px 跳动）。 */
+.field,
+.fe-input, .fpk-input, .pwdlg-input,
+.pfd-row input[type='text'], .pfd-row textarea, .pfd-row select,
+.settings-form input[type=text], .settings-form input[type=password], .settings-form input[type=number],
+.settings-form select, .settings-form textarea {
+  min-height: var(--ctl-lg); padding: 0 12px; border: 0; border-radius: var(--r-md);
+  background: var(--surface-1); color: var(--text-1); box-shadow: inset 0 0 0 1px var(--border-default);
+  font: inherit; font-size: var(--fs-base); line-height: 1.5;
+  transition: box-shadow var(--dur-fast) ease, background var(--dur-fast) ease;
+}
+textarea.field, .fe-input:is(textarea), .pwdlg-input:is(textarea), .pfd-row textarea, .settings-form textarea {
+  padding: 8px 12px; resize: vertical; line-height: 1.55;
+}
+select.field, .pfd-row select, .settings-form select { cursor: pointer; }
+:is(.field, .fe-input, .fpk-input, .pwdlg-input, .pfd-row input[type='text'], .pfd-row textarea, .pfd-row select,
+  .settings-form input[type=text], .settings-form input[type=password], .settings-form input[type=number],
+  .settings-form select, .settings-form textarea):hover:not(:disabled):not(:focus) {
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+}
+:is(.field, .fe-input, .fpk-input, .pwdlg-input, .pfd-row input[type='text'], .pfd-row textarea, .pfd-row select,
+  .settings-form input[type=text], .settings-form input[type=password], .settings-form input[type=number],
+  .settings-form select, .settings-form textarea):focus {
+  outline: none; box-shadow: inset 0 0 0 1px var(--accent), 0 0 0 3px var(--accent-subtle);
+}
+.field.is-invalid, input.pfd-invalid, textarea.pfd-invalid, .fe-input.pfd-invalid,
+.field[aria-invalid="true"] {
+  box-shadow: inset 0 0 0 1px var(--danger), 0 0 0 3px var(--danger-subtle);
+}
+:is(.field, .fe-input, .fpk-input, .pwdlg-input, .pfd-row input, .pfd-row textarea, .pfd-row select,
+  .settings-form input, .settings-form select, .settings-form textarea):disabled {
+  background: var(--fill-secondary); color: var(--text-3); cursor: not-allowed;
+}
+.field.sm { min-height: var(--ctl-sm); padding: 0 10px; font-size: var(--fs-md); border-radius: var(--r-sm); }
+.field::placeholder, .fe-input::placeholder, .fpk-input::placeholder, .pwdlg-input::placeholder,
+.pfd-row input::placeholder, .pfd-row textarea::placeholder, .settings-form input::placeholder, .settings-form textarea::placeholder {
+  color: var(--text-3);
+}

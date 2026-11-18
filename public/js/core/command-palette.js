@@ -177,7 +177,7 @@ function _renderList() {
         .map(
           (x, i) =>
             `<div class="cp-item${i === _active ? ' active' : ''}" role="option" aria-selected="${i === _active}" data-i="${i}">
-              <span class="cp-kind k-${x.kind === '论文' ? 'paper' : x.kind === '概念' ? 'concept' : x.kind === '公式' ? 'formula' : 'action'}">${x.kind}</span>
+              <span class="cp-kind badge ${x.kind === '论文' ? 'info' : x.kind === '概念' ? 'violet' : x.kind === '公式' ? 'cyan' : 'success'}">${x.kind}</span>
               <span class="cp-label" title="${String(x.label).replace(/"/g, '&quot;')}"></span>
               <span class="cp-sub">${x.sub || ''}</span>
             </div>`,

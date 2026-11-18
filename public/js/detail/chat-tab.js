@@ -67,14 +67,14 @@ export function renderChatTab(body, p) {
     if (f.kind === 'toggle') {
       // toggle（如 thinking）：只有开关 + 状态文案，无滑块/数字输入
       return `<div class="pp-card toggle" data-key="${f.key}">
-        <div class="pp-card-head"><span class="pp-label">${f.label}</span><b class="pp-val">开启</b><label class="pp-switch-wrap"><input type="checkbox" class="pp-switch" /><span class="pp-track"></span></label></div>
+        <div class="pp-card-head"><span class="pp-label">${f.label}</span><b class="pp-val">开启</b><label class="switch sm"><input type="checkbox" class="pp-switch" /><span class="switch-track" aria-hidden="true"></span></label></div>
       </div>`;
     }
     const inputHtml = f.kind === 'range'
       ? `<input type="range" class="pp-in" min="${f.min}" max="${f.max}" step="${f.step}" disabled />`
       : `<input type="number" class="pp-in" min="${f.min}" step="${f.step}" placeholder="不限" disabled />`;
     return `<div class="pp-card" data-key="${f.key}">
-      <div class="pp-card-head"><span class="pp-label">${f.label}</span><b class="pp-val">默认</b><label class="pp-switch-wrap"><input type="checkbox" class="pp-switch" /><span class="pp-track"></span></label></div>
+      <div class="pp-card-head"><span class="pp-label">${f.label}</span><b class="pp-val">默认</b><label class="switch sm"><input type="checkbox" class="pp-switch" /><span class="switch-track" aria-hidden="true"></span></label></div>
       ${inputHtml}
     </div>`;
   }).join('');
@@ -96,22 +96,22 @@ export function renderChatTab(body, p) {
         <textarea id="chat-input" rows="1" placeholder="问问 AI 关于这篇论文…  @ 引用其它论文">${escapeHtml(chatState.draft || '')}</textarea>
         <div class="chat-composer-footer">
           <div class="chat-composer-left">
-            <button class="chat-tool-btn" id="chat-presets-btn" type="button" title="快捷提问">
+            <button class="btn ghost sm chat-tool-btn" id="chat-presets-btn" type="button" title="快捷提问">
               <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L3 14h9l-1 8 10-12h-9z"/></svg>
               <span>快捷</span>
             </button>
-            <button class="chat-tool-btn icon-only" id="chat-attach-btn" type="button" title="添加图片（视觉问答）">
+            <button class="btn ghost sm icon chat-tool-btn" id="chat-attach-btn" type="button" title="添加图片（视觉问答）" aria-label="添加图片">
               <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="M21 15l-5-5L5 21"/></svg>
             </button>
-            <button class="chat-tool-btn icon-only" id="chat-params-btn" type="button" title="模型参数">
+            <button class="btn ghost sm icon chat-tool-btn" id="chat-params-btn" type="button" title="模型参数" aria-label="模型参数">
               <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>
               <span class="cp-badge"></span>
             </button>
-            ${msgs.length ? '<button class="chat-tool-btn icon-only" id="chat-outline" title="问答大纲"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><circle cx="4" cy="6" r="1"/><circle cx="4" cy="12" r="1"/><circle cx="4" cy="18" r="1"/></svg></button>' : ''}
-            ${msgs.length ? '<button class="chat-tool-btn" id="chat-clear" type="button" title="清空聊天记录"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg><span>清空</span></button>' : ''}
+            ${msgs.length ? '<button class="btn ghost sm icon chat-tool-btn" id="chat-outline" type="button" title="问答大纲" aria-label="问答大纲"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><circle cx="4" cy="6" r="1"/><circle cx="4" cy="12" r="1"/><circle cx="4" cy="18" r="1"/></svg></button>' : ''}
+            ${msgs.length ? '<button class="btn ghost sm chat-tool-btn" id="chat-clear" type="button" title="清空聊天记录"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg><span>清空</span></button>' : ''}
           </div>
           <div class="chat-composer-right">
-            <button class="chat-model-btn" id="chat-model-btn" type="button" title="切换模型" aria-expanded="false">
+            <button class="btn secondary sm chat-model-btn" id="chat-model-btn" type="button" title="切换模型" aria-expanded="false">
               <span class="cm-name">${escapeHtml(currentModel)}</span>
               <svg class="cm-chev" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
             </button>
@@ -686,7 +686,7 @@ function toggleChatOutline(open) {
   pop.className = 'chat-outline-pop fixed';
   pop.innerHTML = `<div class="co-head">
     <span>问答大纲<span class="co-count"> · ${items.length} 个问题</span></span>
-    <button class="co-close" title="关闭" aria-label="关闭"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="6" y1="18" x2="18" y2="6"/></svg></button>
+    <button class="btn ghost xs icon co-close" type="button" title="关闭" aria-label="关闭"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="6" y1="18" x2="18" y2="6"/></svg></button>
   </div><div class="co-list"></div>`;
   const coList = pop.querySelector('.co-list');
   items.forEach((it, idx) => {

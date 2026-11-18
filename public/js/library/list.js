@@ -4,6 +4,7 @@
 
 import { api, jget } from '../core/api.js';
 import { $, selectionWithin } from '../core/dom.js';
+import { icon } from '../core/icons.js';
 import { escapeHtml, starBadge, statusDot } from '../core/format.js';
 import { gotoPaperRoute, router } from '../core/nav.js';
 import { buildPath } from '../core/router.js';
@@ -65,7 +66,7 @@ function renderFulltextResults(ul) {
   banner.innerHTML = `
     <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
     <span class="ft-banner-text">全文检索「${escapeHtml(ft.query)}」${ft.results == null ? '…' : ` · 命中 ${ft.results.length} 篇`}</span>
-    <button class="ft-banner-close" title="退出全文检索 (Esc)" aria-label="退出全文检索">×</button>`;
+    <button class="btn ghost xs icon ft-banner-close" type="button" title="退出全文检索 (Esc)" aria-label="退出全文检索">${icon('x', { size: 14 })}</button>`;
   banner.querySelector('.ft-banner-close').onclick = () => { state.ft = null; renderList(); };
   ul.appendChild(banner);
   if (ft.results == null) {
@@ -84,7 +85,7 @@ function renderFulltextResults(ul) {
     const meta = escapeHtml(`${(p.authors || [])[0] || '未知作者'}${p.year ? ' · ' + p.year : ''}`);
     li.innerHTML = `
       <div class="pt"><span class="dot ${statusDot(p)}"></span>${title}</div>
-      <div class="pm"><span>${meta}</span><span class="mini-metric">${p.matches >= 50 ? '50+' : p.matches} 处命中</span></div>
+      <div class="pm"><span>${meta}</span><span class="mini-metric badge">${p.matches >= 50 ? '50+' : p.matches} 处命中</span></div>
       <div class="ft-snips">${(p.snippets || []).map((sn) => `<div class="ft-snip">${sn}</div>`).join('')}</div>`;
     li.onclick = () => { if (hasSelectionWithin(li)) return; gotoPaperRoute(p.id); };
     ul.appendChild(li);
@@ -153,7 +154,7 @@ export function renderList() {
     li.dataset.id = p.id;
     li.dataset.status = p.status || '';
     li.setAttribute('aria-selected', state.current === p.id ? 'true' : 'false');
-    const sel = state.pickMode && state.selected.has(p.id) ? '☑' : (state.pickMode ? '☐' : '');
+    const sel = state.pickMode && state.selected.has(p.id) ? icon('check-square') : (state.pickMode ? icon('square') : '');
     const title = escapeHtml(p.title || p.filename) + (p.rating > 0 ? starBadge(p.rating) : '');
     const read = readStatusLabel(p.readStatus);
     const progress = progressPercent(p);
@@ -168,9 +169,9 @@ export function renderList() {
           <div class="compact-main">
             <div class="compact-title-line">
               <span class="compact-title">${title}</span>
-              ${isBusy ? `<span class="busy-tag">${statusLabel(p.status)}</span>` : `<span class="read-chip">${read}</span>`}
-              ${progress != null && progress > 0 ? `<span class="mini-metric read">${progress}%</span>` : ''}
-              ${!isBusy && p.conceptCount ? `<span class="mini-metric">${p.conceptCount}</span>` : ''}
+              ${isBusy ? `<span class="busy-tag badge warning is-live">${statusLabel(p.status)}</span>` : `<span class="read-chip badge">${read}</span>`}
+              ${progress != null && progress > 0 ? `<span class="mini-metric badge read">${progress}%</span>` : ''}
+              ${!isBusy && p.conceptCount ? `<span class="mini-metric badge">${p.conceptCount}</span>` : ''}
             </div>
             <div class="compact-meta">${meta}</div>
             ${progress != null && progress > 0 && progress < 100 ? `<div class="progress-row thin"><div class="progress-bar"><i style="width:${progress}%"></i></div></div>` : ''}
@@ -184,13 +185,13 @@ export function renderList() {
       const isBusy = ['pending', 'parsing', 'enriching', 'summarizing'].includes(p.status);
       const contHint = (!isBusy && progress != null && progress > 0 && progress < 100) ? ' · 双击继续阅读' : '';
       li.innerHTML = `
-        ${state.pickMode ? `<span class="pick" style="font-size:14px;">${sel}</span>` : ''}
+        ${state.pickMode ? `<span class="pick">${sel}</span>` : ''}
         <div class="pt"><span class="dot ${statusDot(p)}${isBusy ? ' busy' : ''}" title="${statusLabel(p.status)}"></span>${title}</div>
         <div class="pm">
           <span>${escapeHtml(shortAuthors(p))}${p.year ? ' · ' + p.year : ''}</span>
-          ${isBusy ? `<span class="busy-tag">${statusLabel(p.status)}</span>` : `<span class="read-chip">${read}</span>`}
-          ${p.conceptCount ? `<span class="mini-metric">${p.conceptCount} 概念</span>` : ''}
-          ${progress != null && progress >= 100 ? '<span class="read-chip done">读完</span>' : ''}
+          ${isBusy ? `<span class="busy-tag badge warning is-live">${statusLabel(p.status)}</span>` : `<span class="read-chip badge">${read}</span>`}
+          ${p.conceptCount ? `<span class="mini-metric badge">${p.conceptCount} 概念</span>` : ''}
+          ${progress != null && progress >= 100 ? '<span class="read-chip badge success">读完</span>' : ''}
         </div>
         <div class="chips">${topics}${tags}</div>
         ${progress != null ? `<div class="progress-row"><div class="progress-bar"><i style="width:${progress}%"></i></div><span title="${escapeHtml('读到 ' + progress + '%' + contHint)}">${progress}%</span></div>` : ''}`;

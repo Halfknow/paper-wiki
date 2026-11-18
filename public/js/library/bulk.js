@@ -36,7 +36,7 @@ export function togglePickMode(on) {
   pickBtn.title = on ? '退出多选' : '多选论文以追加概念';
   pickBtn.setAttribute('aria-label', on ? '退出多选' : '多选');
   pickBtn.classList.toggle('active', on);
-  pickBtn.classList.toggle('subtle', !on);
+  pickBtn.classList.toggle('ghost', !on);
   renderList();
 }
 

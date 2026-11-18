@@ -5,6 +5,7 @@
 import { PATCH, POST, api, jget } from '../core/api.js';
 import { $ } from '../core/dom.js';
 import { escapeHtml } from '../core/format.js';
+import { icon } from '../core/icons.js';
 import { renderMd } from '../core/markdown.js';
 import { state } from '../core/state.js';
 import { toast } from '../core/ui-kit.js';
@@ -94,10 +95,10 @@ export function NotesPanel(container, opts = {}) {
       ? cards.map(cardHtml).join('')
       : isNew
         ? ''
-        : '<div class="notes-empty">还没有笔记卡片。<br/>在 AI 聊天里点回答下的「存入笔记」，或点上方「✨ AI 生成骨架」一键生成论文结构笔记。</div>';
+        : '<div class="notes-empty">还没有笔记卡片。<br/>在 AI 聊天里点回答下的「存入笔记」，或点上方「AI 生成骨架」一键生成论文结构笔记。</div>';
     container.innerHTML = `<div class="notes-toolbar">
-        ${showGenerate ? `<button type="button" class="notes-tb-btn accent" data-nact="generate" ${busyGen ? 'disabled' : ''}>${busyGen ? '✨ 生成中…' : '✨ AI 生成骨架'}</button>` : ''}
-        <button type="button" class="notes-tb-btn" data-nact="add">＋ 添加卡片</button>
+        ${showGenerate ? `<button type="button" class="btn sm notes-tb-btn" data-nact="generate" ${busyGen ? 'disabled' : ''}>${icon('sparkles', { size: 14 })}${busyGen ? '生成中…' : 'AI 生成骨架'}</button>` : ''}
+        <button type="button" class="btn secondary sm notes-tb-btn" data-nact="add">${icon('plus', { size: 14 })}添加卡片</button>
         <span class="notes-count">${cards.length ? cards.length + ' 张卡片' : ''}</span>
         <span class="save-hint notes-hint"></span>
       </div>
@@ -132,8 +133,8 @@ export function NotesPanel(container, opts = {}) {
         <input type="text" class="nc-edit-title" placeholder="卡片标题…" value="${escapeHtml(c.title || '')}" />
         <textarea class="nc-edit-body" placeholder="Markdown 正文（支持 $公式$）…">${escapeHtml(c.body || '')}</textarea>
         <div class="nc-edit-acts">
-          <button type="button" class="notes-tb-btn accent" data-nact="save-edit" data-nc="${c.id}">${isNew ? '添加' : '保存'}</button>
-          <button type="button" class="notes-tb-btn" data-nact="cancel-edit">取消</button>
+          <button type="button" class="btn sm notes-tb-btn" data-nact="save-edit" data-nc="${c.id}">${isNew ? '添加' : '保存'}</button>
+          <button type="button" class="btn secondary sm notes-tb-btn" data-nact="cancel-edit">取消</button>
         </div>
       </div>
     </div>`;

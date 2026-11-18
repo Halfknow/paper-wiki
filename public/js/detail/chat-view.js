@@ -4,6 +4,7 @@
 
 import { api, sp } from '../core/api.js';
 import { $ } from '../core/dom.js';
+import { icon } from '../core/icons.js';
 import { escapeHtml, statusDot } from '../core/format.js';
 import { renderChatMd, truncateChatTitle } from '../core/markdown.js';
 import { state } from '../core/state.js';
@@ -195,7 +196,7 @@ export function toggleModelSwitcher(btn) {
   if (!models.length) { toast('暂无可用模型列表（检查 AI 接口配置）', 'info'); return; }
   const pop = document.createElement('div');
   pop.className = 'chat-model-pop';
-  pop.innerHTML = '<div class="cmp-head"><span>选择模型</span><button class="cmp-close" type="button" aria-label="关闭">×</button></div>' +
+  pop.innerHTML = '<div class="cmp-head"><span>选择模型</span><button class="btn ghost xs icon cmp-close" type="button" aria-label="关闭">' + icon('x', { size: 14 }) + '</button></div>' +
     '<div class="cmp-list">' +
     models.map((m) => {
       const isSel = (m.id === selected) || (!selected && m.id === def);

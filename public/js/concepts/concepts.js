@@ -5,6 +5,7 @@
 import { DEL, PATCH, POST, PUT, jget, sp } from '../core/api.js';
 import { $ } from '../core/dom.js';
 import { escapeHtml } from '../core/format.js';
+import { icon } from '../core/icons.js';
 import { openFormDialog } from '../core/form-dialog.js';
 import { gotoPaper, router, syncPageQueryToUrl } from '../core/nav.js';
 import { createPickBar } from '../core/pick-bar.js';
@@ -157,7 +158,7 @@ function renderConceptMaps() {
     const t = new Date(m.createdAt || 0).toLocaleString();
     let thumbHtml, metaHtml, actions;
     if (m.status === 'generating') {
-      thumbHtml = '<div class="cms-thumb-status"><span class="cms-spinner"></span><span>后台生成中…<br>可随时离开本页</span></div>';
+      thumbHtml = '<div class="cms-thumb-status"><span class="spinner" aria-hidden="true"></span><span>后台生成中…<br>可随时离开本页</span></div>';
       metaHtml = '<span class="cms-item-time cms-generating">生成中</span>';
       actions = _cmBtn('cancel', '取消生成', '取消生成并删除', 'data-cm-del="' + m.id + '"', true);
     } else if (m.status === 'error') {
@@ -275,9 +276,9 @@ function openConceptMapOverlay(id, html) {
     document.body.appendChild(ov);
   }
   ov.innerHTML =
-    '<div class="cmo-bar"><button class="btn ghost sm" id="cmo-close">← 返回</button>' +
+    '<div class="cmo-bar"><button class="btn secondary sm" id="cmo-close">← 返回</button>' +
     '<span class="cmo-title"></span>' +
-    '<button class="btn ghost sm" id="cmo-newtab">新标签页打开</button></div>' +
+    '<button class="btn secondary sm" id="cmo-newtab">新标签页打开</button></div>' +
     '<iframe class="cmo-frame" sandbox="allow-scripts allow-same-origin allow-popups"></iframe>';
   ov.classList.add('open');
   ov.querySelector('.cmo-title').textContent = ((state.conceptMaps || []).find((m) => m.id === id) || {}).name || '概念地图';
@@ -735,7 +736,7 @@ export function renderConceptSidebar() {
       <div class="side-title">
         <span>视图</span>
         <span class="side-actions">
-          <button class="side-icon-btn" id="btn-collapse-concepts" title="收起侧栏" aria-label="收起侧栏"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 18 9 12 15 6"/></svg></button>
+          <button class="btn ghost xs icon side-icon-btn" id="btn-collapse-concepts" title="收起侧栏" aria-label="收起侧栏"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 18 9 12 15 6"/></svg></button>
         </span>
       </div>
       <div class="side-item" data-cview="list"><span class="ico"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg></span><span>概念清单</span><span class="count">${total || ''}</span></div>
@@ -996,13 +997,13 @@ function _buildConceptCard(c, layout) {
       : '';
   const ctxHtml =
     c.context && String(c.context).trim()
-      ? `<span class="ctx-badge" title="出处：${escapeHtml(c.context)}">${escapeHtml(String(c.context).slice(0, 40))}</span>`
+      ? `<span class="ctx-badge" title="出处：${escapeHtml(c.context)}">${icon('map-pin', { size: 12 })}${escapeHtml(String(c.context).slice(0, 40))}</span>`
       : '';
-  const metaBadges = `${c.category && c.category !== 'other' ? `<span class="cat-badge" title="AI 分类">${escapeHtml(c.category)}</span>` : ''}${c.source === 'manual' ? '<span class="src-badge" title="手动录入">人工</span>' : ''}${freq ? `<span class="freq-badge" data-freq="${freq}" title="出现在 ${freq} 篇论文中">${freq} 篇</span>` : ''}`;
+  const metaBadges = `${c.category && c.category !== 'other' ? `<span class="cat-badge badge" title="AI 分类">${escapeHtml(c.category)}</span>` : ''}${c.source === 'manual' ? '<span class="src-badge badge" title="手动录入">人工</span>' : ''}${freq ? `<span class="freq-badge badge plain" data-freq="${freq}" title="出现在 ${freq} 篇论文中">${freq} 篇</span>` : ''}`;
   const metaHtml = gotoable.length
     ? `<span class="meta-label">出现于</span>${chipsHtml}${moreHtml}${restHtml}${metaBadges}`
     : `<span class="meta-label">（独立条目）</span>${metaBadges}`;
-  const starBtn = `<button class="card-star${c.starred ? ' on' : ''}" data-star="${c.id}" title="${c.starred ? '取消重点' : '标记为重点（组会讨论 / 复习清单）'}" aria-label="星标" aria-pressed="${!!c.starred}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg></button>`;
+  const starBtn = `<button class="btn ghost xs icon star-btn card-star${c.starred ? ' is-starred' : ''}" data-star="${c.id}" title="${c.starred ? '取消重点' : '标记为重点（组会讨论 / 复习清单）'}" aria-label="星标" aria-pressed="${!!c.starred}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg></button>`;
   if (layout === 'list') {
     // 清单视图：单行紧凑——频次徽章 + 术语 + 解释摘要（一行省略）+ 论文数
     card.innerHTML = `
@@ -1011,15 +1012,15 @@ function _buildConceptCard(c, layout) {
       <span class="lc-def" title="${escapeHtml(c.definition || '')}">${escapeHtml(c.definition || '（无解释）')}</span>
       <span class="lc-count">${gotoable.length} 篇</span>
       <div class="row-actions">
-        <button class="qbtn icon" data-edit="${c.id}" title="编辑概念（术语/解释/分类/核心度）" aria-label="编辑"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg></button>
-        <button class="qbtn icon danger" data-del="${c.id}" title="删除概念" aria-label="删除"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>
+        <button class="btn ghost xs icon qbtn" data-edit="${c.id}" title="编辑概念（术语/解释/分类/核心度）" aria-label="编辑"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg></button>
+        <button class="btn ghost xs icon danger qbtn" data-del="${c.id}" title="删除概念" aria-label="删除"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>
       </div>${starBtn}`;
   } else {
     card.innerHTML = `
-      <div class="ct"><h3>${escapeHtml(c.term)}</h3>${c.importance === 'core' ? '<span class="imp-badge" title="至少一篇论文将其列为核心创新">核心</span>' : ''}
+      <div class="ct"><h3>${escapeHtml(c.term)}</h3>${c.importance === 'core' ? '<span class="imp-badge badge warning" title="至少一篇论文将其列为核心创新">核心</span>' : ''}
         <div class="row-actions">
-          <button class="qbtn icon" data-edit="${c.id}" title="编辑概念（术语/解释/分类/核心度）" aria-label="编辑"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg></button>
-          <button class="qbtn icon danger" data-del="${c.id}" title="删除概念" aria-label="删除"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>
+          <button class="btn ghost xs icon qbtn" data-edit="${c.id}" title="编辑概念（术语/解释/分类/核心度）" aria-label="编辑"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg></button>
+          <button class="btn ghost xs icon danger qbtn" data-del="${c.id}" title="删除概念" aria-label="删除"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>
         </div>${starBtn}
       </div>
       <div class="cd" title="${escapeHtml((c.definition || '（无解释）').slice(0, 300))}">${escapeHtml(c.definition || '（无解释）')}</div>
@@ -1172,7 +1173,7 @@ function _wireConceptGridOnce(g) {
       const r = await PATCH('/api/concepts/' + c.id, { starred: next });
       if (r && r.ok) {
         c.starred = next;
-        starBtn.classList.toggle('on', next);
+        starBtn.classList.toggle('is-starred', next);
         starBtn.title = next ? '取消重点' : '标记为重点（组会讨论 / 复习清单）';
         starBtn.setAttribute('aria-pressed', String(next));
         renderConceptSidebar();

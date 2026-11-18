@@ -19,10 +19,10 @@ export function createPickBar({ itemsLabel = '项', categories = null, onDelete,
     el.setAttribute('role', 'toolbar');
     el.innerHTML =
       `<span class="kpick-count">已选 0 ${itemsLabel}</span>` +
-      `<button type="button" class="btn ghost sm kpick-cat">改分类…</button>` +
-      `<button type="button" class="btn ghost sm danger kpick-del">删除</button>` +
+      `<button type="button" class="btn secondary sm kpick-cat">改分类…</button>` +
+      `<button type="button" class="btn secondary sm danger kpick-del">删除</button>` +
       `<span class="kpick-spacer"></span>` +
-      `<button type="button" class="btn ghost sm kpick-exit">退出多选</button>`;
+      `<button type="button" class="btn secondary sm kpick-exit">退出多选</button>`;
     document.body.appendChild(el);
     el.querySelector('.kpick-del').onclick = async () => {
       if (!(await PWDialog.confirm(`删除选中的 ${count} 个${itemsLabel}？此操作不可恢复。`, { title: '批量删除', danger: true, okText: '删除' }))) return;

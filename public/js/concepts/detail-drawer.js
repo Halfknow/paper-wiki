@@ -26,6 +26,7 @@ import { state } from '../core/state.js';
 import { streamPostSse } from '../core/stream.js';
 import { toast } from '../core/ui-kit.js';
 import { escapeHtml } from '../core/format.js';
+import { icon } from '../core/icons.js';
 // 与 concepts.js 构成模块循环（concepts → drawer → concepts），但双方都只在事件回调里
 // 调对方函数（函数声明提升 + 运行时解析），顶层求值互不依赖——与 nav ↔ formulas 同构安全。
 import { editConceptDialog, renderConcepts, renderConceptSidebar } from './concepts.js';
@@ -112,7 +113,7 @@ function _render(c) {
           return `<div class="cd-paper" data-goto="${id}">
             <span class="cd-year">${escapeHtml(String(p.year || '—'))}</span>
             <span class="cd-paper-title" title="${escapeHtml(p.title || p.filename)}">${escapeHtml(p.title || p.filename)}</span>
-            ${ctx ? `<span class="cd-paper-ctx" title="此篇中的出处">📍 ${escapeHtml(ctx)}</span>` : ''}
+            ${ctx ? `<span class="cd-paper-ctx" title="此篇中的出处">${icon('map-pin', { size: 12 })}${escapeHtml(ctx)}</span>` : ''}
             <span class="cd-paper-topics">${topics}</span>
           </div>`;
         })
@@ -144,17 +145,17 @@ function _render(c) {
       <div class="cd-head-main">
         <h3 class="cd-term">${escapeHtml(c.term)}</h3>
         <div class="cd-badges">
-          <button class="cd-star${c.starred ? ' on' : ''}" data-cd-star title="${c.starred ? '取消重点标记' : '标记为重点（组会讨论 / 复习清单）'}" aria-label="星标" aria-pressed="${!!c.starred}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg></button>
-          ${catLabel ? `<span class="cd-badge" title="AI 分类">${escapeHtml(catLabel)}</span>` : ''}
-          ${c.importance === 'core' ? '<span class="cd-badge core" title="至少一篇论文把它列为核心创新">核心创新</span>' : ''}
-          ${freq ? `<span class="cd-badge freq" title="出现在 ${freq} 篇论文中">${freq} 篇</span>` : ''}
+          <button class="btn ghost xs icon star-btn cd-star${c.starred ? ' is-starred' : ''}" data-cd-star title="${c.starred ? '取消重点标记' : '标记为重点（组会讨论 / 复习清单）'}" aria-label="星标" aria-pressed="${!!c.starred}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg></button>
+          ${catLabel ? `<span class="cd-badge badge" title="AI 分类">${escapeHtml(catLabel)}</span>` : ''}
+          ${c.importance === 'core' ? '<span class="cd-badge badge warning" title="至少一篇论文把它列为核心创新">核心创新</span>' : ''}
+          ${freq ? `<span class="cd-badge badge" title="出现在 ${freq} 篇论文中">${freq} 篇</span>` : ''}
         </div>
       </div>
       <div class="cd-head-actions">
-        <button class="btn ghost sm" data-cd-edit title="编辑解释与分类">编辑</button>
-        <button class="btn ghost sm" data-cd-merge title="把重复条目并入此概念，或把此概念并入目标">合并…</button>
-        <button class="btn ghost sm danger" data-cd-del title="删除概念">删除</button>
-        <button class="btn ghost sm icon-btn" data-cd-close title="关闭 (Esc)" aria-label="关闭">
+        <button class="btn secondary sm" data-cd-edit title="编辑解释与分类">编辑</button>
+        <button class="btn secondary sm" data-cd-merge title="把重复条目并入此概念，或把此概念并入目标">合并…</button>
+        <button class="btn secondary sm danger" data-cd-del title="删除概念">删除</button>
+        <button class="btn secondary sm icon-btn" data-cd-close title="关闭 (Esc)" aria-label="关闭">
           <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
         </button>
       </div>
@@ -178,7 +179,7 @@ function _render(c) {
         <div class="cd-formulas">${formulaRows}</div>
       </section>
       <section class="cd-section cd-explain-sec">
-        <h4>AI 综合解读 <button class="btn ghost sm cd-explain-btn" data-cd-explain>生成</button></h4>
+        <h4>AI 综合解读 <button class="btn secondary sm cd-explain-btn" data-cd-explain>生成</button></h4>
         <div class="cd-explain-body"><span class="cd-empty">基于库内出现论文生成「是什么 / 演化脉络 / 各论文用法差异」的综合讲解（按需生成，不保存）。</span></div>
       </section>
     </div>`;
@@ -197,7 +198,7 @@ function _render(c) {
     if (r && r.ok) {
       c.starred = next;
       const btn = panel.querySelector('[data-cd-star]');
-      btn.classList.toggle('on', next);
+      btn.classList.toggle('is-starred', next);
       btn.title = next ? '取消重点标记' : '标记为重点（组会讨论 / 复习清单）';
       btn.setAttribute('aria-pressed', String(next));
       renderConceptSidebar();

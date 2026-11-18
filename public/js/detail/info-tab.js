@@ -141,7 +141,7 @@ function formulaRowsHtml(pid) {
         `<span class="kx-main"><span class="kx-title">${escapeHtml(f.name || f.canonicalName || "(未命名)")}</span>` +
         `<span class="kx-meta">${meta}</span></span>` +
         `<span class="kx-latex">${escapeHtml((f.latex || "").slice(0, 48))}</span>` +
-        `<button class="btn subtle sm kx-edit" type="button" data-kx-fedit="${escapeHtml(f.id)}" title="编辑公式">编辑</button>` +
+        `<button class="btn ghost sm kx-edit" type="button" data-kx-fedit="${escapeHtml(f.id)}" title="编辑公式">编辑</button>` +
         `</div>`
       );
     })
@@ -182,7 +182,7 @@ export function renderInfoTab(body, p) {
       <div class="info-abstract">
         <div class="ia-label">摘要</div>
         <div class="ia-text${(p.abstract || '').length > 420 ? ' clamped' : ''}" id="info-abstract">${escapeHtml(p.abstract || '（无摘要）')}</div>
-        ${(p.abstract || '').length > 420 ? '<button class="btn subtle sm ia-more" id="b-abstract-more" type="button">展开全文</button>' : ''}
+        ${(p.abstract || '').length > 420 ? '<button class="btn ghost sm ia-more" id="b-abstract-more" type="button">展开全文</button>' : ''}
       </div>
       <div class="set-rows">
         ${readRow('阅读进度', escapeHtml(progressText(p)))}
@@ -213,7 +213,7 @@ export function renderInfoTab(body, p) {
         ${wideRow(
           '收藏夹',
           state.folders.length ? '可同时归入多个收藏夹。' : '',
-          `<div class="chip-row">${folderChecks || '<span class="sr-hint">暂无收藏夹，点侧栏「收藏夹」标题右侧的 ⚙ 新建</span>'}</div>`,
+          `<div class="chip-row">${folderChecks || '<span class="sr-hint">暂无收藏夹，点侧栏「收藏夹」标题右侧的齿轮按钮新建</span>'}</div>`,
         )}
       </div>
 
@@ -225,8 +225,8 @@ export function renderInfoTab(body, p) {
             <div class="sr-hint" id="kx-concepts-count">已贡献 <b>${(p.conceptIds || []).length}</b> 个概念</div>
           </div>
           <div class="sr-ctl">
-            <button class="btn subtle sm kx-toggle" id="b-concepts-expand" type="button" aria-expanded="false">展开</button>
-            <button class="btn ghost sm" id="b-concepts-this" type="button">重新抽取</button>
+            <button class="btn ghost sm kx-toggle" id="b-concepts-expand" type="button" aria-expanded="false">展开</button>
+            <button class="btn secondary sm" id="b-concepts-this" type="button">重新抽取</button>
           </div>
         </div>
         <div class="kx-list" id="kx-concepts" hidden></div>
@@ -236,8 +236,8 @@ export function renderInfoTab(body, p) {
             <div class="sr-hint" id="kx-formulas-count">已涉及 <b>${(p.formulaIds || []).length}</b> 个公式</div>
           </div>
           <div class="sr-ctl">
-            <button class="btn subtle sm kx-toggle" id="b-formulas-expand" type="button" aria-expanded="false">展开</button>
-            <button class="btn ghost sm" id="b-formulas-this" type="button">重新抽取</button>
+            <button class="btn ghost sm kx-toggle" id="b-formulas-expand" type="button" aria-expanded="false">展开</button>
+            <button class="btn secondary sm" id="b-formulas-this" type="button">重新抽取</button>
           </div>
         </div>
         <div class="kx-list" id="kx-formulas" hidden></div>
@@ -247,17 +247,17 @@ export function renderInfoTab(body, p) {
       <div class="set-rows">
         ${ctlRow(
           '重新总结',
-          '<button class="btn ghost sm" id="b-resume" type="button">重新总结</button>',
+          '<button class="btn secondary sm" id="b-resume" type="button">重新总结</button>',
           '按当前的总结提示词重跑，同时刷新主题与概念。已有总结会被替换。',
         )}
         ${ctlRow(
           '重新打标',
-          '<button class="btn ghost sm" id="b-retag" type="button">重新打标</button>',
+          '<button class="btn secondary sm" id="b-retag" type="button">重新打标</button>',
           '按当前的标签提示词重打标签与主题，标签库随之增删。',
         )}
         ${ctlRow(
           '引用',
-          '<button class="btn ghost sm" id="b-copy-bib" type="button">复制 BibTeX</button>',
+          '<button class="btn secondary sm" id="b-copy-bib" type="button">复制 BibTeX</button>',
           '复制本篇的 BibTeX 条目到剪贴板。',
         )}
       </div>
@@ -265,7 +265,7 @@ export function renderInfoTab(body, p) {
       <div class="set-rows set-rows-foot">
         <div class="set-row set-row-reset">
           <div class="sr-main"><div class="sr-hint">删除论文，连同本地 PDF 与已抽取的全文一并移除，<b>不可恢复</b>。已贡献的概念/公式会保留在库中。</div></div>
-          <div class="sr-ctl"><button class="btn subtle sm danger" id="b-delete" type="button">删除论文</button></div>
+          <div class="sr-ctl"><button class="btn ghost sm danger" id="b-delete" type="button">删除论文</button></div>
         </div>
       </div>
     </div>`;
