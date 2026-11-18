@@ -138,8 +138,9 @@ test('回归 Esc 分层：@ 浮层开着按 Esc 只关浮层，不波及底层�
   await sleep(60);
   const pop = ui.document.querySelector('.chat-mention-pop');
   assert.ok(pop && !pop.hidden && pop.style.display !== 'none', '@ 浮层打开');
-  // 人为打开一个底层模态
-  $('import-modal').classList.add('active');
+  // 经真实入口打开一个底层模态（v3.65 起静态模态由 PWLayers 登记，Esc 归层管理器）
+  $('btn-import').click();
+  assert.ok($('import-modal').classList.contains('active'), '底层模态已打开');
   input.dispatchEvent(new ui.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
   await sleep(30);
   assert.ok(pop.hidden || pop.style.display === 'none', 'Esc 关闭了 @ 浮层');
@@ -231,4 +232,25 @@ test('回归 拖选后 click 抑制：条目内有选区时点击不跳转（选
   li.click();
   await sleep(120);
   assert.ok(ui.window.location.pathname.startsWith('/paper/'), '无选区：click 正常打开论文');
+});
+
+test('v3.65 多选三页同构（论文库）：Shift 范围选 / 全选↔取消全选 / Esc 退出', async () => {
+  $('btn-pick').click();
+  await sleep(30);
+  const bar = $('bulk-bar');
+  assert.equal(bar.getAttribute('role'), 'toolbar');
+  assert.equal($('btn-pick-cancel').textContent, '退出多选', '文案与概念/公式页一致');
+  const items = () => [...ui.document.querySelectorAll('.paper-item')];
+  items()[0].click();
+  await sleep(10);
+  items()[1].dispatchEvent(new ui.window.MouseEvent('click', { bubbles: true, shiftKey: true }));
+  await sleep(10);
+  assert.match($('sel-count').textContent, /已选 2/, 'Shift 范围选');
+  assert.equal($('btn-pick-all').textContent.trim(), '取消全选', '全部选中后按钮切成「取消全选」');
+  $('btn-pick-all').click();
+  assert.match($('sel-count').textContent, /已选 0/);
+  ui.document.body.dispatchEvent(new ui.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  await sleep(20);
+  assert.ok(!bar.classList.contains('active'), 'Esc 退出多选');
+  assert.ok(!$('btn-pick').classList.contains('active'));
 });

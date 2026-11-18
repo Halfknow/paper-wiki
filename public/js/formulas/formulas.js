@@ -9,6 +9,7 @@ import { conceptsForFormula } from '../core/knowledge-link.js';
 import { gotoPaper, router, syncPageQueryToUrl } from '../core/nav.js';
 import { plotSvg } from '../core/plot.js';
 import { createPickBar } from '../core/pick-bar.js';
+import { createMultiSelect } from '../core/multi-select.js';
 import { renderMd } from '../core/markdown.js';
 import { state } from '../core/state.js';
 import { toast } from '../core/ui-kit.js';
@@ -185,6 +186,15 @@ export async function exportFormulasMd() {
 let _formulaPickMode = false;
 const _formulaPicked = new Set();
 let _formulaPickBar = null;
+// 选择语义与论文库同构（v3.65 P2，core/multi-select.js）：Shift 范围选 / Ctrl+A 全选 / Esc 退出。
+// 范围与全选按「当前筛选 + 排序后的完整列表」计——懒加载尚未渲染的卡片同样算在内。
+const _formulaSel = createMultiSelect({
+  getSet: () => _formulaPicked,
+  order: () => _formulaList.map((x) => x.id),
+  view: 'formulas',
+  onChange: _syncFormulaPicks,
+  onExit: () => toggleFormulaPickMode(false),
+});
 
 export function isFormulaPickMode() {
   return _formulaPickMode;
@@ -232,28 +242,27 @@ export function toggleFormulaPickMode(on) {
             toast('网络中断，批量归类未完成', 'error');
           }
         },
+        onToggleAll: () => _formulaSel.toggleAll(),
         onExit: () => toggleFormulaPickMode(false),
       });
     }
     _formulaPickBar.open();
-    _formulaPickBar.setCount(_formulaPicked.size);
+    _formulaPickBar.setCount(_formulaPicked.size, _formulaSel.allSelected());
+    _formulaSel.activate();
   } else {
+    _formulaSel.deactivate();
     _formulaPicked.clear();
     if (_formulaPickBar) _formulaPickBar.close();
   }
   renderFormulas();
 }
 
-/** 多选模式内点击卡片：切换选中（就地改 class + 计数，不整页重渲）。 */
-function _toggleFormulaPick(id, cardEl) {
-  if (_formulaPicked.has(id)) {
-    _formulaPicked.delete(id);
-    cardEl.classList.remove('picked');
-  } else {
-    _formulaPicked.add(id);
-    cardEl.classList.add('picked');
-  }
-  if (_formulaPickBar) _formulaPickBar.setCount(_formulaPicked.size);
+/** 选中集合变化后就地同步（改 class + 底栏计数，不整页重渲）。 */
+function _syncFormulaPicks() {
+  document.querySelectorAll('#formulas-view .formula-card.pickable[data-fid]').forEach((el) => {
+    el.classList.toggle('picked', _formulaPicked.has(el.dataset.fid));
+  });
+  if (_formulaPickBar) _formulaPickBar.setCount(_formulaPicked.size, _formulaSel.allSelected());
 }
 
 /** 渲染公式页侧栏（v3.28 重设计，与概念页同构）：全部 + 热度 + 来源 + 特性 + 最近新增 + 分类。
@@ -770,6 +779,8 @@ function _observeFormulaSentinel(sentinel) {
 function _wireFormulaGridOnce(g) {
   if (g.dataset.wired) return;
   g.dataset.wired = '1';
+  // Shift+点击范围选时别让浏览器顺带拉出文字选区
+  g.addEventListener('mousedown', (e) => { if (_formulaPickMode) _formulaSel.onMouseDown(e); });
   g.addEventListener('click', async (e) => {
     // 星标切换（v3.30）：就地翻转 + 侧栏计数联动（多选模式下让位给选中）
     const starBtn = e.target.closest('[data-star]');
@@ -792,7 +803,7 @@ function _wireFormulaGridOnce(g) {
       const pickCard = e.target.closest('.formula-card');
       if (pickCard && pickCard.dataset.fid) {
         e.preventDefault();
-        _toggleFormulaPick(pickCard.dataset.fid, pickCard);
+        _formulaSel.click(pickCard.dataset.fid, e);
         return;
       }
     }

@@ -19,9 +19,10 @@
 
 import { jget } from '../core/api.js';
 import { escapeHtml } from '../core/format.js';
+import { undoToast } from '../core/feedback.js';
 import {
   shelfState, subscribeShelf, refreshShelf, shelfAdd,
-  shelfRemove, shelfMove, shelfStepId, shelfClear,
+  shelfRemoveUndoable, shelfMove, shelfStepId, shelfClear,
 } from './shelf.js';
 
 const GRIP_SVG = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="9" cy="6" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="18" r="1"/></svg>';
@@ -194,10 +195,11 @@ export function createShelfDrawer(deps) {
   }
 
   // ---- 移除（v3.23：永不切换论文、不关阅读器——正在读的论文被移出后继续读） ----
+  // v3.65：移出可撤销（§7.1）——误点 × 不必再去搜索框找回来
   function handleRemove(id) {
-    const removed = shelfRemove(id);
+    const undo = shelfRemoveUndoable(id);
     render();
-    if (removed && d.notify) d.notify('已从阅读架移除');
+    if (undo) undoToast('已从阅读架移除', () => { undo(); render(); });
   }
 
   // ---- 列表事件（委托：切换 / 移除） ----

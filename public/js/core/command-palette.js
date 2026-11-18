@@ -11,6 +11,7 @@
 import { router } from './nav.js';
 import { state } from './state.js';
 import { toast } from './ui-kit.js';
+import { openLayer } from './layers.js';
 
 const ACTIONS = [
   { id: 'a:library', label: '去：论文库', hint: '导航', run: () => router.navigate('/library', { keepQuery: false }) },
@@ -55,7 +56,7 @@ export const SHORTCUTS = [
 let _root = null;
 let _active = 0;
 let _items = [];
-let _closeHandler = null;
+let _layer = null; // PWLayers 句柄（Esc / 焦点陷阱 / 焦点归还 / 背景 inert 统一由层管理器负责）
 
 /** 输入框正在打字时全局快捷键让位（面板自身输入除外）。 */
 export function isTypingTarget(t) {
@@ -64,7 +65,7 @@ export function isTypingTarget(t) {
 }
 
 export function openCommandPalette() {
-  if (_root) return; // 已开（幂等）
+  if (_root && _root.isConnected) return; // 已开（幂等）
   _buildIndex();
   _active = 0;
   _root = document.createElement('div');
@@ -90,22 +91,21 @@ export function openCommandPalette() {
     if (e.key === 'ArrowDown') { e.preventDefault(); _move(1); }
     else if (e.key === 'ArrowUp') { e.preventDefault(); _move(-1); }
     else if (e.key === 'Enter') { e.preventDefault(); _runActive(); }
-    else if (e.key === 'Escape') { e.preventDefault(); closeCommandPalette(); }
     else if (e.key === '?' && input.value === '') { e.preventDefault(); closeCommandPalette(); openShortcutsHelp(); }
   });
   _root.addEventListener('mousedown', (e) => { if (e.target === _root) closeCommandPalette(); });
-  _closeHandler = (e) => { if (e.key === 'Escape') closeCommandPalette(); };
-  document.addEventListener('keydown', _closeHandler, true);
+  _layer = openLayer({ el: _root.querySelector('.cp'), root: _root, kind: 'dialog', initialFocus: input, onEscape: () => closeCommandPalette() });
   _filter('');
-  requestAnimationFrame(() => _root.classList.add('show'));
-  setTimeout(() => input.focus(), 20);
+  // 开后立刻关（Ctrl+K 紧接 Esc / 后台标签页 rAF 延迟）时 _root 已置空：用局部引用并核对仍是当前这一个
+  const root = _root;
+  requestAnimationFrame(() => { if (_root === root) root.classList.add('show'); });
 }
 
 export function closeCommandPalette() {
   if (!_root) return;
   const el = _root;
   _root = null;
-  if (_closeHandler) { document.removeEventListener('keydown', _closeHandler, true); _closeHandler = null; }
+  if (_layer) { _layer.close(); _layer = null; }
   el.classList.remove('show');
   setTimeout(() => el.remove(), 130);
 }
@@ -229,11 +229,16 @@ export function openShortcutsHelp() {
       <div class="pwdlg-actions"><button type="button" class="btn sm cp-help-ok">知道了</button></div>
     </div>`;
   document.body.appendChild(mask);
-  const close = () => { mask.classList.remove('show'); setTimeout(() => mask.remove(), 130); document.removeEventListener('keydown', onKey, true); };
-  const onKey = (e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); } };
-  document.addEventListener('keydown', onKey, true);
+  let layer = null;
+  const close = () => {
+    if (!layer) return;
+    layer.close();
+    layer = null;
+    mask.classList.remove('show');
+    setTimeout(() => mask.remove(), 130);
+  };
+  layer = openLayer({ el: mask.querySelector('.cp-help'), root: mask, kind: 'dialog', initialFocus: '.cp-help-ok', onEscape: close });
   mask.addEventListener('mousedown', (e) => { if (e.target === mask) close(); });
   mask.querySelector('.cp-help-ok').onclick = close;
   requestAnimationFrame(() => mask.classList.add('show'));
-  setTimeout(() => mask.querySelector('.cp-help-ok').focus(), 20);
 }

@@ -7,6 +7,7 @@ import { $ } from '../core/dom.js';
 import { escapeHtml } from '../core/format.js';
 import { state } from '../core/state.js';
 import { toast } from '../core/ui-kit.js';
+import { hideModal, showModal } from '../core/layers.js';
 import { refresh } from '../library/refresh.js';
 import { closeSpaceMenu, closeSpaceModal, loadSpaces, openSpaceModal, renderSpaceAdmin, toggleSpaceMenu } from './spaces.js';
 
@@ -29,12 +30,12 @@ export function openDirWizard(s) {
   dwError('dw-input-error', '');
   dwError('dw-report-error', '');
   dwShow('dw-step-input');
-  $('dir-wizard').classList.add('active');
+  showModal($('dir-wizard'), { onClose: closeDirWizard, initialFocus: false });
   setTimeout(() => { $('dw-dir-input').focus(); $('dw-dir-input').select(); }, 20);
 }
 
 function closeDirWizard() {
-  $('dir-wizard').classList.remove('active');
+  hideModal($('dir-wizard'));
   dirWizardSpace = null;
 }
 
@@ -126,7 +127,6 @@ function bindDirWizard() {
   $('dw-done').onclick = closeDirWizard;
   $('dw-dir-input').addEventListener('keydown', (e) => {
     if (e.key === 'Enter') { e.preventDefault(); dwPreview(); }
-    else if (e.key === 'Escape') { e.preventDefault(); closeDirWizard(); }
   });
   $('dir-wizard').onclick = (e) => { if (e.target === $('dir-wizard')) closeDirWizard(); };
 }

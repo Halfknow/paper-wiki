@@ -8,7 +8,7 @@ import { escapeHtml } from '../core/format.js';
 import { icon } from '../core/icons.js';
 import { renderMd } from '../core/markdown.js';
 import { state } from '../core/state.js';
-import { toast } from '../core/ui-kit.js';
+import { toast, undoToast } from '../core/ui-kit.js';
 import { NC_ACT_SVGS, NOTE_CARD_TYPES, newNoteCardId, splitLegacyNotesToCards, syncNotePanels } from './detail.js';
 
 /** 笔记卡片面板：卡片列表渲染 + 内联编辑/删除/排序/新增 + AI 骨架生成 + 旧笔记迁移。
@@ -261,10 +261,16 @@ export function NotesPanel(container, opts = {}) {
       return;
     }
     if (editingId != null) return; // 编辑态下锁定其它卡操作（防重建丢输入）
+    // v3.65：删除笔记卡改「执行 + 撤销 toast」（设计系统 §7.1 / §7.2：可恢复的优先撤销，
+    // 确认框会被习惯性点掉，撤销才真正保护数据）。撤销把卡片放回原位置并再次落盘。
     if (act === 'delete' && idx >= 0) {
-      if (!(await PWDialog.confirm('删除这张卡片？', { title: '删除笔记卡', danger: true, okText: '删除' }))) return;
-      cards.splice(idx, 1);
+      const [gone] = cards.splice(idx, 1);
       await save();
+      undoToast('已删除笔记卡', async () => {
+        if (cards.some((c) => c.id === gone.id)) return;
+        cards.splice(Math.min(idx, cards.length), 0, gone);
+        await save();
+      });
       return;
     }
     if ((act === 'up' || act === 'down') && idx >= 0) {

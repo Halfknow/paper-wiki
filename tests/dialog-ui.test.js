@@ -13,6 +13,8 @@ const path = require('path');
 const { JSDOM } = require('jsdom');
 
 const SRC = fs.readFileSync(path.join(__dirname, '..', 'public', 'dialog.js'), 'utf8');
+// PWDialog 依赖 PWLayers（public/layers.js，index.html 中先于 dialog.js 加载）
+const LAYERS = fs.readFileSync(path.join(__dirname, '..', 'public', 'layers.js'), 'utf8');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function boot() {
@@ -21,6 +23,7 @@ function boot() {
     runScripts: 'outside-only',
     pretendToBeVisual: true,
   });
+  dom.window.eval(LAYERS);
   dom.window.eval(SRC);
   return dom;
 }

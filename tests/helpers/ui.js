@@ -216,6 +216,10 @@ async function bootUi({ listItems, details, routes, chatReply, initialPath } = {
   } catch (e) {
     /* 容错：解析失败不阻塞 boot */
   }
+  // layers.js（classic script，挂 window.PWLayers，v3.65 P2 浮层层级管理器）：所有浮层与全局快捷键
+  // 都经它登记，同样手动在 jsdom 窗口里执行一遍（不容错——它缺席时 app 的键盘与浮层全部失效）。
+  const layersSrc = fs.readFileSync(path.join(__dirname, '..', '..', 'public', 'layers.js'), 'utf8');
+  vm.runInNewContext(layersSrc, { window: w });
   // app 的 setInterval（10s 轮询）：unref 不挂测试进程 + 捕获回调供手动触发
   const intervalFns = [];
   const origSetInterval = globalThis.setInterval;

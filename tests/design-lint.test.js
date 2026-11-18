@@ -129,6 +129,34 @@ count('js.nativeDialog', () => {
   return nativeDlg.length;
 });
 
+// 浮层统一（§6.8 / §9.3，v3.65 P2）：document / window 级 keydown 只许 public/layers.js 注册
+// （Esc 栈 + 全局快捷键单一入口）；其余模块用 registerShortcut / openLayer。
+const docKeydown = [];
+count('js.documentKeydown', () => {
+  for (const { file, src } of jsAll) {
+    if (file === 'layers.js') continue;
+    const re = /\b(?:document|window)\.addEventListener\(\s*['"]keydown['"]/;
+    if (re.test(src)) docKeydown.push(file);
+  }
+  return docKeydown.length;
+});
+
+// 运行时创建的 role=dialog：必须带 aria-modal + 可读名称，且所在模块经层管理器登记
+// （openLayer / holdLayer / showModal / PWLayers.open），否则就没有 Esc 栈与焦点陷阱。
+const jsDialogBad = [];
+count('js.dialogWithoutLayer', () => {
+  const LAYER_API = /\b(?:openLayer|holdLayer|showModal|PWLayers\.open)\s*\(/;
+  for (const { file, src } of jsAll) {
+    const tags = src.match(/<[a-z]+\b[^>]*\brole\s*=\s*\\?"dialog\\?"[^>]*>/g) || [];
+    const setAttr = /setAttribute\(\s*['"]role['"]\s*,\s*['"]dialog['"]/.test(src);
+    if (!tags.length && !setAttr) continue;
+    for (const t of tags)
+      if (!/aria-modal\s*=\s*\\?"true/.test(t) || !/aria-label(ledby)?\s*=/.test(t)) jsDialogBad.push(`${file}: ${t.slice(0, 100)}`);
+    if (!LAYER_API.test(src)) jsDialogBad.push(`${file}: 创建了 role=dialog 但未经层管理器登记`);
+  }
+  return jsDialogBad.length;
+});
+
 // emoji / 字符图标（UI 统一用细线 SVG）
 const EMOJI = /[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B50}\u{2B55}]|\u{FE0F}/gu;
 count('ui.emoji', () => {
@@ -269,6 +297,9 @@ const HARD = [
   'html.iconButtonNoLabel',
   'css.canonicalOutsideComponents',
   'ui.legacyButtonWithoutBtn',
+  // P2（v3.65）浮层统一
+  'js.documentKeydown',
+  'js.dialogWithoutLayer',
 ];
 
 // 上限型约束（不是 0，但不得超过规范给定的上限）
@@ -278,10 +309,10 @@ const CAP = {
 
 // 只许减不许增。降下来后把这里改成新值（测试会提示）。基线取自 v3.64 P1 落地时。
 const BASELINE = {
-  'css.colorLiteral': 211, //            P2：暗色补丁与散落字面量逐步收进 tokens.css
+  'css.colorLiteral': 202, //            P2：暗色补丁与散落字面量逐步收进 tokens.css
   'css.offScaleMedia': 2, //             P2：断点收敛到 1240 / 1100 / 860，届时改硬约束
   'css.keyframes': 36, //                P3：收敛到 pw-* 共享关键帧
-  'css.offScaleControlHeight': 4, //     P2：侧栏 rail 38px 与 chip 内 × 微钮（rail 属导航，非控件，评估后可豁免）
+  'css.offScaleControlHeight': 0, //     v3.65 P2 清零：rail → --ctl-lg，chip × → --chip-x（chip 子部件）
 };
 
 // ---------------------------------------------------------------- 断言
@@ -292,6 +323,14 @@ test('design-lint 硬约束：z-index 只用 --z-* token 或局部 1–9', () =>
 
 test('design-lint 硬约束：不用浏览器原生 confirm / alert / prompt（走 PWDialog）', () => {
   assert.deepStrictEqual(nativeDlg, [], '出现原生弹窗调用');
+});
+
+test('design-lint 硬约束：document / window 级 keydown 只在 public/layers.js（Esc 栈 + 快捷键单一入口）', () => {
+  assert.deepStrictEqual(docKeydown, [], '请改用 registerShortcut / openLayer（public/js/core/layers.js）');
+});
+
+test('design-lint 硬约束：JS 创建的 role="dialog" 带 aria-modal + 名称，且经层管理器登记', () => {
+  assert.deepStrictEqual(jsDialogBad, []);
 });
 
 test('design-lint 硬约束：role="dialog" 必须带 aria-modal 与 aria-labelledby / aria-label', () => {

@@ -2,6 +2,7 @@
 //
 // 自 public/app.js 拆出（v3.15 模块化重构）——声明体原样迁移，仅补 import/export。
 
+import { icon } from '../core/icons.js';
 import { PATCH, api, sp } from '../core/api.js';
 import { $, runAfterSelectionRelease, selectionWithin } from '../core/dom.js';
 import { escapeHtml } from '../core/format.js';
@@ -162,7 +163,7 @@ export function renderChatTab(body, p) {
     row.innerHTML = chatState.extraIds.map((id) => {
       const pp = (state.papers || []).find((x) => x.id === id);
       const title = (pp && pp.title) || id;
-      return `<span class="extra-chip" data-eid="${escapeHtml(id)}" title="${escapeHtml(title)}"><svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>${escapeHtml(truncateChatTitle(title, 20))}<button class="extra-chip-x" data-eid="${escapeHtml(id)}" type="button" aria-label="移除引用">×</button></span>`;
+      return `<span class="extra-chip" data-eid="${escapeHtml(id)}" title="${escapeHtml(title)}"><svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>${escapeHtml(truncateChatTitle(title, 20))}<button class="extra-chip-x" data-eid="${escapeHtml(id)}" type="button" aria-label="移除引用">${icon('x', { size: 12 })}</button></span>`;
     }).join('');
     row.querySelectorAll('.extra-chip-x').forEach((x) => {
       x.onclick = () => {
@@ -180,7 +181,7 @@ export function renderChatTab(body, p) {
     row.hidden = !chatState.chatImages.length;
     if (!chatState.chatImages.length) { row.innerHTML = ''; return; }
     row.innerHTML = chatState.chatImages.map((src, idx) =>
-      `<span class="chat-attach-chip" data-idx="${idx}"><img src="${escapeHtml(src)}" alt="附图" /><button class="ca-x" data-idx="${idx}" type="button" aria-label="移除图片">×</button></span>`
+      `<span class="chat-attach-chip" data-idx="${idx}"><img src="${escapeHtml(src)}" alt="附图" /><button class="ca-x" data-idx="${idx}" type="button" aria-label="移除图片">${icon('x', { size: 12 })}</button></span>`
     ).join('');
     row.querySelectorAll('.ca-x').forEach((x) => {
       x.onclick = () => {

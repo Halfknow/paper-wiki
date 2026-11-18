@@ -85,8 +85,15 @@ public/                零构建前端（原生 ESM，浏览器直接加载；�
                         搜索过滤 + chips 多选，attachPaperPicker 可单独复用）。Esc 取消、Enter 提交
                         （textarea 内 Ctrl+Enter）、必填校验高亮。视觉复用 .pwdlg-* 体系。
                         v3.30 另有 openMergeDialog（合并目标选择：相似度候选置顶标「疑似重复」）
-      pick-bar.js       知识页批量操作底栏（v3.29）：已选 N / 改分类 / 删除 / 退出，两页共用；
+      pick-bar.js       知识页批量操作底栏（v3.29）：已选 N ｜ 全选 ｜ 退出多选 —— 改分类 / 删除，两页共用；
                         选中集合归各页面模块持有（concepts/formulas 的 toggleXxxPickMode）
+      multi-select.js   多选控制器（v3.65 设计系统 P2）：论文库 / 概念 / 公式三页唯一选择逻辑——点击切换、
+                        Shift 范围选（按 order() 当前筛选排序的完整列表）、Ctrl/⌘+A、Esc 退出；
+                        getSet 惰性读取（论文库切空间会整体替换 state.selected）
+      layers.js         PWLayers 的 ESM 薄壳（v3.65）：openLayer / holdLayer(host) / releaseLayer /
+                        showModal(mask) / hideModal / registerShortcut / hasModalLayer
+      feedback.js       分级 toast（v3.65）：toast(msg, {level, action, duration}) / undoToast(msg, onUndo)；
+                        ui-kit.js 只是转出。可恢复的破坏性操作用「执行 + 撤销」而不是确认框
       plot.js           公式绘图引擎（v3.29，纯函数零依赖）：plotExpr 递归下降求值器（白名单 token +
                         无原型 scope，未知标识符解析期拒绝）→ sampleCurve（有限点过滤 / y 轴 2%~98%
                         分位截断 / 超界断段）→ plotSvg（曲线/轴/零线）。求值失败一律 null 静默降级
@@ -132,6 +139,11 @@ public/                零构建前端（原生 ESM，浏览器直接加载；�
   reader.js  ★         pdf.js PDFViewer 阅读器（双页/批注/缩放/续读/AI 抽屉 + 阅读架抽屉
                         与 [/] 切换）。本轮未拆
   search-dsl.js ★      高级搜索 DSL 解析（classic script，非 ESM）
+  layers.js ★          全站唯一浮层栈 window.PWLayers（v3.65 设计系统 P2，classic script，dialog.js 之前加载）：
+                        焦点陷阱 / 焦点归还 / 背景 inert / 滚动锁 / Esc 只关最上层 / registerShortcut。
+                        **全站只有它能 document.addEventListener('keydown')**（design-lint 硬约束）；新浮层用
+                        openLayer/holdLayer/showModal，新快捷键用 registerShortcut。模态打开时挂到 body 的
+                        新元素会被 inert——临时元素挂在模态内部；Esc 在冒泡阶段处理，内层先 preventDefault 即可截住
   tokens.css ★         设计 token 单一事实源（v3.63 设计系统 P0）：语义色/字号/间距/圆角/阴影/
                         z 层级/动效 + 暗色值；旧变量名在此做别名。改 UI 前先读
                         docs/DESIGN_SYSTEM.md；tests/design-lint.test.js 守 z-index/原生弹窗/

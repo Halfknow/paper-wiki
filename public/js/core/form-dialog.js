@@ -2,12 +2,17 @@
 // PWDialog 只有单字段 prompt，多字段表单（文本/多行/下拉/复选/论文选择器）由本组件承担。
 // 视觉复用 PWDialog 的 .pwdlg-* 体系（遮罩/卡片/按钮），键盘语义对齐：
 // Esc 取消、Enter 提交（textarea 内 Ctrl/Cmd+Enter 提交）、点遮罩取消。
+// v3.65 P2：登记为 PWLayers 的一层（Esc 栈 / 焦点陷阱 / 背景 inert / 焦点归还），不再自挂 document 监听。
+
+let _seq = 0; // aria-labelledby 唯一 id
 //
 // 用法：const values = await openFormDialog({ title, fields, okText });
 //   fields: [{ key, label, type: 'text'|'textarea'|'select'|'checkbox'|'papers',
 //              value, placeholder, options: [{value,label}], rows, mono, hint, required }]
 
+import { icon } from './icons.js';
 import { escapeHtml } from './format.js';
+import { openLayer } from './layers.js';
 import { state } from './state.js';
 
 /** 论文选择器（可复用，公式编辑抽屉也用）：chips + 搜索下拉，值为 paperId 数组。
@@ -29,7 +34,7 @@ export function attachPaperPicker(host, initial = []) {
       x.type = 'button';
       x.className = 'fpk-x';
       x.setAttribute('aria-label', '移除');
-      x.textContent = '×';
+      x.innerHTML = icon('x', { size: 12 });
       x.onclick = () => {
         const i = picked.indexOf(id);
         if (i >= 0) picked.splice(i, 1);
@@ -96,6 +101,8 @@ export function openFormDialog({ title, fields, okText = '保存', cancelText = 
     const h = document.createElement('h3');
     h.className = 'pwdlg-title';
     h.textContent = title || '填写';
+    h.id = 'pfd-t' + ++_seq;
+    box.setAttribute('aria-labelledby', h.id);
     box.appendChild(h);
 
     const pickers = new Map(); // key -> paper picker（type=papers 字段）
@@ -174,21 +181,21 @@ export function openFormDialog({ title, fields, okText = '保存', cancelText = 
     mask.appendChild(box);
 
     let settled = false;
+    let layer = null;
+    // Enter 提交（层的 onKey 钩子，返回 true = 已消费）；Esc 取消由层管理器统一派发
     const onKey = (e) => {
-      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(null); }
-      else if (e.key === 'Enter') {
-        const t = e.target;
-        if (t && t.tagName === 'TEXTAREA' && !(e.ctrlKey || e.metaKey)) return;
-        if (t && t.tagName === 'DIV') return; // 论文选择器的回车自处理
-        e.preventDefault();
-        e.stopPropagation();
-        submit();
-      }
+      if (e.key !== 'Enter' || e.isComposing) return false;
+      const t = e.target;
+      if (t && t.tagName === 'TEXTAREA' && !(e.ctrlKey || e.metaKey)) return false;
+      if (t && t.tagName === 'DIV') return false; // 论文选择器的回车自处理
+      e.preventDefault();
+      submit();
+      return true;
     };
     const close = (value) => {
       if (settled) return;
       settled = true;
-      document.removeEventListener('keydown', onKey, true);
+      if (layer) layer.close();
       mask.classList.remove('show');
       setTimeout(() => mask.remove(), 130);
       resolve(value);
@@ -217,9 +224,9 @@ export function openFormDialog({ title, fields, okText = '保存', cancelText = 
     okBtn.onclick = submit;
     cancelBtn.onclick = () => close(null);
     mask.addEventListener('mousedown', (e) => { if (e.target === mask) close(null); });
-    document.addEventListener('keydown', onKey, true);
 
     document.body.appendChild(mask);
+    layer = openLayer({ el: box, root: mask, kind: 'dialog', initialFocus: false, onEscape: () => close(null), onKey });
     requestAnimationFrame(() => mask.classList.add('show'));
     setTimeout(() => {
       const first = inputs.get((fields || []).find((f) => f.type !== 'checkbox' && f.type !== 'papers')?.key);
@@ -242,6 +249,8 @@ export function openMergeDialog({ title, selfLabel, candidates }) {
     const h = document.createElement('h3');
     h.className = 'pwdlg-title';
     h.textContent = title || '合并到…';
+    h.id = 'pfd-t' + ++_seq;
+    box.setAttribute('aria-labelledby', h.id);
     box.appendChild(h);
     const note = document.createElement('div');
     note.className = 'pfd-merge-note';
@@ -299,13 +308,11 @@ export function openMergeDialog({ title, selfLabel, candidates }) {
     renderList();
 
     let settled = false;
-    const onKey = (e) => {
-      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(null); }
-    };
+    let layer = null;
     const close = (value) => {
       if (settled) return;
       settled = true;
-      document.removeEventListener('keydown', onKey, true);
+      if (layer) layer.close();
       mask.classList.remove('show');
       setTimeout(() => mask.remove(), 130);
       resolve(value);
@@ -313,8 +320,8 @@ export function openMergeDialog({ title, selfLabel, candidates }) {
     cancel.onclick = () => close(null);
     okBtn.onclick = () => { if (pickedId) close(pickedId); };
     mask.addEventListener('mousedown', (e) => { if (e.target === mask) close(null); });
-    document.addEventListener('keydown', onKey, true);
     document.body.appendChild(mask);
+    layer = openLayer({ el: box, root: mask, kind: 'dialog', initialFocus: false, onEscape: () => close(null) });
     requestAnimationFrame(() => mask.classList.add('show'));
     setTimeout(() => search.focus(), 30);
   });

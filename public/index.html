@@ -274,10 +274,10 @@
         </div>
       </div>
       <ul id="paper-list" class="paper-list"></ul>
-      <div class="bulk-bar" id="bulk-bar">
-        <span class="sel-count" id="sel-count">已选 0 篇</span>
+      <div class="bulk-bar" id="bulk-bar" role="toolbar" aria-label="论文批量操作">
+        <span class="sel-count" id="sel-count" aria-live="polite">已选 0 篇</span>
         <button class="btn secondary sm" id="btn-pick-all" title="全选当前列表的论文">全选</button>
-        <button class="btn secondary sm" id="btn-pick-cancel">取消</button>
+        <button class="btn secondary sm" id="btn-pick-cancel" title="退出多选（Esc）">退出多选</button>
         <span class="spacer" style="flex:1"></span>
         <span class="bulk-progress" id="bulk-progress" hidden>
           <span class="bp-text" id="bp-text"></span>
@@ -1293,6 +1293,7 @@
   <script src="/vendor/dompurify.js"></script>
   <script src="/vendor/katex.js"></script>
   <script src="/search-dsl.js"></script>
+  <script src="/layers.js"></script>
   <script src="/dialog.js"></script>
   <!-- reader.js（含 pdf.js ~770KB）不再静态加载：reader-host.js 在首次打开阅读器时动态 import -->
   <script type="module" src="/app.js"></script>

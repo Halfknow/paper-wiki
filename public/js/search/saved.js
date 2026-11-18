@@ -2,6 +2,7 @@
 //
 // 自 public/app.js 拆出（v3.15 模块化重构）——声明体原样迁移，仅补 import/export。
 
+import { icon } from '../core/icons.js';
 import { PUT, api } from '../core/api.js';
 import { $ } from '../core/dom.js';
 import { escapeHtml } from '../core/format.js';
@@ -53,11 +54,12 @@ export function renderSavedSearches() {
   const arr = getSavedSearches();
   root.hidden = !arr.length;
   if (!arr.length) { root.innerHTML = ''; return; }
-  root.innerHTML = arr.map((s, i) => `<button class="saved-chip" data-i="${i}" title="${escapeHtml(s.dsl)}">${escapeHtml(s.name)}<span class="saved-chip-x" data-i="${i}" role="button" aria-label="删除">×</span></button>`).join('');
+  root.innerHTML = arr.map((s, i) => `<button class="saved-chip" data-i="${i}" title="${escapeHtml(s.dsl)}">${escapeHtml(s.name)}<span class="saved-chip-x" data-i="${i}" role="button" aria-label="删除">${icon('x', { size: 12 })}</span></button>`).join('');
   root.querySelectorAll('.saved-chip').forEach((b) => {
     b.onclick = (e) => {
       // 点 × 删除（不触发应用）
-      if (e.target.classList.contains('saved-chip-x')) { e.stopPropagation(); deleteSavedSearch(Number(e.target.dataset.i)); return; }
+      const del = e.target.closest('.saved-chip-x'); // × 现在是 SVG，点中的可能是 svg/path
+      if (del) { e.stopPropagation(); deleteSavedSearch(Number(del.dataset.i)); return; }
       const s = getSavedSearches()[Number(b.dataset.i)];
       if (!s) return;
       $('search').value = s.dsl;

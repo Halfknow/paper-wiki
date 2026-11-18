@@ -13,6 +13,7 @@ import { $, PALETTE } from '../core/dom.js';
 import { escapeHtml } from '../core/format.js';
 import { state } from '../core/state.js';
 import { toast } from '../core/ui-kit.js';
+import { hideModal, showModal } from '../core/layers.js';
 import { refresh } from './refresh.js';
 import { renderSidebar } from './sidebar.js';
 
@@ -27,12 +28,12 @@ export function openFolderManager() {
   editing = null;
   renderList();
   wire();
-  $('folder-manager').classList.add('active');
+  showModal($('folder-manager'), { onClose: closeFolderManager });
 }
 
 export function closeFolderManager() {
   editing = null;
-  $('folder-manager').classList.remove('active');
+  hideModal($('folder-manager'));
 }
 
 // ---- 渲染 ----

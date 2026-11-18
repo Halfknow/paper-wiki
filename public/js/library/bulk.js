@@ -5,6 +5,17 @@
 import { $ } from '../core/dom.js';
 import { state } from '../core/state.js';
 import { renderList } from './list.js';
+import { createMultiSelect } from '../core/multi-select.js';
+
+// 选择语义与概念 / 公式页同构（v3.65 P2，core/multi-select.js）：Shift 范围选 / Ctrl+A 全选 / Esc 退出。
+// state.selected 会在切空间 / 收藏夹时被整体替换，故惰性读取。
+export const librarySel = createMultiSelect({
+  getSet: () => state.selected,
+  order: () => state.papers.map((p) => p.id),
+  view: 'library',
+  onChange: () => { syncPickUI(); renderList(); },
+  onExit: () => togglePickMode(false),
+});
 
 // ---- 多选 + 抽取概念 ----
 export function syncPickUI() {
@@ -14,22 +25,22 @@ export function syncPickUI() {
   // 全选按钮：全选/取消全选随当前选中态切换文案
   const allBtn = $('btn-pick-all');
   if (allBtn) {
-    const allOn = total > 0 && n === total;
+    const allOn = total > 0 && librarySel.allSelected();
     allBtn.textContent = allOn ? '取消全选' : '全选';
     allBtn.classList.toggle('active', allOn);
   }
 }
 
-export function togglePick(id) {
-  if (state.selected.has(id)) state.selected.delete(id); else state.selected.add(id);
-  syncPickUI();
-  renderList();
+/** 多选模式下点论文条目。e 可选：Shift+点击 = 从上次点击处整段选中。 */
+export function togglePick(id, e) {
+  librarySel.click(id, e);
 }
 
 export function togglePickMode(on) {
   state.pickMode = on;
   $('bulk-bar').classList.toggle('active', on);
-  if (!on) { state.selected.clear(); closeBulkMenu(); }
+  if (on) librarySel.activate();
+  else { librarySel.deactivate(); state.selected.clear(); closeBulkMenu(); }
   syncPickUI();
   const pickBtn = $('btn-pick');
   // 纯图标按钮（v3.18 去文字）：开关态靠 title / aria-label / active 类表达

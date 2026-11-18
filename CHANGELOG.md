@@ -4,6 +4,38 @@
 
 ## [Unpublished]
 
+### Changed — 设计系统 P2：统一浮层外壳 + 分级反馈与撤销 + 多选三页同构（v3.65）
+
+依据 [`docs/DESIGN_SYSTEM.md`](docs/DESIGN_SYSTEM.md) §10 落地第三阶段：
+
+- **新文件 `public/layers.js`（`PWLayers`，classic script）+ ESM 薄壳 `js/core/layers.js`**：全站唯一的浮层栈。
+  - `open({el, root, kind, modal, trap, trigger, initialFocus, onEscape, onKey})`：焦点移入、Tab 焦点陷阱、关闭时焦点归还触发器；
+    背景 `inert`（toast 区与 `[data-layer-keep]` 除外），`html.pw-has-modal` 锁滚动。
+  - Esc 只关**最上层**：在冒泡阶段处理，内层（输入法组合、@ 浮层、编辑框）`preventDefault` 过的 Esc 不会越级关层；
+    `onEscape` 返回 `false` 表示「未处理」（如编辑抽屉内输入框里的 Esc）。
+  - `registerShortcut(fn, {phase})`：全局快捷键统一注册，模态打开时自动让位——
+    `bind.js` 里手写的「import-modal / discover-modal / folder-manager」排除名单删除。
+  - 全部迁入：PWDialog、表单对话框、命令面板与快捷键帮助、概念详情抽屉、公式详情 / 编辑抽屉、筛选浮层、
+    导入 / 发现 / 收藏夹管理 / 目录向导 / 空间管理五个静态模态（`showModal / hideModal`）、概念地图全屏层、设置覆盖层（sheet）。
+  - 阅读器不是层（其聊天浮层挂在 body 上），键盘改走 `registerShortcut(…, {phase: 'capture'})`。
+  - **`document / window` 级 keydown 监听 23 → 2**（都在 layers.js）；所有 JS 生成的 `role="dialog"` 带 `aria-modal` + 名称并经层管理器打开（design-lint 硬约束）。
+- **新文件 `js/core/feedback.js`**：`toast(msg, {level, action, duration, closable})` 与 `undoToast(msg, onUndo)`。
+  - 四级 info / success / warning / danger：`--surface-raised` 卡片 + 级别图标，不再整块深色 / 红底。
+  - 时长按级别 3.2s / 3.2s / 5s / 8s，带动作的至少 5s，`duration: 0` 常驻；悬停或聚焦时暂停计时。
+  - danger 用 `role="alert"` 且带关闭钮；同屏最多 4 条。旧签名 `toast(msg, 'error' | 'warn')` 兼容。
+  - 阅读器 `setStatus()` 并轨到同一套 toast（失败类文案自动 danger，其余 warning；静默白名单保留）。
+- **可撤销代替确认**（§7.1 / §7.2）：删除笔记卡、移出阅读架（抽屉与侧栏）改为「立即执行 + 撤销 toast」，不再弹确认框。
+- **多选三页同构**：新文件 `js/core/multi-select.js`，论文库 / 概念 / 公式共用一套选择语义——
+  点击切换、**Shift+点击范围选**（按当前筛选排序后的完整列表）、**Ctrl/⌘+A 全选**（输入框内不拦）、**Esc 退出**、
+  底栏「全选 ↔ 取消全选」随选中态切换。底栏统一为「已选 N ｜ 全选 ｜ 退出多选 —— 动作」，`role="toolbar"`，0 项时动作钮禁用。
+- **P1 遗留清零**：
+  - chip 内「移除 ×」字形（标签 / 主题、高级搜索、保存的搜索、聊天引用与附图、阅读器引用、论文选择器）全部换 `icon('x')`，
+    外观并入 components.css 的「Chip 移除微钮」一处定义（新 token `--chip-x` 16px）。
+  - 侧栏 rail 按钮 38px → `--ctl-lg`（36）。
+- **`tests/design-lint.test.js`**：新增硬约束「document 级 keydown 只在 layers.js」「JS 生成的对话框必须带 aria 并经层管理器打开」；
+  棘轮：非四档控件高度 4 → 0、色值 211 → 202。
+- 新增测试：`tests/layers.test.js`（10）、`tests/feedback.test.js`（5），以及概念页 / 论文库多选同构的 UI 用例。
+
 ### Changed — 设计系统 P1：组件收口 + 图标化 + 四档控件高度（v3.64）
 
 依据 [`docs/DESIGN_SYSTEM.md`](docs/DESIGN_SYSTEM.md) §10 落地第二阶段：

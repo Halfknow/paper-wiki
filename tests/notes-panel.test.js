@@ -169,7 +169,7 @@ test('取消编辑：不 PATCH，内容还原', async () => {
   assert.ok(cardEls()[0].querySelector('.nc-body').textContent.includes('别动我'), '内容还原');
 });
 
-test('删除卡片：confirm 后 PATCH 移除', async () => {
+test('删除卡片：直接 PATCH 移除（无确认框），toast「撤销」放回原位并再次落盘', async () => {
   reset([card('c1'), card('c2')]);
   await openNotesTab();
   ui.backend.patches.length = 0;
@@ -178,6 +178,13 @@ test('删除卡片：confirm 后 PATCH 移除', async () => {
   await waitFor(() => titles().length === 1, 'DOM 剩 1 张卡');
   assert.strictEqual(lastPatch().body.noteCards.length, 1);
   assert.deepStrictEqual(titles(), ['卡片c2']);
+  const undoBtn = [...ui.document.querySelectorAll('#toast-root .toast-action')].pop();
+  assert.ok(undoBtn && undoBtn.textContent === '撤销', '给出撤销动作');
+  const n = ui.backend.patches.length;
+  undoBtn.click();
+  await waitFor(() => ui.backend.patches.length > n, '撤销后再次落盘');
+  assert.deepStrictEqual(lastPatch().body.noteCards.map((c) => c.id), ['c1', 'c2'], '放回原位置');
+  await waitFor(() => titles().length === 2, 'DOM 恢复 2 张卡');
 });
 
 test('上移/下移：顺序交换并落盘', async () => {

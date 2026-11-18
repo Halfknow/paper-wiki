@@ -40,6 +40,39 @@ button .pw-icon, .btn .pw-icon { vertical-align: middle; }
 .inline-status[data-level="warning"], .ch-test[data-level="warning"] { color: var(--warning); }
 .inline-status[data-level="info"], .ch-test[data-level="info"] { color: var(--accent-strong); }
 
+/* ---------- Toast（规范 §6.11 / §7.1，feedback.js）：raised 卡片 + 级别图标 + 可选动作 / 关闭 ----------
+   旧版整块铺语义色（错误红底白字），暗色下刺眼且与主题脱节；现在只由左侧 16px 级别图标承载级别。 */
+.toast {
+  pointer-events: auto;
+  display: flex; align-items: flex-start; gap: var(--sp-2);
+  max-width: 360px; padding: var(--sp-2_5) var(--sp-3);
+  border: 1px solid var(--border-default);
+  border-radius: var(--r-md); background: var(--surface-raised); color: var(--text-1);
+  box-shadow: var(--shadow-2); font-size: var(--fs-md); line-height: var(--lh-md);
+  opacity: 0; transform: translateY(-6px);
+  transition: opacity var(--dur-base) ease, transform var(--dur-base) ease;
+}
+.toast.show { opacity: 1; transform: translateY(0); }
+.toast[data-level="info"] { --toast-c: var(--info); }
+.toast[data-level="success"] { --toast-c: var(--success); }
+.toast[data-level="warning"] { --toast-c: var(--warning); }
+.toast[data-level="danger"] { --toast-c: var(--danger); }
+.toast-ico { flex: none; margin-top: 2px; color: var(--toast-c, var(--info)); }
+.toast-msg { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.toast-action {
+  flex: none; height: var(--ctl-xs); padding: 0 var(--sp-2); margin: -2px 0;
+  border: 0; border-radius: var(--r-sm); background: transparent; cursor: pointer;
+  color: var(--accent-strong); font: inherit; font-weight: 600;
+}
+.toast-action:hover { background: var(--accent-soft); }
+.toast-close {
+  flex: none; display: grid; place-items: center; width: var(--ctl-xs); height: var(--ctl-xs);
+  margin: -2px -6px -2px 0; border: 0; border-radius: var(--r-sm); background: transparent;
+  color: var(--text-2); cursor: pointer;
+}
+.toast-close:hover { background: var(--fill-hover); color: var(--text-1); }
+.toast-action:focus-visible, .toast-close:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
 /* ---------- 工具类 ---------- */
 .sr-only {
   position: absolute !important; width: 1px; height: 1px; padding: 0; margin: -1px;
@@ -143,6 +176,27 @@ button .pw-icon, .btn .pw-icon { vertical-align: middle; }
 .chip-5 { background: var(--chip-5-bg); color: var(--chip-5-fg); }
 .chip-6 { background: var(--chip-6-bg); color: var(--chip-6-fg); }
 .chip-7 { background: var(--chip-7-bg); color: var(--chip-7-fg); }
+
+/* ---------- Chip 移除微钮（规范 §6.6，v3.65）：标签 / 筛选 chip / 引用 / 附图 / 选人 chip 内的「×」 ----------
+   全站唯一外观：--chip-x 方形、图标 icon('x') 12px、静息弱色、hover 危险色 + 浅危险底。
+   它是 chip 的组成部分而非独立控件（不占 §3.6 四档高度）；键盘可达性由各 chip 的 button / role=button 承担。 */
+.chip-row .x, .sf-chip-x, .saved-chip-x, .extra-chip-x, .chat-attach-chip .ca-x, .rcd-quote-x, .fpk-x {
+  flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center;
+  width: var(--chip-x); height: var(--chip-x); padding: 0; border: 0; border-radius: var(--r-full);
+  background: transparent; color: currentColor; opacity: .62; cursor: pointer; line-height: 1;
+  transition: background var(--dur-fast) ease, color var(--dur-fast) ease, opacity var(--dur-fast) ease;
+}
+.chip-row .x svg, .sf-chip-x svg, .saved-chip-x svg, .extra-chip-x svg, .chat-attach-chip .ca-x svg, .rcd-quote-x svg, .fpk-x svg {
+  width: 12px; height: 12px; pointer-events: none;
+}
+.chip-row .x:hover, .sf-chip-x:hover, .saved-chip-x:hover, .extra-chip-x:hover, .chat-attach-chip .ca-x:hover, .rcd-quote-x:hover, .fpk-x:hover {
+  opacity: 1; color: var(--danger); background: var(--danger-subtle);
+}
+.chip-row .x:focus-visible, .sf-chip-x:focus-visible, .saved-chip-x:focus-visible, .extra-chip-x:focus-visible, .chat-attach-chip .ca-x:focus-visible, .rcd-quote-x:focus-visible, .fpk-x:focus-visible {
+  opacity: 1; outline: 2px solid var(--accent); outline-offset: 1px;
+}
+/* 附图 chip 的 × 叠在缩略图上：需要实底才看得清 */
+.chat-attach-chip .ca-x { background: var(--surface-raised); opacity: .9; box-shadow: var(--shadow-1); }
 
 /* ---------- Button（规范 §6.1）：全站唯一按钮族 ----------
    变体：.btn（primary，实心，每个区域最多一个）/ .secondary（浅底 + 内环，最常用）/ .ghost（无底，工具条 / 卡内）

@@ -7,13 +7,13 @@
  * opts: { title, okText, cancelText, danger, value, placeholder, multiline }
  * message 中的 \n 以换行渲染（textContent + pre-line，无注入风险）。
  * danger：初始焦点落在「取消」，Enter 仅在焦点位于危险按钮时确认（否则 = 取消）。
- * 键盘分层：常驻 document capture 监听，仅在弹窗打开时消费 Esc/Enter 并 stopPropagation，
+ * 键盘分层（v3.65 P2）：每个弹窗登记为 PWLayers（public/layers.js）的一层——Esc 只关最上层、
+ * Tab 焦点陷阱、背景 inert、关闭后焦点还给触发器；Enter 走层的 onKey 钩子并阻断传播，
  * 不会干扰阅读器/app 的全局 Esc 分层（见 AGENTS.md 陷阱 31）。
  */
 (function () {
   'use strict';
 
-  const openStack = []; // 当前打开的弹窗（支持嵌套/连发，后开者在上）
   let seq = 0; // aria-labelledby / aria-describedby 的唯一 id 后缀
 
   function el(tag, cls, text) {
@@ -23,40 +23,14 @@
     return n;
   }
 
-  /** 常驻 capture 键盘监听：弹窗打开时接管 Esc（取消）与 Enter（确认），并阻断冒泡到阅读器/全局分层。 */
-  document.addEventListener(
-    'keydown',
-    (e) => {
-      const top = openStack[openStack.length - 1];
-      if (!top) return;
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        e.stopPropagation();
-        top.cancel();
-      } else if (e.key === 'Enter' && top.enterOk) {
-        // 多行输入框里 Enter 换行、Ctrl/Cmd+Enter 提交；单行输入与确认框 Enter 直接提交
-        const t = e.target;
-        const inMultiline = t && t.tagName === 'TEXTAREA' && top.multiline;
-        if (inMultiline && !(e.ctrlKey || e.metaKey)) return;
-        e.preventDefault();
-        e.stopPropagation();
-        // 危险确认：Enter 只在焦点确实落在危险按钮上时才确认，其余一律当取消——
-        // 防止「习惯性回车」误删（规范 §7 危险操作）
-        if (top.danger && t !== top.okBtn) top.cancel();
-        else top.ok();
-      }
-    },
-    true
-  );
-
   /**
    * 打开一个弹窗。kind: 'confirm' | 'prompt' | 'alert'
    * 返回 Promise：confirm/alert 归一为 boolean，prompt 为 string|null。
    */
   function openDialog(kind, message, opts) {
     opts = opts || {};
+    if (!window.PWLayers) throw new Error('PWDialog 依赖 /layers.js（须先于 dialog.js 加载）');
     return new Promise((resolve) => {
-      const prevFocus = document.activeElement;
 
       const mask = el('div', 'pwdlg-mask');
       const box = el('div', 'pwdlg');
@@ -102,26 +76,31 @@
       mask.appendChild(box);
 
       let settled = false;
+      const danger = !!opts.danger && !!cancelBtn;
       const entry = {
-        multiline: !!opts.multiline,
-        enterOk: true,
-        danger: !!opts.danger && !!cancelBtn,
-        okBtn,
         ok: () => settle(kind === 'prompt' ? input.value : true),
         cancel: () => settle(kind === 'prompt' ? null : false),
       };
+      let layer = null;
       function settle(value) {
         if (settled) return;
         settled = true;
-        const i = openStack.indexOf(entry);
-        if (i >= 0) openStack.splice(i, 1);
+        // 先出栈（焦点归还给打开前的触发器），再等淡出动画结束移除 DOM
+        if (layer) layer.close();
         mask.classList.remove('show');
-        // 等淡出动画结束再移除 DOM
         setTimeout(() => mask.remove(), 130);
-        if (prevFocus && prevFocus.focus) {
-          try { prevFocus.focus(); } catch { /* ignore */ }
-        }
         resolve(value);
+      }
+      /** Enter：单行输入与确认框直接提交；多行输入框里 Enter 换行、Ctrl/Cmd+Enter 提交。
+       *  危险确认：Enter 只在焦点确实落在危险按钮上时才确认，其余一律当取消——防止「习惯性回车」误删。 */
+      function onKey(e) {
+        if (e.key !== 'Enter' || e.isComposing) return false;
+        const t = e.target;
+        if (t && t.tagName === 'TEXTAREA' && opts.multiline && !(e.ctrlKey || e.metaKey)) return false;
+        e.preventDefault();
+        if (danger && t !== okBtn) entry.cancel();
+        else entry.ok();
+        return true;
       }
 
       okBtn.onclick = entry.ok;
@@ -132,7 +111,7 @@
       });
 
       document.body.appendChild(mask);
-      openStack.push(entry);
+      layer = window.PWLayers.open({ el: box, root: mask, kind: 'dialog', initialFocus: false, onEscape: entry.cancel, onKey });
       // 下一帧加 .show 触发进场动画
       requestAnimationFrame(() => mask.classList.add('show'));
       // 初始焦点：prompt 聚焦输入框并全选；危险确认聚焦「取消」（Enter = 取消）；
@@ -141,7 +120,7 @@
         if (input) {
           input.focus();
           input.select();
-        } else if (entry.danger) {
+        } else if (danger) {
           cancelBtn.focus();
         } else {
           okBtn.focus();

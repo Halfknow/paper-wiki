@@ -156,6 +156,26 @@ export function shelfRemove(id) {
   return true;
 }
 
+/**
+ * 移除一篇并返回撤销函数（v3.65 P2，设计系统 §7.1「可恢复的破坏性操作 → 执行 + 撤销 toast」）。
+ * 不在架上返回 null。撤销把条目放回原位置（架子期间变短则放到末尾），恢复卡片元数据与「当前篇」标记。
+ */
+export function shelfRemoveUndoable(id) {
+  const i = shelfState.ids.indexOf(id);
+  if (i === -1) return null;
+  const item = shelfState.items[id];
+  const wasActive = shelfState.activeId === id;
+  shelfRemove(id);
+  return () => {
+    if (shelfState.ids.includes(id)) return;
+    shelfState.ids.splice(Math.min(i, shelfState.ids.length), 0, id);
+    if (item) shelfState.items[id] = item;
+    if (wasActive) shelfState.activeId = id;
+    persistShelf();
+    emit();
+  };
+}
+
 /** 拖拽重排：把 from 位置的条目移动到 to 位置（to 按「移除 from 后的语义」计算，
  *  与 HTML5 DnD 的 drop 目标一致）。越界静默忽略。 */
 export function shelfMove(from, to) {

@@ -9,12 +9,14 @@ import { icon } from '../core/icons.js';
 import { openFormDialog } from '../core/form-dialog.js';
 import { gotoPaper, router, syncPageQueryToUrl } from '../core/nav.js';
 import { createPickBar } from '../core/pick-bar.js';
+import { createMultiSelect } from '../core/multi-select.js';
 import { state } from '../core/state.js';
 import { toast } from '../core/ui-kit.js';
 import { renderConceptAlphaBar } from '../formulas/formulas.js';
 import { setSidebarCollapsed } from '../views/layout.js';
 import { showView } from '../views/view-switch.js';
 import { openConceptDetail } from './detail-drawer.js';
+import { holdLayer, releaseLayer } from '../core/layers.js';
 
 // ---- 概念清单视图 ----
 // 标题头 sticky 的滚动态（v3.36）：>4px 挂 .scrolled 驱动底边阴影；一次性接线
@@ -273,6 +275,9 @@ function openConceptMapOverlay(id, html) {
     ov = document.createElement('div');
     ov.id = 'concept-map-overlay';
     ov.className = 'concept-map-overlay';
+    ov.setAttribute('role', 'dialog');
+    ov.setAttribute('aria-modal', 'true');
+    ov.setAttribute('aria-label', '概念地图');
     document.body.appendChild(ov);
   }
   ov.innerHTML =
@@ -284,7 +289,9 @@ function openConceptMapOverlay(id, html) {
   ov.querySelector('.cmo-title').textContent = ((state.conceptMaps || []).find((m) => m.id === id) || {}).name || '概念地图';
   const frame = ov.querySelector('.cmo-frame');
   frame.srcdoc = html || '';
-  ov.querySelector('#cmo-close').onclick = () => { ov.classList.remove('open'); frame.srcdoc = ''; };
+  const close = () => { ov.classList.remove('open'); frame.srcdoc = ''; releaseLayer(ov); };
+  ov.querySelector('#cmo-close').onclick = close;
+  holdLayer(ov, { el: ov, kind: 'fullscreen', initialFocus: '#cmo-close', onEscape: close });
   ov.querySelector('#cmo-newtab').onclick = () => openConceptMapNewTab(id, html);
 }
 
@@ -521,6 +528,15 @@ function _downloadTextBlob(blob, filename) {
 let _conceptPickMode = false;
 const _conceptPicked = new Set();
 let _conceptPickBar = null;
+// 选择语义与论文库同构（v3.65 P2，core/multi-select.js）：Shift 范围选 / Ctrl+A 全选 / Esc 退出。
+// 范围与全选按「当前筛选 + 排序后的完整列表」计——懒加载尚未渲染的卡片同样算在内。
+const _conceptSel = createMultiSelect({
+  getSet: () => _conceptPicked,
+  order: () => _conceptList.map((x) => x.id),
+  view: 'concepts',
+  onChange: _syncConceptPicks,
+  onExit: () => toggleConceptPickMode(false),
+});
 
 export function isConceptPickMode() {
   return _conceptPickMode;
@@ -568,28 +584,27 @@ export function toggleConceptPickMode(on) {
             toast('网络中断，批量归类未完成', 'error');
           }
         },
+        onToggleAll: () => _conceptSel.toggleAll(),
         onExit: () => toggleConceptPickMode(false),
       });
     }
     _conceptPickBar.open();
-    _conceptPickBar.setCount(_conceptPicked.size);
+    _conceptPickBar.setCount(_conceptPicked.size, _conceptSel.allSelected());
+    _conceptSel.activate();
   } else {
+    _conceptSel.deactivate();
     _conceptPicked.clear();
     if (_conceptPickBar) _conceptPickBar.close();
   }
   renderConcepts();
 }
 
-/** 多选模式内点击卡片：切换选中（就地改 class + 计数，不整页重渲）。 */
-function _toggleConceptPick(id, cardEl) {
-  if (_conceptPicked.has(id)) {
-    _conceptPicked.delete(id);
-    cardEl.classList.remove('picked');
-  } else {
-    _conceptPicked.add(id);
-    cardEl.classList.add('picked');
-  }
-  if (_conceptPickBar) _conceptPickBar.setCount(_conceptPicked.size);
+/** 选中集合变化后就地同步（改 class + 底栏计数，不整页重渲）。 */
+function _syncConceptPicks() {
+  document.querySelectorAll('#concepts-view .concept-card.pickable[data-detail]').forEach((el) => {
+    el.classList.toggle('picked', _conceptPicked.has(el.dataset.detail));
+  });
+  if (_conceptPickBar) _conceptPickBar.setCount(_conceptPicked.size, _conceptSel.allSelected());
 }
 
 // 懒加载：概念清单可能数百条（一次抽取就 700+），一次性 innerHTML 会卡顿。复用公式清单的分批
@@ -1163,6 +1178,8 @@ function _observeConceptSentinel(sentinel) {
 function _wireConceptGridOnce(g) {
   if (g.dataset.wired) return;
   g.dataset.wired = '1';
+  // Shift+点击范围选时别让浏览器顺带拉出文字选区
+  g.addEventListener('mousedown', (e) => { if (_conceptPickMode) _conceptSel.onMouseDown(e); });
   g.addEventListener('click', async (e) => {
     // 星标切换（v3.30）：就地翻转 + 侧栏计数联动，不打断浏览（多选模式下让位给选中）
     const starBtn = e.target.closest('[data-star]');
@@ -1185,7 +1202,7 @@ function _wireConceptGridOnce(g) {
       const pickCard = e.target.closest('.concept-card[data-detail]');
       if (pickCard) {
         e.preventDefault();
-        _toggleConceptPick(pickCard.dataset.detail, pickCard);
+        _conceptSel.click(pickCard.dataset.detail, e);
         return;
       }
     }

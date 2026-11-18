@@ -13,7 +13,8 @@
 
 import { $ } from '../core/dom.js';
 import { escapeHtml } from '../core/format.js';
-import { ensureShelfLoaded, refreshShelf, shelfRemove, shelfState, subscribeShelf } from './shelf.js';
+import { undoToast } from '../core/feedback.js';
+import { ensureShelfLoaded, refreshShelf, shelfRemoveUndoable, shelfState, subscribeShelf } from './shelf.js';
 
 const REMOVE_SVG =
   '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
@@ -89,7 +90,8 @@ export function initShelfSidebar(onOpenPaper) {
     const rm = e.target.closest('[data-shelf-rm]');
     if (rm) {
       e.stopPropagation();
-      shelfRemove(rm.dataset.shelfRm); // 内部会 emit → 订阅重渲
+      const undo = shelfRemoveUndoable(rm.dataset.shelfRm); // 内部会 emit → 订阅重渲
+      if (undo) undoToast('已从阅读架移除', undo);
       return;
     }
     const open = e.target.closest('[data-shelf-open]');

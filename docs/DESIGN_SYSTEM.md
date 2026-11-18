@@ -401,6 +401,8 @@ disabled→ --fill-secondary 底、--text-3 文字、不响应 hover
 
 ### 6.6 Badge / Tag / Count（徽章体系）
 
+> **P2 补充（v3.65）**：chip 内的「移除 ×」统一为 **Chip 移除微钮**——`icon('x')` 12px，`--chip-x`（16px）圆形热区，静息弱色、hover `--danger` + `--danger-subtle`。它是 chip 的组成部分，不占 §3.9 控件四档。外观只在 components.css 定义，覆盖 `.chip-row .x / .sf-chip-x / .saved-chip-x / .extra-chip-x / .ca-x / .rcd-quote-x / .fpk-x`。
+
 > **P1 落地（v3.64）✅**：`.badge` 变体 `success / warning / danger / info / accent`，另有分类色 `.violet / .cyan`（命令面板类型）、`.plain`（去底纯计数）、`.has-dot`（前置 6px 圆点）、`.is-live`（脉冲点，处理中）；Badge / Tag 均无描边、`--r-xs`、高 20px。下表「合并」一行列出的老 class 全部改为 `.badge.{variant}`（老名只作钩子）。
 
 这是当前最混乱的区域（详情头一行 8 种样式）。今后只有三种物件：
@@ -461,6 +463,12 @@ disabled→ --fill-secondary 底、--text-3 文字、不响应 hover
 - 打开期间背景 `inert`，body 不滚动。
 - 关闭按钮固定在右上角，24px 图标按钮，`aria-label="关闭"`。
 
+> **P2 落地（v3.65）✅**：`public/layers.js`（`window.PWLayers`）+ ESM 薄壳 `js/core/layers.js`（`openLayer / holdLayer / releaseLayer / showModal / hideModal / registerShortcut / hasModalLayer`）。要点：
+> - **单一栈、两只监听**：capture 阶段处理顶层 `onKey`、Tab 焦点陷阱和 capture 快捷键；bubble 阶段处理 Esc——内层元素 `preventDefault` 过的 Esc（输入法组合、@ 浮层、编辑框）不越级关层。`onEscape` 返回 `false` 表示「没处理」，事件继续传。
+> - **背景 inert**：打开模态时 body 的其它直接子元素加 `inert`（`#toast-root`、`<script>`、`[data-layer-keep]` 除外）。**推论：模态打开期间新挂到 body 的浮层会被 inert**——临时元素要挂在模态内部（如公式详情的剪贴板兜底 textarea）。
+> - **幂等**：同一元素重复 `open` 返回同一层；`holdLayer(host)` 把层句柄存在 `host.__pwLayer` 上，适合「显隐由 class 控制」的存量浮层。
+> - 阅读器整体不登记为层（聊天浮层挂在 body），其 Esc 分层由 capture 快捷键自管。
+
 **合并**：`.modal-mask/.modal`、`.pwdlg-mask/.pwdlg`、`.pfdlg`、`.fm-modal`、`.formula-candidates-pop` → `.overlay` + `.dialog.{sm|md|lg}`；`.concept-detail`、`.formula-editor`、`.reader-chat-drawer`、`.reader-shelf-drawer` → `.drawer`；`.settings-shell`、`.fdv`、`.cp` → `.sheet`。
 
 ### 6.9 Tabs
@@ -485,6 +493,8 @@ disabled→ --fill-secondary 底、--text-3 文字、不响应 hover
 | **Banner** | 页面/面板顶部的持续状态（如「有 7 项设置覆盖 config.json」），`--{level}-subtle` 底 + `--r-md` + 右侧行动按钮 |
 
 阅读器私有的 `setStatus()` 迁移到同一套：短暂确认走 Inline status（阅读器底部状态条），需要用户知道的走 Toast，现有 `SILENT_STATUS_RE` 白名单思路保留为"静默确认"等级。
+
+> **P2 落地（v3.65）✅**：`js/core/feedback.js`——`toast(msg, {level, action:{label, run}, duration, closable})`、`undoToast(msg, onUndo)`。时长按上表；带动作 ≥ 5s；`duration: 0` 常驻；悬停 / 聚焦暂停计时（恢复后至少再留 1.2s）；danger 与带动作 / 常驻的 toast 自带关闭钮；同屏 ≤ 4 条。旧签名 `toast(msg, 'error'|'warn')` 自动映射为 danger / warning。阅读器 `setStatus(text, level)` 改为直接走 toast：`level === true` 时失败类文案（失败 / 出错 / 错误 / 损坏 / 无法）为 danger，其余为 warning。
 
 ### 6.12 Tooltip
 
@@ -547,6 +557,8 @@ disabled→ --fill-secondary 底、--text-3 文字、不响应 hover
 - 三个知识对象（论文 / 概念 / 公式）的多选模式**同构**：工具条「多选」切换 → 卡片左上出现勾选圆 → 底部 pick-bar（已选 N · 批量动作 · 退出）。论文列表的 `bulk-bar` 与知识页 `pick-bar` 合并为同一组件。
 - 支持 Shift 点击区间选、Ctrl/⌘+A 全选当前筛选结果、Esc 退出。
 
+> **P2 落地（v3.65）✅**：`js/core/multi-select.js` 的 `createMultiSelect({getSet, order, view, onChange, onExit})` 是三页唯一的选择逻辑；选中集合仍归页面持有。范围选与全选按 `order()`（**当前筛选 + 排序后的完整列表**，知识页懒加载未渲染的卡片也算）计；键盘经 `registerShortcut` 注册、只在 `body[data-view]` 等于本页时生效。底栏两套 DOM（论文库 `#bulk-bar` 有进度条与批量菜单，知识页 `pick-bar.js`）保留，但结构、文案、`role="toolbar"` 与禁用规则一致：「已选 N ｜ 全选 ↔ 取消全选 ｜ 退出多选 —— 动作」。
+
 ### 7.5 键盘
 
 全局快捷键表（`?` 面板为唯一文档来源，新增快捷键必须登记）：
@@ -562,7 +574,7 @@ disabled→ --fill-secondary 底、--text-3 文字、不响应 hover
 | `← / →`、`+ / -` | 阅读器翻页、缩放 | 已有 |
 | `[ / ]` | 阅读器切换阅读架上一篇/下一篇 | 已有 |
 | `Ctrl/⌘ D` | 放入/移出阅读架 | 已有 |
-| `Esc` | 关闭最上层浮层 → 退出多选 → 清空搜索（逐级） | **新增统一语义**（现各浮层自管） |
+| `Esc` | 关闭最上层浮层 → 退出多选 → 清空搜索（逐级） | 已统一（v3.65 `layers.js` Esc 栈 + `multi-select.js`） |
 
 - 现状问题示例：`js/bind.js:665-671` 的列表导航靠手动列举 `folder-manager / import-modal / discover-modal` 三个模态来判断"有没有浮层打开"，空间管理、目录向导、PWDialog、概念抽屉都不在名单里——这类"手写排除名单"必然随浮层增加而漏判，应改为询问 `layers.js` 的"当前是否有模态层"。
 
@@ -691,7 +703,7 @@ public/css/
 |---|---|---|
 | **P0 立规矩（1–2 天）✅ v3.63** | ① 建 `tokens.css`，补齐 §3 全部语义 token，旧名改为别名；② z-index / scrim / 动效 / `--font-mono` token 化；③ 设置覆盖层暗色改用全局 slate 底（修 P3）；④ 移除 3 处 `window.confirm`，PWDialog 危险确认默认聚焦取消；⑤ 概念页「+ 新增」降为 secondary；⑥ 侧栏底部入口固定；⑦ 详情加载立即出骨架；⑧ §1.3 小缺陷；⑨ 落地 `design-lint.test.js` 棘轮基线 | lint 测试通过；z-index 字面量 0；暗色设置与全站同色相 |
 | **P1 收组件（3–5 天）✅ v3.64** | 按 §6 合并：Button 家族 → `.btn`；5 套输入 → `.field`；2 套开关 → `.switch`（含 `.switch.sm` 28×16）；分段控件 → `.seg`；徽章体系 → `.badge/.tag`；5 个 spinner → `.spinner`；`icons.js` + 替换全部 emoji。全部落在新文件 `public/components.css` | 字号 7 档（`--fs-*`，lint 上限）、半像素 / px 字号 0（硬约束）；控件高度 24/28/32/36（lint 棘轮，余 4 处：rail 38px 导航钮 + chip 内 × 微钮）；emoji 0（含 CSS content，硬约束）；已合并按钮族 100% 走 `.btn`（硬约束） |
-| **P2 收浮层与交互（3–4 天）** | `layers.js`：所有 Dialog/Drawer/Sheet 走统一外壳、焦点陷阱、Esc 栈；`feedback.js`：toast 分级 + 撤销、阅读器 `setStatus` 并轨；多选模式三页同构 | 模态 100% 具备 `role/aria`；`document` 级 keydown 监听 ≤ 2 处 |
+| **P2 收浮层与交互（3–4 天）✅ v3.65** | `layers.js`：所有 Dialog/Drawer/Sheet 走统一外壳、焦点陷阱、Esc 栈；`feedback.js`：toast 分级 + 撤销、阅读器 `setStatus` 并轨；多选模式三页同构；P1 遗留（chip × 图标化、rail 38px） | 模态 100% 具备 `role/aria`（硬约束 `js.dialogWithoutLayer`）；`document` 级 keydown 监听 = 2 处、均在 layers.js（硬约束 `js.documentKeydown`）；非四档控件高度 0 |
 | **P3 拆文件与样板间（2–3 天）** | `styles.css` 进 `@layer legacy` → 按 §9.1 逐块迁出；`/__styleguide` + 视觉回归用例；`!important` 清理 | `styles.css` 删除；`!important` ≤ 3；断点 3 个；关键帧 ≤ 8 |
 
 每个阶段独立可发布，并在 CHANGELOG 里以「设计系统 P0/P1…」记录；AGENTS.md「关键约定」中加一条指向本文的链接，作为 agent 改 UI 前的必读。

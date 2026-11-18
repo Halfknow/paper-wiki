@@ -13,6 +13,7 @@ import { plotSvg } from '../core/plot.js';
 import { state } from '../core/state.js';
 import { toast } from '../core/ui-kit.js';
 import { escapeHtml } from '../core/format.js';
+import { holdLayer, releaseLayer } from '../core/layers.js';
 // 与 formulas.js 构成模块循环（formulas → editor → formulas），双方都只在事件回调里调对方
 // 函数（声明提升 + 运行时解析），顶层求值互不依赖——与 nav ↔ formulas 同构安全。
 import { renderFormulaSidebar, renderFormulas } from './formulas.js';
@@ -30,34 +31,30 @@ const ROLE_OPTIONS = [
 /** 打开编辑抽屉。f=null 为新增模式（canonicalName 可填 + 关联论文选择器）。 */
 export function openFormulaEditor(f) {
   const isCreate = !f;
-  if (!_overlay) _buildDom();
+  if (!_overlay || !_overlay.isConnected) _buildDom();
   _render(isCreate ? null : f);
   _overlay.classList.add('open');
-  document.addEventListener('keydown', _onKey);
+  holdLayer(_overlay, { el: _overlay.querySelector('#formula-editor-panel'), kind: 'drawer', onEscape: _onEscape });
 }
 
 export function closeFormulaEditor() {
   if (!_overlay) return;
   _overlay.classList.remove('open');
-  document.removeEventListener('keydown', _onKey);
+  releaseLayer(_overlay);
 }
 
-function _onKey(e) {
-  if (e.key === 'Escape') {
-    // textarea 内的 Esc 先由输入框自然处理（清 IME 等），仅裸 Esc 关抽屉
-    const t = e.target;
-    if (t && (t.tagName === 'TEXTAREA' || t.tagName === 'INPUT' || t.isContentEditable)) return;
-    e.preventDefault();
-    e.stopPropagation();
-    closeFormulaEditor();
-  }
+/** 输入框内的 Esc 不关抽屉（防误丢正在编辑的字段）；返回 false = 层不处理。 */
+function _onEscape(e) {
+  const t = e.target;
+  if (t && (t.tagName === 'TEXTAREA' || t.tagName === 'INPUT' || t.isContentEditable)) return false;
+  closeFormulaEditor();
 }
 
 function _buildDom() {
   _overlay = document.createElement('div');
   _overlay.id = 'formula-editor-overlay';
   _overlay.className = 'formula-editor-overlay';
-  _overlay.innerHTML = '<aside class="formula-editor" id="formula-editor-panel" role="dialog" aria-label="公式编辑"></aside>';
+  _overlay.innerHTML = '<aside class="formula-editor" id="formula-editor-panel" role="dialog" aria-modal="true" aria-label="公式编辑"></aside>';
   _overlay.addEventListener('click', (e) => { if (e.target === _overlay) closeFormulaEditor(); });
   document.body.appendChild(_overlay);
 }

@@ -13,11 +13,12 @@ import { buildPath } from './core/router.js';
 import { filterToQuery } from './core/routes.js';
 import { state } from './core/state.js';
 import { setBusy, toast } from './core/ui-kit.js';
+import { hideModal, registerShortcut, showModal } from './core/layers.js';
 import { select } from './detail/detail.js';
 import { patch, reader } from './detail/info-tab.js';
 import { _formulaLayout, _formulaSort, exportFormulasMd, renderFormulas, resetFormulaFacet, set_formulaLayout, set_formulaSort, toggleFormulaPickMode } from './formulas/formulas.js';
 import { openFormulaEditor } from './formulas/editor-drawer.js';
-import { closeBulkMenu, setBulkBusy, syncPickUI, toggleBulkMenu, togglePickMode, updateBulkProgress } from './library/bulk.js';
+import { closeBulkMenu, librarySel, setBulkBusy, toggleBulkMenu, togglePickMode, updateBulkProgress } from './library/bulk.js';
 import { closeStatusMenu, openFilterPop, renderStatusMenu, toggleStatusMenu } from './library/filters.js';
 import { goHome } from './library/folders.js';
 import { openFolderManager } from './library/folder-manager.js';
@@ -32,7 +33,7 @@ import { closeShelfSidebar, initShelfSidebar } from './reader/shelf-sidebar.js';
 import { mountSettingDropdown, saveAiConfig } from './settings/settings.js';
 import { renderTaxonomy, taxBatchDelete, taxBatchMerge, taxState, taxSwitchKind, taxToggleSelectMode } from './settings/taxonomy.js';
 import { applyListWidth, bindListSplitter, refreshSystemHealth, setSidebarCollapsed } from './views/layout.js';
-import { currentView } from './views/view-switch.js';
+import { currentView, setSettingsEscape } from './views/view-switch.js';
 import { bindDiscover } from './library/discover.js';
 
 // ---- 绑定事件 ----
@@ -213,10 +214,9 @@ export function bind() {
     const h = $('import-hint');
     h.textContent = '支持 abs / pdf / html 网址或裸 ID，会自动下载 PDF 并开始 AI 处理。';
     h.classList.remove('error');
-    $('import-modal').classList.add('active');
-    setTimeout(() => $('import-url-input').focus(), 50);
+    showModal($('import-modal'), { onClose: closeImportModal, initialFocus: '#import-url-input' });
   }
-  function closeImportModal() { $('import-modal').classList.remove('active'); }
+  function closeImportModal() { hideModal($('import-modal')); }
   $('btn-import').onclick = openImportModal;
   $('import-modal-cancel').onclick = closeImportModal;
   $('import-modal').addEventListener('click', (e) => { if (e.target.id === 'import-modal') closeImportModal(); });
@@ -495,12 +495,8 @@ export function bind() {
   if ($('btn-pick-export-csv')) $('btn-pick-export-csv').onclick = () => bulkExport('csv');
   // 全选/取消全选当前列表
   $('btn-pick-all').onclick = () => {
-    const total = state.papers.length;
-    if (!total) return;
-    if (state.selected.size === total) state.selected.clear();
-    else state.papers.forEach((p) => state.selected.add(p.id));
-    syncPickUI();
-    renderList();
+    if (!state.papers.length) return;
+    librarySel.toggleAll();
   };
   // 批量抽取概念：逐篇循环拿真实进度（批量端点是一次性 await 整批、无流式）。
   // 后端 /api/papers/concepts 按 ids 数组处理，传单 id 等价单篇，行为与整批一致（串行 AI 调用）。
@@ -611,8 +607,16 @@ export function bind() {
   // 主题外观（v3.32 R10）：分段控件 + 系统主题跟随
   wireTheme();
 
-  // ESC 关闭阅读器/模态
-  document.addEventListener('keydown', (e) => {
+  // 设置覆盖层的 Esc 分层（层管理器调用）：先从提示词编辑态退回列表，再退才关整个覆盖层
+  setSettingsEscape(() => {
+    if (currentPromptPane()) showPromptIndex();
+    else closeSettingsOverlay();
+  });
+
+  // 全局快捷键（v3.65 P2：经 PWLayers 注册，冒泡期——晚于元素自身 keydown）。
+  // 任何模态层（弹窗 / 抽屉 / 设置 / 静态模态）打开时管理器自动让位，Esc 也由层自己处理，
+  // 这里不再维护「哪些模态开着」的硬编码清单。
+  registerShortcut((e) => {
     // Ctrl/Cmd+K：命令面板（v3.32 R8）——沿业界惯例升级旧「聚焦搜索」绑定
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
       e.preventDefault();
@@ -639,11 +643,8 @@ export function bind() {
       if (e.key === '=' || e.key === '+') { e.preventDefault(); reader.scale = Math.min(3, +(reader.scale + 0.2).toFixed(2)); reader.rerender(); return; }
       if (e.key === '-' || e.key === '_') { e.preventDefault(); reader.scale = Math.max(0.5, +(reader.scale - 0.2).toFixed(2)); reader.rerender(); return; }
     }
-    // 列表键盘导航：仅在不输入、不开阅读器、不开模态、不在设置/概念视图时生效
+    // 列表键盘导航：仅在不输入、不开阅读器、不在设置/概念视图时生效（模态由层管理器屏蔽）
     if (!$('reader-view').classList.contains('active')
-        && !$('folder-manager').classList.contains('active')
-        && !$('import-modal').classList.contains('active')
-        && !$('discover-modal').classList.contains('active')
         && document.body.dataset.view === 'library'
         && !['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName)
         && state.papers.length) {
@@ -669,14 +670,7 @@ export function bind() {
       if ($('reader-view').classList.contains('active')) {
         if (router.current() && router.current().name === 'reader') window.history.back();
         else if (reader) reader.close();
-      }
-      $('folder-manager').classList.remove('active');
-      $('import-modal').classList.remove('active');
-      $('discover-modal').classList.remove('active');
-      // 设置覆盖层：分层退出——先从提示词编辑态退回列表，再退才关整个覆盖层
-      if (document.body.dataset.view === 'settings') {
-        if (currentPromptPane()) showPromptIndex();
-        else closeSettingsOverlay();
+        return true; // 已消费：别再让后注册的快捷键（如多选 Esc 退出）同时触发
       }
     }
   });

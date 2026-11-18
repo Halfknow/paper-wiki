@@ -4,6 +4,7 @@
 // v3.20：按 currentView() 渲染不同字段集——论文页走后端 DSL，概念/公式页走前端客户端过滤
 // （数据全量在内存，无需调后端，面板改 → 写搜索框 DSL → renderConcepts/renderFormulas）。
 
+import { icon } from '../core/icons.js';
 import { $ } from '../core/dom.js';
 import { escapeHtml } from '../core/format.js';
 import { state } from '../core/state.js';
@@ -280,7 +281,7 @@ function wireChipInput(input, getArr, setArr, row, onChange) {
 /** 渲染可移除 chip 行。onChange 用于移除后触发同步（缺省回退到 applyDslFromPanel）。 */
 function renderAdvChips(row, arr, setArr, onChange) {
   if (!row) return;
-  row.innerHTML = arr.map((v, i) => `<span class="sf-chip">${escapeHtml(v)}<button class="sf-chip-x" data-i="${i}" type="button" aria-label="移除">×</button></span>`).join('');
+  row.innerHTML = arr.map((v, i) => `<span class="sf-chip">${escapeHtml(v)}<button class="sf-chip-x" data-i="${i}" type="button" aria-label="移除">${icon('x', { size: 12 })}</button></span>`).join('');
   row.querySelectorAll('.sf-chip-x').forEach((b) => {
     b.onclick = () => {
       const i = Number(b.dataset.i); arr.splice(i, 1); setArr(arr); renderAdvChips(row, arr, setArr, onChange);

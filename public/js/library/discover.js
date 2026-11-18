@@ -7,6 +7,7 @@ import { POST, sp } from '../core/api.js';
 import { $ } from '../core/dom.js';
 import { icon } from '../core/icons.js';
 import { setBusy, toast } from '../core/ui-kit.js';
+import { hideModal, showModal } from '../core/layers.js';
 import { refresh } from './refresh.js';
 
 export function bindDiscover() {
@@ -29,10 +30,9 @@ function openDiscoverModal() {
   const h = $('discover-hint');
   h.textContent = 'claude 把主题转成 arXiv 检索式，按「相关度 + 最新」两轴召回，再用 相关度·引用量·新近 复合排序，并剔除已入库论文。';
   h.classList.remove('error');
-  $('discover-modal').classList.add('active');
-  setTimeout(() => $('discover-topic-input').focus(), 50);
+  showModal($('discover-modal'), { onClose: closeDiscoverModal, initialFocus: '#discover-topic-input' });
 }
-function closeDiscoverModal() { stopDiscoverStream(); $('discover-modal').classList.remove('active'); }
+function closeDiscoverModal() { stopDiscoverStream(); hideModal($('discover-modal')); }
 $('btn-discover').onclick = openDiscoverModal;
 $('discover-modal-cancel').onclick = closeDiscoverModal;
 $('discover-modal').addEventListener('click', (e) => { if (e.target.id === 'discover-modal') closeDiscoverModal(); });

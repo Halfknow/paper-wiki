@@ -427,8 +427,7 @@ input,select,textarea { font:inherit; color:var(--text); }
   background:var(--accent-soft); border:1px solid #c7d2fe; color:var(--accent-strong);
   border-radius:10px; font-size:var(--fs-xs); line-height:1.6;
 }
-.sf-chip-x { border:0; background:rgba(79,70,229,.16); color:var(--accent-strong); width:14px; height:14px; border-radius:50%; cursor:pointer; font-size:var(--fs-sm); line-height:1; display:inline-flex; align-items:center; justify-content:center; }
-.sf-chip-x:hover { background:var(--red); color:#fff; }
+/* .sf-chip-x → components.css「Chip 移除微钮」 */
 .sf-field.sf-tags input { margin-top:2px; }
 /* 正文全文行：label 在上，radio + 输入框一行（与其它字段同构，视觉更整齐） */
 .sf-scope-row { display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
@@ -459,8 +458,7 @@ input,select,textarea { font:inherit; color:var(--text); }
   transition:background var(--dur-fast) ease, color var(--dur-fast) ease, border-color var(--dur-fast) ease;
 }
 .saved-chip:hover { background:var(--fill-ghost-hover); color:var(--text); border-color:var(--ring-hover); }
-.saved-chip-x { color:var(--muted2); cursor:pointer; padding:0 2px; font-size:var(--fs-base); line-height:1; border-radius:5px; }
-.saved-chip-x:hover { color:var(--red); background:rgba(239,68,68,.1); }
+/* .saved-chip-x → components.css「Chip 移除微钮」 */
 /* 内联补全浮层 */
 .search-suggest-pop {
   position:fixed; z-index:calc(var(--z-dropdown) + 2); max-height:320px; display:none; flex-direction:column;
@@ -740,15 +738,7 @@ html[data-boot-path^="/settings"] #settings-view.view-hidden { display:flex !imp
   position:fixed; right:18px; top:66px; z-index:var(--z-toast);
   display:flex; flex-direction:column; gap:8px; pointer-events:none;
 }
-.toast {
-  transform:translateY(-6px); opacity:0;
-  max-width:360px; padding:9px 12px; border-radius:7px;
-  background:var(--surface-inverse); color:var(--on-inverse); box-shadow:var(--shadow-lg);
-  transition:opacity var(--dur-base) ease, transform var(--dur-base) ease; font-size:var(--fs-md);
-}
-.toast.show { opacity:1; transform:translateY(0); }
-.toast.error { background:var(--danger-hover); }
-.toast.success { background:var(--green); }
+/* .toast 本体（分级 / 动作 / 关闭钮）见 components.css「Toast」——v3.65 P2 收口 */
 
 /* ---------- 应用骨架：常驻侧栏 + 内容区（v3.17 第二步） ---------- */
 /* 侧栏与 rail 提到三个内容视图之外，切页时只换 .app-content 里的内容与侧栏的 .side-ctx，
@@ -859,8 +849,8 @@ body.is-resizing { cursor:col-resize; user-select:none; }
   padding:8px 0; grid-column:1; grid-row:1;
 }
 .sidebar-rail .rail-btn {
-  width:38px; height:38px; padding:0; display:grid; place-items:center;
-  border:1px solid transparent; border-radius:9px; background:transparent; color:var(--muted);
+  width:var(--ctl-lg); height:var(--ctl-lg); padding:0; display:grid; place-items:center;
+  border:1px solid transparent; border-radius:var(--r-md); background:transparent; color:var(--muted);
   cursor:pointer; transition:background var(--dur-fast) ease, color var(--dur-fast) ease, box-shadow var(--dur-fast) ease;
 }
 .sidebar-rail .rail-btn:hover { background:var(--fill-ghost-hover); color:var(--text); box-shadow:none; }
@@ -879,8 +869,8 @@ body.is-resizing { cursor:col-resize; user-select:none; }
   transition:background var(--dur-fast) ease, color var(--dur-fast) ease, border-color var(--dur-fast) ease;
 }
 .sidebar-rail .rail-expand-icon {
-  display:grid; place-items:center; width:36px; height:36px;
-  border-radius:9px; color:var(--muted);
+  display:grid; place-items:center; width:var(--ctl-lg); height:var(--ctl-lg);
+  border-radius:var(--r-md); color:var(--muted);
   background:transparent; border:1px solid transparent;
   transition:background var(--dur-fast) ease, color var(--dur-fast) ease, border-color var(--dur-fast) ease;
 }
@@ -895,7 +885,7 @@ body.is-resizing { cursor:col-resize; user-select:none; }
 /* rail 内 button 聚焦时不触发布局位移/自动滚动（点击收藏夹按钮不引发 scrollIntoView） */
 .sidebar-rail button:focus { outline:none; }
 .sidebar-rail button:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
-/* rail 收藏夹按钮：复用 .rail-btn（38×38 药丸，与视图按钮同款）；内含 .swatch 方形色块（与展开态一致）。
+/* rail 收藏夹按钮：复用 .rail-btn（--ctl-lg 方形，与视图按钮同款）；内含 .swatch 方形色块（与展开态一致）。
    .active / .drop-target 态继承自 .rail-btn（左竖条 + accent-soft 底），此处只补拖放高亮。 */
 .sidebar-rail .rail-folder-dot.drop-target { box-shadow:0 0 0 3px var(--accent); }
 /* 收起时显示图标栏（rail 是 .layout 内 .sidebar 的兄弟元素） */
@@ -1744,12 +1734,7 @@ html[data-theme="dark"] .chat-msg.user .chat-bubble { border-color:rgba(129,140,
 }
 .extra-chip.readonly { background:var(--panel2); border-color:var(--border); color:var(--muted); }
 .extra-chip svg { flex:0 0 auto; }
-.extra-chip-x {
-  flex:0 0 auto; border:0; background:rgba(79,70,229,.12); color:var(--accent-strong);
-  width:15px; height:15px; border-radius:50%; cursor:pointer; font-size:var(--fs-md); line-height:1;
-  display:inline-flex; align-items:center; justify-content:center; transition:background var(--dur-fast) ease;
-}
-.extra-chip-x:hover { background:var(--red); color:#fff; }
+/* .extra-chip-x → components.css「Chip 移除微钮」 */
 /* 历史消息内的只读引用行（user 消息正文上方） */
 .chat-extra-row { margin-bottom:4px; }
 
@@ -1855,8 +1840,7 @@ html[data-theme="dark"] .chat-msg.user .chat-bubble { border-color:rgba(129,140,
   background:var(--panel2); border:1px solid var(--border2);
 }
 .chat-attach-chip img { width:34px; height:34px; object-fit:cover; border-radius:5px; }
-.chat-attach-chip .ca-x { border:0; background:rgba(15,23,42,.08); color:var(--muted); width:16px; height:16px; border-radius:50%; cursor:pointer; font-size:var(--fs-md); line-height:1; display:inline-flex; align-items:center; justify-content:center; }
-.chat-attach-chip .ca-x:hover { background:var(--red); color:#fff; }
+/* .chat-attach-chip .ca-x → components.css「Chip 移除微钮」 */
 
 /* reasoning 时长标签（summary 内「思考过程」旁的小灰字） */
 .chat-reasoning .rs-duration { font-size:var(--fs-xs); color:var(--muted2); font-weight:500; margin-left:6px; }
@@ -2011,8 +1995,7 @@ body.fab-dragging { user-select:none; cursor:ns-resize; }
 .rcd-quote-tag { flex:0 0 auto; display:inline-flex; align-items:center; gap:3px; padding:1px 7px; border-radius:9px;
   background:var(--accent); color:#fff; font-size:var(--fs-xs); font-weight:700; white-space:nowrap; }
 .rcd-quote-text { flex:1 1 auto; min-width:0; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; word-break:break-word; }
-.rcd-quote-x { flex:0 0 auto; border:0; background:none; cursor:pointer; color:var(--muted2); padding:0 2px; line-height:1; font-size:var(--fs-lg); border-radius:5px; }
-.rcd-quote-x:hover { color:var(--red); background:rgba(239,68,68,.1); }
+/* .rcd-quote-x → components.css「Chip 移除微钮」 */
 /* 抽屉输入行：列布局（chip 行 + textarea + 预置行 + 发送键），钉底。flex:0 0 auto 让其在抽屉列里自然贴底 */
 
 /* Info tab 字段块 */
@@ -2087,8 +2070,7 @@ body.fab-dragging { user-select:none; cursor:ns-resize; }
 .abstract-text { color:var(--muted); width:100%; line-height:1.7; }
 .field-line { display:flex; flex-wrap:wrap; align-items:center; gap:10px; }
 .chip-row { display:flex; flex-wrap:wrap; gap:6px; align-items:center; max-width:760px; }
-.chip-row .x { cursor:pointer; opacity:.6; margin-left:3px; }
-.chip-row .x:hover { opacity:1; color:var(--red); }
+.chip-row .x { margin-left:3px; } /* 外观 → components.css「Chip 移除微钮」 */
 .chip-input {
   width:120px !important; padding:4px 8px !important;
   border-radius:14px !important; font-size:var(--fs-sm) !important; background:var(--panel) !important;
@@ -2913,8 +2895,7 @@ body.fab-dragging { user-select:none; cursor:ns-resize; }
   font-size:var(--fs-sm); font-weight:600; max-width:100%;
 }
 .fpk-chip span, .fpk-chip { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.fpk-x { border:0; background:none; cursor:pointer; color:inherit; font-size:var(--fs-md); padding:0 2px; line-height:1; }
-.fpk-x:hover { color:#dc2626; }
+/* .fpk-x → components.css「Chip 移除微钮」 */
 .fpk-input { width:100%; }
 .fpk-drop { position:relative; }
 .fpk-drop .fpk-opt {
@@ -4565,7 +4546,6 @@ html[data-theme="dark"] .rb-page input, html[data-theme="dark"] .rb-zoom input {
 html[data-theme="dark"] .annotationEditorLayer .editToolbar {
   background:var(--panel2); border-color:var(--border2); box-shadow:var(--shadow-lg);
 }
-html[data-theme="dark"] .toast { border:1px solid var(--border2); }
 html[data-theme="dark"] .reader-shelf-fab.active .rsf-count { background:var(--panel3); color:var(--accent-strong); }
 /* 浅灰静默面（rail 底/紧凑 hover）已在 token 化时改 panel2/surface，此处兜底剩余滑过态 */
 html[data-theme="dark"] .side-item:hover { background:rgba(99,102,241,.14); }
@@ -4595,6 +4575,9 @@ html[data-theme="dark"] .fc-latex { background:rgba(255,255,255,.02); border-rad
    （选中态已有 accent 边框 + 描边环表达） */
 .concept-card.pickable::before, .formula-card.pickable::before { left:10px; right:auto; }
 .list-view .concept-card.pickable::before, .list-view .formula-card.pickable::before { display:none; }
+/* v3.65：圆标在左上占 10+16px，标题让出位置（之前勾号压在首字上） */
+.concept-card.pickable .ct, .formula-card.pickable .ct { padding-left:22px; }
+.list-view .concept-card.pickable .ct, .list-view .formula-card.pickable .ct { padding-left:0; }
 /* list 视图行：星标行尾（row-actions 之后），与 masonry 同语义 */
 .list-view .concept-card .card-star, .list-view .formula-card .card-star { flex:0 0 auto; }
 

@@ -5,6 +5,13 @@
 // 若要选对视图就得复制这套默认值，脆弱。改用类后，首帧规则与运行时切换互不耦合。
 
 import { $ } from '../core/dom.js';
+import { holdLayer, releaseLayer } from '../core/layers.js';
+
+/** 设置覆盖层的 Esc 行为（bind.js 注入：提示词编辑态先退回列表，再关覆盖层）。 */
+let _settingsEscape = null;
+export function setSettingsEscape(fn) {
+  _settingsEscape = fn;
+}
 
 /** 三个平级内容视图。设置不在其列——它是覆盖层，见下方 showView。 */
 const CONTENT_VIEWS = ['library', 'concepts', 'formulas'];
@@ -31,9 +38,15 @@ export function showView(name) {
   // 设置是覆盖层：只控制自己的显隐，不动底下的内容视图与侧栏——
   // 关掉后要回到打开它之前的那个页面，底层状态不能被清掉。
   const overlay = name === 'settings';
-  $('settings-view').classList.toggle('view-hidden', !overlay);
+  const sv = $('settings-view');
+  sv.classList.toggle('view-hidden', !overlay);
   document.body.dataset.view = name;
-  if (overlay) return;
+  // 设置覆盖层登记为 sheet 层：背景 inert、焦点陷阱、Esc 分层退出、关闭后焦点还给入口按钮
+  if (overlay) {
+    holdLayer(sv, { el: sv, kind: 'sheet', onEscape: () => (_settingsEscape ? _settingsEscape() : false) });
+    return;
+  }
+  releaseLayer(sv);
 
   document.body.dataset.contentView = name;
   for (const v of CONTENT_VIEWS) $(v + '-view').classList.toggle('view-hidden', v !== name);

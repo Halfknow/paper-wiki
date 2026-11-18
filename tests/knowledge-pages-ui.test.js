@@ -533,6 +533,38 @@ test('v3.29 公式多选批量改分类：pick → 改分类对话框 → bulk',
   assert.ok(!ui.document.querySelector('#formulas-grid .formula-card.pickable'), '退出多选');
 });
 
+test('v3.65 多选三页同构（概念）：Shift 范围选 / 全选↔取消全选 / Ctrl+A / Esc 退出', async () => {
+  await openConcepts();
+  ui.document.getElementById('btn-concept-pick').click();
+  await sleep(40);
+  const pickCards = [...ui.document.querySelectorAll('#concepts-grid .concept-card.pickable')];
+  assert.ok(pickCards.length >= 3, '至少 3 张卡片才能验证范围选');
+  const bar = ui.document.querySelector('.kpick-bar.open');
+  assert.equal(bar.getAttribute('role'), 'toolbar');
+  assert.ok(bar.querySelector('.kpick-del').disabled, '0 项时动作钮禁用');
+  // 点第 1 张 → Shift+点第 3 张：1..3 整段选中
+  pickCards[0].click();
+  pickCards[2].dispatchEvent(new ui.window.MouseEvent('click', { bubbles: true, shiftKey: true }));
+  await sleep(20);
+  assert.deepEqual(pickCards.slice(0, 3).map((c) => c.classList.contains('picked')), [true, true, true], 'Shift 范围选');
+  assert.match(bar.querySelector('.kpick-count').textContent, /已选 3/);
+  // 底栏「全选」→ 全部选中且文案切成「取消全选」；再点一次全部取消
+  bar.querySelector('.kpick-all').click();
+  assert.ok(pickCards.every((c) => c.classList.contains('picked')));
+  assert.equal(bar.querySelector('.kpick-all').textContent, '取消全选');
+  bar.querySelector('.kpick-all').click();
+  assert.ok(pickCards.every((c) => !c.classList.contains('picked')));
+  assert.equal(bar.querySelector('.kpick-all').textContent, '全选');
+  // Ctrl+A 全选（不在输入框内）
+  ui.document.body.dispatchEvent(new ui.window.KeyboardEvent('keydown', { key: 'a', ctrlKey: true, bubbles: true }));
+  assert.ok(pickCards.every((c) => c.classList.contains('picked')), 'Ctrl+A 全选');
+  // Esc 退出多选（清空选中、底栏收起）
+  ui.document.body.dispatchEvent(new ui.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  await sleep(20);
+  assert.ok(!ui.document.querySelector('#concepts-grid .concept-card.pickable'), 'Esc 退出多选态');
+  assert.ok(!ui.document.querySelector('.kpick-bar.open'), '底栏收起');
+});
+
 // ---------------------------------------------------------------- v3.30：星标 / 合并 / 时间线 / AI 解读
 
 test('v3.30 概念卡星标：点击 → PATCH starred + 侧栏「重点」计数联动', async () => {

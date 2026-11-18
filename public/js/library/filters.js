@@ -6,6 +6,7 @@ import { $ } from '../core/dom.js';
 import { chipClass, escapeHtml } from '../core/format.js';
 import { state } from '../core/state.js';
 import { toast } from '../core/ui-kit.js';
+import { openLayer } from '../core/layers.js';
 import { renderList } from './list.js';
 import { refresh } from './refresh.js';
 
@@ -65,13 +66,10 @@ let curFilterPop = null;
 
 function closeFilterPop() {
   if (!curFilterPop) return;
-  curFilterPop.mask.remove();
+  const { mask, layer } = curFilterPop;
   curFilterPop = null;
-  document.removeEventListener('keydown', onFilterPopKey);
-}
-
-function onFilterPopKey(e) {
-  if (e.key === 'Escape') { e.preventDefault(); closeFilterPop(); }
+  mask.remove();
+  layer.close();
 }
 
 /** 从「当前筛选后的论文(state.papers，含全部筛选条件含 tags/topics)」派生标签/主题列表。
@@ -148,8 +146,9 @@ export function openFilterPop(kind) {
   mask.onclick = (e) => { if (e.target === mask) closeFilterPop(); };
   pop.onclick = (e) => e.stopPropagation();
   document.body.appendChild(mask);
-  curFilterPop = { mask, kind, selected };
-  document.addEventListener('keydown', onFilterPopKey);
+  // 非模态 popover 层：Esc 关闭（只关最上层）、焦点归还触发器；遮罩点外关闭由上面的 onclick 负责
+  const layer = openLayer({ el: pop, root: mask, kind: 'popover', trigger, initialFocus: false, onEscape: () => closeFilterPop() });
+  curFilterPop = { mask, kind, selected, layer };
 
   // 定位：面板贴在触发器下方（顶栏下方）
   const r = trigger.getBoundingClientRect();

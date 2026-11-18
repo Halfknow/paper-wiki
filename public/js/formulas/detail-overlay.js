@@ -18,6 +18,7 @@ import { plotSvg } from '../core/plot.js';
 import { state } from '../core/state.js';
 import { toast } from '../core/ui-kit.js';
 import { chipClass, escapeHtml } from '../core/format.js';
+import { holdLayer, releaseLayer } from '../core/layers.js';
 // 与 formulas.js / editor-drawer.js 构成模块循环，双方只在事件回调里调对方函数
 // （声明提升 + 运行时解析），顶层求值互不依赖——与 concepts ↔ drawer 同构安全。
 import { renderFormulaSidebar, renderFormulas, VAR_ROLE_LABEL } from './formulas.js';
@@ -40,20 +41,16 @@ const ICONS = {
 export function openFormulaDetail(id) {
   const f = (state.formulas || []).find((x) => x.id === id);
   if (!f) { closeFormulaDetail(); return; }
-  if (!_overlay) _buildDom();
+  if (!_overlay || !_overlay.isConnected) _buildDom();
   _render(f);
   _overlay.classList.add('open');
-  document.addEventListener('keydown', _onKey);
+  holdLayer(_overlay, { el: _overlay.querySelector('#formula-detail-panel'), kind: 'dialog', onEscape: () => closeFormulaDetail() });
 }
 
 export function closeFormulaDetail() {
   if (!_overlay) return;
   _overlay.classList.remove('open');
-  document.removeEventListener('keydown', _onKey);
-}
-
-function _onKey(e) {
-  if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeFormulaDetail(); }
+  releaseLayer(_overlay);
 }
 
 function _buildDom() {
@@ -160,7 +157,7 @@ function _render(f) {
       else {
         const ta = document.createElement('textarea');
         ta.value = text;
-        document.body.appendChild(ta);
+        panel.appendChild(ta); // 放层内：模态期间 body 其余子节点 inert，挂 body 上 select() 会失效
         ta.select();
         document.execCommand('copy');
         ta.remove();

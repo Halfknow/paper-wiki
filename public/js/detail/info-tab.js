@@ -14,6 +14,7 @@
 //   危险区 删除，单独一节，同设置页「恢复默认」的位置语义
 // 论文卡顶部因此只留「评分 + 打开 PDF」，不再堆 6 个按钮。
 
+import { icon } from '../core/icons.js';
 import { DEL, PATCH, POST, jget, sp } from '../core/api.js';
 import { $ } from '../core/dom.js';
 import { chipClass, escapeHtml } from '../core/format.js';
@@ -162,14 +163,14 @@ export function renderInfoTab(body, p) {
     (p.topics || [])
       .map(
         (t) =>
-          `<span class="topic ${chipClass(t)}">${escapeHtml(t)} <span class="x" data-topic-del="${escapeHtml(t)}" role="button" tabindex="0" title="移除">×</span></span>`,
+          `<span class="topic ${chipClass(t)}">${escapeHtml(t)} <span class="x" data-topic-del="${escapeHtml(t)}" role="button" tabindex="0" title="移除" aria-label="移除主题 ${escapeHtml(t)}">${icon('x', { size: 12 })}</span></span>`,
       )
       .join(' ') || '';
   const tagChips =
     (p.tags || [])
       .map(
         (t) =>
-          `<span class="tag ${chipClass(t)}">${escapeHtml(t)} <span class="x" data-tag-del="${escapeHtml(t)}" role="button" tabindex="0" title="移除">×</span></span>`,
+          `<span class="tag ${chipClass(t)}">${escapeHtml(t)} <span class="x" data-tag-del="${escapeHtml(t)}" role="button" tabindex="0" title="移除" aria-label="移除标签 ${escapeHtml(t)}">${icon('x', { size: 12 })}</span></span>`,
       )
       .join(' ') || '';
 

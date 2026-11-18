@@ -9,6 +9,7 @@ import { escapeHtml } from '../core/format.js';
 import { router } from '../core/nav.js';
 import { chatState, flushPendingNotes, set_chatState, state } from '../core/state.js';
 import { toast } from '../core/ui-kit.js';
+import { hideModal, showModal } from '../core/layers.js';
 import { reader } from '../detail/info-tab.js';
 import { refresh } from '../library/refresh.js';
 import { openDirWizard, resetSpaceCreateForm } from './dir-wizard.js';
@@ -99,11 +100,11 @@ export function openSpaceModal() {
   closeSpaceMenu();
   resetSpaceCreateForm();
   renderSpaceAdmin();
-  $('space-modal').classList.add('active');
+  showModal($('space-modal'), { onClose: closeSpaceModal });
 }
 
 export function closeSpaceModal() {
-  $('space-modal').classList.remove('active');
+  hideModal($('space-modal'));
 }
 
 /** 把 s.scanIntervalMinutes 渲染成「每 N 分钟扫描」/「已关闭」的副文案。 */

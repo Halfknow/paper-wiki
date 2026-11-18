@@ -11,7 +11,7 @@ import { buildPath } from '../core/router.js';
 import { state } from '../core/state.js';
 import { chipList, compactChipList, progressPercent, readStatusLabel, shortAuthors, statusLabel, toast } from '../core/ui-kit.js';
 import { reader } from '../detail/info-tab.js';
-import { togglePick } from './bulk.js';
+import { librarySel, togglePick } from './bulk.js';
 import { refresh } from './refresh.js';
 
 // ---- 列表 ----
@@ -196,7 +196,8 @@ export function renderList() {
         <div class="chips">${topics}${tags}</div>
         ${progress != null ? `<div class="progress-row"><div class="progress-bar"><i style="width:${progress}%"></i></div><span title="${escapeHtml('读到 ' + progress + '%' + contHint)}">${progress}%</span></div>` : ''}`;
     }
-    li.onclick = () => { if (hasSelectionWithin(li)) return; state.pickMode ? togglePick(p.id) : gotoPaperRoute(p.id); };
+    li.onclick = (e) => { if (hasSelectionWithin(li)) return; state.pickMode ? togglePick(p.id, e) : gotoPaperRoute(p.id); };
+    li.onmousedown = (e) => { if (state.pickMode) librarySel.onMouseDown(e); }; // Shift 范围选不拉文字选区
     li.ondblclick = () => { if (hasSelectionWithin(li)) return; router.navigate(buildPath('/reader/:id', { id: p.id }), { keepQuery: true }); };
     // 拖入收藏夹：draggable 起拖时把 id 集（多选=全部选中、否则=本篇）写入 dataTransfer。
     // 不再常驻 draggable=true——Chromium UA 样式会给 [draggable] 元素上 user-select:none，

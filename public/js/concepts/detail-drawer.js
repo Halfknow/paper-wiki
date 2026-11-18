@@ -27,6 +27,7 @@ import { streamPostSse } from '../core/stream.js';
 import { toast } from '../core/ui-kit.js';
 import { escapeHtml } from '../core/format.js';
 import { icon } from '../core/icons.js';
+import { holdLayer, releaseLayer } from '../core/layers.js';
 // 与 concepts.js 构成模块循环（concepts → drawer → concepts），但双方都只在事件回调里
 // 调对方函数（函数声明提升 + 运行时解析），顶层求值互不依赖——与 nav ↔ formulas 同构安全。
 import { editConceptDialog, renderConcepts, renderConceptSidebar } from './concepts.js';
@@ -52,16 +53,16 @@ const _CAT_LABEL = {
 export function openConceptDetail(id) {
   const c = (state.concepts || []).find((x) => x.id === id);
   if (!c) { closeConceptDetail(); return; }
-  if (!_overlay) _buildDom();
+  if (!_overlay || !_overlay.isConnected) _buildDom();
   _render(c);
   _overlay.classList.add('open');
-  document.addEventListener('keydown', _onKey);
+  holdLayer(_overlay, { el: _overlay.querySelector('#concept-detail-panel'), kind: 'drawer', onEscape: () => closeConceptDetail() });
 }
 
 export function closeConceptDetail() {
   if (!_overlay) return;
   _overlay.classList.remove('open');
-  document.removeEventListener('keydown', _onKey);
+  releaseLayer(_overlay);
   _abortExplain();
 }
 
@@ -69,16 +70,12 @@ export function isConceptDetailOpen() {
   return !!(_overlay && _overlay.classList.contains('open'));
 }
 
-function _onKey(e) {
-  if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeConceptDetail(); }
-}
-
 /** 单例骨架（一次创建，内容每次重渲）。mask 点击关闭；抽屉本体拦截冒泡。 */
 function _buildDom() {
   _overlay = document.createElement('div');
   _overlay.id = 'concept-detail-overlay';
   _overlay.className = 'concept-detail-overlay';
-  _overlay.innerHTML = '<aside class="concept-detail" id="concept-detail-panel" role="dialog" aria-label="概念详情"></aside>';
+  _overlay.innerHTML = '<aside class="concept-detail" id="concept-detail-panel" role="dialog" aria-modal="true" aria-label="概念详情"></aside>';
   _overlay.addEventListener('click', (e) => { if (e.target === _overlay) closeConceptDetail(); });
   document.body.appendChild(_overlay);
 }

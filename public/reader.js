@@ -4,11 +4,13 @@
 //
 // 加载顺序（零构建）：先 import build（注册 globalThis.pdfjsLib），
 // 再 import viewer（注册 globalThis.pdfjsViewer，依赖 pdfjsLib）。
+import { icon } from './js/core/icons.js';
 import '/vendor/pdfjs.js';
 import '/vendor/pdfjs-viewer.js';
 import { sp } from './js/core/api.js';
 import { runAfterSelectionRelease, selectionWithin } from './js/core/dom.js';
 import { toast } from './js/core/ui-kit.js';
+import { registerShortcut } from './js/core/layers.js';
 import { state } from './js/core/state.js';
 import { renderMd, renderChatMd, truncateChatTitle } from './js/core/markdown.js';
 import { NotesPanel } from './js/detail/notes-panel.js';
@@ -250,7 +252,9 @@ const { AnnotationEditorType, AnnotationEditorParamsType, PixelsPerInch } = pdfj
         }
         this.deleteSelectedEditors();
       };
-      document.addEventListener('keydown', this._onKey, true);
+      // capture 期快捷键（v3.65 P2 经 PWLayers 注册）：早于元素与全局 bubble 快捷键，
+      // stopImmediatePropagation 即可截断后者；模态层打开时由管理器自动让位。
+      this._offKey = registerShortcut(this._onKey, { phase: 'capture' });
       // 批注工具
       const tools = { cursor: this.toolCursor, highlight: this.toolHighlight, note: this.toolNote, ink: this.toolInk };
       Object.entries(tools).forEach(([mode, btn]) => {
@@ -766,7 +770,7 @@ const { AnnotationEditorType, AnnotationEditorParamsType, PixelsPerInch } = pdfj
       ctx.querySelectorAll('.chat-attach-chip').forEach((n) => n.remove());
       if (!imgs.length) return;
       const esc = (s) => String(s || '').replace(/"/g, '&quot;');
-      ctx.insertAdjacentHTML('beforeend', imgs.map((src, i) => `<span class="chat-attach-chip"><img src="${esc(src)}" alt="附图 ${i + 1}"/><button class="ca-x" data-idx="${i}" type="button" aria-label="移除附图">×</button></span>`).join(''));
+      ctx.insertAdjacentHTML('beforeend', imgs.map((src, i) => `<span class="chat-attach-chip"><img src="${esc(src)}" alt="附图 ${i + 1}"/><button class="ca-x" data-idx="${i}" type="button" aria-label="移除附图">${icon('x', { size: 12 })}</button></span>`).join(''));
       ctx.querySelectorAll('.ca-x').forEach((b) => {
         b.onclick = () => {
           const idx = Number(b.dataset.idx);
@@ -835,7 +839,7 @@ const { AnnotationEditorType, AnnotationEditorParamsType, PixelsPerInch } = pdfj
         const found = searchPapersForMention('', this.paper && this.paper.id);
         if (found) { const m = found.find((x) => x.id === id); if (m && m.title) title = m.title; }
         const tc = truncateChatTitle(title, 20);
-        return `<span class="extra-chip" title="${esc(title)}"><svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>${esc(tc)}<button class="extra-chip-x" data-eid="${esc(id)}" type="button" aria-label="移除引用">×</button></span>`;
+        return `<span class="extra-chip" title="${esc(title)}"><svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>${esc(tc)}<button class="extra-chip-x" data-eid="${esc(id)}" type="button" aria-label="移除引用">${icon('x', { size: 12 })}</button></span>`;
       }).join('');
     }
     /** @ 触发器：检测输入框光标前最近的 @，弹论文选择浮层（v2.7 共享版，经 window 桥）。 */
@@ -2025,10 +2029,16 @@ const { AnnotationEditorType, AnnotationEditorParamsType, PixelsPerInch } = pdfj
     //   · 自证型成功与自动进度（已记录/已就绪/批注已保存/高亮/上架/钉住…）→ 静默，UI 状态本身可见
     //   · 错误与阻断提示（sticky）→ 全局 error toast（失败不能无声吞掉）
     //   · 其余一次性提示（已复制/抽取完成/已存入笔记…）→ 全局 info toast
-    setStatus(text, sticky) {
+    /**
+     * 阅读器状态反馈（v3.65 P2 并轨 feedback.js 分级）：level 可直接传 'info'|'success'|'warning'|'danger'；
+     * 旧调用的 sticky=true 按文案分流——失败/出错/损坏 → danger，其余（操作指引类）→ warning。
+     * 结果本身可见的高频提示（SILENT_STATUS_RE）不打扰（§7.1「操作即结果」）。
+     */
+    setStatus(text, level) {
       const t = String(text || '').trim();
       if (!t || SILENT_STATUS_RE.test(t)) return;
-      toast(t, sticky ? 'error' : 'info');
+      if (level === true) level = /失败|出错|错误|损坏|无法/.test(t) ? 'danger' : 'warning';
+      toast(t, typeof level === 'string' ? level : 'info');
     }
 
     // ====================================================================
@@ -2448,7 +2458,7 @@ const { AnnotationEditorType, AnnotationEditorParamsType, PixelsPerInch } = pdfj
       box.innerHTML = qs.map((q, i) => {
         const lines = q.split(/\r?\n/).filter(Boolean);
         const lineLabel = lines.length > 1 ? (lines.length + ' 行') : '1 行';
-        return `<div class="rcd-quote"><span class="rcd-quote-tag">${lineLabel}</span><span class="rcd-quote-text"></span><button class="rcd-quote-x" data-qi="${i}" title="移除" aria-label="移除引用">×</button></div>`;
+        return `<div class="rcd-quote"><span class="rcd-quote-tag">${lineLabel}</span><span class="rcd-quote-text"></span><button class="rcd-quote-x" data-qi="${i}" title="移除" aria-label="移除引用">${icon('x', { size: 12 })}</button></div>`;
       }).join('');
       // textContent 设文本（防 XSS；DOMPurify 已加载但文本直接设最稳）
       [...box.querySelectorAll('.rcd-quote-text')].forEach((el, i) => { el.textContent = qs[i].replace(/\s+/g, ' ').slice(0, 120) + (qs[i].length > 120 ? '…' : ''); });

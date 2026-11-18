@@ -18,19 +18,8 @@ export function inlineStatus(el, level, text) {
   el.innerHTML = (name ? icon(name, { size: 14 }) : '') + '<span>' + escapeHtml(String(text == null ? '' : text)) + '</span>';
 }
 
-export function toast(message, type = 'info') {
-  const root = $('toast-root');
-  if (!root) return;
-  const el = document.createElement('div');
-  el.className = 'toast ' + type;
-  el.textContent = message;
-  root.appendChild(el);
-  requestAnimationFrame(() => el.classList.add('show'));
-  setTimeout(() => {
-    el.classList.remove('show');
-    setTimeout(() => el.remove(), 180);
-  }, type === 'error' ? 5200 : 3200);
-}
+// toast 实现迁至 feedback.js（v3.65 P2：分级 + 动作/撤销 + 悬停暂停）；此处转出保持既有 import 不变。
+export { toast, undoToast } from './feedback.js';
 
 export function setBusy(el, busy, label) {
   if (!el) return;
