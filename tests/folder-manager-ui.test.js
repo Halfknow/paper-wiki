@@ -17,6 +17,7 @@ const { test, before } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
+const vm = require('node:vm');
 const { pathToFileURL } = require('url');
 const { JSDOM } = require('jsdom');
 
@@ -99,6 +100,8 @@ before(async () => {
   globalThis.requestAnimationFrame = (fn) => setTimeout(fn, 0);
   globalThis.PWDialog = w.PWDialog = { confirm: async () => true };
   globalThis.confirm = w.confirm = () => true;
+  // layers.js（classic script，挂 window.PWLayers，v3.65 P2）：与 helpers/ui.js 同法手动执行。
+  vm.runInNewContext(fs.readFileSync(path.join(PUB, 'layers.js'), 'utf8'), { window: w });
 
   fmMod = await import(pathToFileURL(path.join(PUB, 'js', 'library', 'folder-manager.js')).href);
   ({ state } = await import(pathToFileURL(path.join(PUB, 'js', 'core', 'state.js')).href));

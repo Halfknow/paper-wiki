@@ -4,6 +4,12 @@
 
 ## [Unpublished]
 
+### Fixed — 紧凑视图论文标签显示不全（v3.66）
+
+- **根因**：P0 把紧凑 chip 的 `9px` 统一到 `--fs-xs`（11px，规范 §3.3 全站最小字号）后，一行 4 个在约 270px 内被挤窄；而 `.tag` 基座是 `inline-flex`，flex 容器里 `text-overflow:ellipsis` 不生效，文字被**硬切且无省略号**，「+N」也参与收缩被挤成「+」。
+- **修复**（不退回 < 11px）：`compactChipList` 默认 3 个；紧凑 chip 改 `display:block`，省略号生效，`max-width` 92→128px，`min-width:3.2em`；`+N` 改为 `flex:0 0 auto`，不再收缩；每个 chip 带 `title` 全名，`+N` 的 `title` 列出被折叠的名字。实测本库 132 行 396 个 chip 仅 6 个超长英文名截断（带省略号）。
+- **测试**：新增 `tests/compact-chips.test.js`。补齐 P2 遗漏：`chat-ui` / `folder-manager-ui` 自建 jsdom 环境未加载 `layers.js`，23 例「PWLayers 未加载」，现已修复；全量（含慢速）894/894。
+
 ### Changed — 设计系统 P2：统一浮层外壳 + 分级反馈与撤销 + 多选三页同构（v3.65）
 
 依据 [`docs/DESIGN_SYSTEM.md`](docs/DESIGN_SYSTEM.md) §10 落地第三阶段：

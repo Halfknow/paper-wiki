@@ -1074,10 +1074,15 @@ body.is-resizing { cursor:col-resize; user-select:none; }
 .compact-chips {
   display:flex; align-items:center; gap:3px; min-width:0; max-width:100%; overflow:hidden;
 }
+/* v3.66：.tag 基座是 inline-flex，flex 容器里文字是匿名项，text-overflow 不生效——会被硬切且无省略号。
+   紧凑行内改 block（本就是 .compact-chips 的 flex 项，display 只影响自身内部排版），省略号才出得来；
+   min-width 留出约两字 + 省略号，避免被挤成一条色块；3 个一行后上限由 92 放宽到 128（行内余量够，超出才均分收缩）。 */
 .compact-chips .tag,
 .compact-chips .topic {
-  flex:0 1 auto; min-width:0; max-width:92px; overflow:hidden; text-overflow:ellipsis;
+  display:block; flex:0 1 auto; min-width:3.2em; max-width:128px;
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
 }
+.compact-chips .compact-more { flex:0 0 auto; min-width:0; }
 .compact-more { background:var(--panel); color:var(--muted2); }
 .paper-list.compact .paper-item .pick { position:static; margin:0; color:var(--accent-strong); }
 .paper-list.compact .dot { margin-right:0; }

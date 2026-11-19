@@ -12,6 +12,7 @@ const { test, before } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
 const path = require('path');
+const vm = require('vm');
 const { pathToFileURL } = require('url');
 
 let JSDOM;
@@ -171,6 +172,9 @@ before(async () => {
     prompt: () => Promise.resolve(null),
     alert: () => Promise.resolve(true),
   };
+  // layers.js（classic script，挂 window.PWLayers，v3.65 P2）：与 helpers/ui.js 同法手动执行；
+  // 缺席时 app 启动即抛「PWLayers 未加载」。
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname, '..', 'public', 'layers.js'), 'utf8'), { window: w });
   const clipWrites = [];
   Object.defineProperty(w.navigator, 'clipboard', { value: { writeText: async (t) => { clipWrites.push(t); } }, configurable: true });
   backend.clipWrites = clipWrites;

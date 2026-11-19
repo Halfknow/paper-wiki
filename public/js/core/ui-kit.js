@@ -71,17 +71,22 @@ export function chipList(items, cls, limit = 4, clsFor) {
     (rest ? `<span class="tag muted">+${rest}</span>` : '');
 }
 
-export function compactChipList(p, limit = 4) {
+// 紧凑行宽约 270px：字号统一到 --fs-xs(11px) 后放 4 个会把每个都挤成截断，默认 3 个（v3.66）。
+// 截断时 title 给出全名；+N 的 title 列出被折叠的名字，信息不丢。
+export function compactChipList(p, limit = 3) {
   const items = [
     ...(p.topics || []).map((name) => ({ name, cls: 'topic' })),
     ...(p.tags || []).map((name) => ({ name, cls: 'tag' })),
   ];
   const shown = items.slice(0, limit);
-  const rest = Math.max(0, items.length - shown.length);
+  const hidden = items.slice(limit);
   return shown.map((it) => {
-    return `<span class="${it.cls} ${chipClass(it.name)}">${escapeHtml(it.name)}</span>`;
+    const name = escapeHtml(it.name);
+    return `<span class="${it.cls} ${chipClass(it.name)}" title="${name}">${name}</span>`;
   }).join('') +
-    (rest ? `<span class="tag muted compact-more">+${rest}</span>` : '');
+    (hidden.length
+      ? `<span class="tag muted compact-more" title="${escapeHtml(hidden.map((it) => it.name).join('、'))}">+${hidden.length}</span>`
+      : '');
 }
 
 /** 全局统计 → 顶栏状态胶囊 + 一级导航计数徽标（v3.17）。

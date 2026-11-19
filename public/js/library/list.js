@@ -160,7 +160,7 @@ export function renderList() {
     const progress = progressPercent(p);
     if (state.compact) {
       const meta = escapeHtml(`${(p.authors || [])[0] || '未知作者'}${p.year ? ' · ' + p.year : ''}`);
-      const chips = compactChipList(p, 4);
+      const chips = compactChipList(p);
       const isBusy = ['pending', 'parsing', 'enriching', 'summarizing'].includes(p.status);
       li.innerHTML = `
         <div class="compact-row">
