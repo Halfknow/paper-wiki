@@ -28,12 +28,15 @@ function progressText(it) {
   return '未开始';
 }
 
-/** 计数徽标：空架时不显示（`.count:empty` 收缩），非空显示条数。 */
+/** 计数徽标：空架时不显示（`.count:empty` 收缩），非空显示条数。
+ *  侧栏 footer 与 rail 徽标（v3.63）双写——rail 里也要一眼看到「架上有几篇」。 */
 function renderCount() {
-  const el = $('shelf-count');
-  if (!el) return;
   const n = (shelfState.ids || []).length;
-  el.textContent = n ? String(n) : '';
+  const text = n ? String(n) : '';
+  const el = $('shelf-count');
+  if (el) el.textContent = text;
+  const rail = $('shelf-count-rail');
+  if (rail) rail.textContent = text;
 }
 
 function renderList() {
@@ -113,4 +116,9 @@ export function initShelfSidebar(onOpenPaper) {
 /** 关闭列表（切空间 / 进阅读器时收起，避免留一个过期的展开态）。 */
 export function closeShelfSidebar() {
   if (_open) toggle(false);
+}
+
+/** 打开列表（rail 阅读架按钮用，v3.63）：已开则幂等不重拉。 */
+export function openShelfSidebar() {
+  if (!_open) return toggle(true);
 }

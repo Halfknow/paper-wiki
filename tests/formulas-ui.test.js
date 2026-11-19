@@ -419,6 +419,46 @@ test('详情「信息」tab：显示公式贡献数 + 「重新抽取并追加�
   assert.deepStrictEqual(post.body, { ids: ['p1'] });
 });
 
+test('详情「信息」tab：重新抽取成功后强制重拉公式清单（state 旧快照不得把计数卡在抽取前）', async (t) => {
+  // 场景：页面早先拉过一次全局清单（state.formulas 非空、不含本篇新关联），此后服务端
+  // 抽取入了库——修复前 ensureKnowledgeLoaded 只在空数组时才拉，信息 tab 计数永远停在旧值。
+  ui.document.querySelector('#view-nav [data-view="library"]').click();
+  await sleep(20);
+  ui.document.querySelector('.paper-item[data-id="p1"]').click();
+  await sleep(60);
+  ui.document.querySelector('.tab[data-tab="info"]').click();
+  await sleep(80);
+  const before = $('kx-formulas-count').textContent;
+  // 服务端清单换成「本篇只有 1 条关联」（与前端旧快照的 2 条不同，可区分是否真的重拉过）
+  FORMULAS = [
+    {
+      id: 'fm_solo',
+      canonicalName: 'solo-formula',
+      name: '抽取后新入库',
+      latex: 'y=mx+b',
+      description: '',
+      category: '',
+      variables: [],
+      plottable: false,
+      plotHint: null,
+      occurrences: [{ paperId: 'p1', rawLatex: '', context: '', symbolMap: {} }],
+      paperIds: ['p1'],
+      source: 'ai',
+      createdAt: 9,
+      updatedAt: 9,
+    },
+  ];
+  t.after(() => resetFormulas());
+  $('b-formulas-this').click();
+  await sleep(160);
+  assert.match(
+    $('kx-formulas-count').textContent.replace(/\s+/g, ' '),
+    /已涉及 1 个公式/,
+    '计数反映重拉后的服务端清单',
+  );
+  assert.notStrictEqual($('kx-formulas-count').textContent, before, '与重拉前的显示不同');
+});
+
 test('多选工具栏：「抽取并追加公式」对已选论文逐篇调用（拿真实进度）', async () => {
   ui.document.querySelector('#btn-pick').click();
   await sleep(40);

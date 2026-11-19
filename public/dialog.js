@@ -2,9 +2,10 @@
  * 与 Indigo 主题模态（.modal）同一套视觉语言：居中卡片 + 半透明遮罩 + ghost/主按钮。
  * Promise 化 API：
  *   await PWDialog.confirm(message, opts?)  -> boolean        （取消/Esc/点遮罩 = false）
+ *   await PWDialog.confirmCheck(message, opts?) -> { ok, checked }  （带勾选框；取消 = { ok:false, checked:false }）
  *   await PWDialog.prompt(message, opts?)   -> string | null  （取消/Esc/点遮罩 = null）
  *   await PWDialog.alert(message, opts?)    -> true
- * opts: { title, okText, cancelText, danger, value, placeholder, multiline }
+ * opts: { title, okText, cancelText, danger, value, placeholder, multiline, checkbox: { label, checked } }
  * message 中的 \n 以换行渲染（textContent + pre-line，无注入风险）。
  * danger：初始焦点落在「取消」，Enter 仅在焦点位于危险按钮时确认（否则 = 取消）。
  * 键盘分层（v3.65 P2）：每个弹窗登记为 PWLayers（public/layers.js）的一层——Esc 只关最上层、
@@ -50,6 +51,19 @@
       box.setAttribute('aria-labelledby', title.id);
       box.setAttribute('aria-describedby', body.id);
 
+      // confirm 可选勾选框（confirmCheck）：opts.checkbox = { label, checked }
+      // settle 结果从 boolean 变为 { ok, checked }，调用方据 r.ok / r.checked 分支
+      let checkbox = null;
+      if (kind === 'confirm' && opts.checkbox) {
+        checkbox = el('input', 'pwdlg-check-box');
+        checkbox.type = 'checkbox';
+        checkbox.checked = !!opts.checkbox.checked;
+        const lab = el('label', 'pwdlg-check');
+        lab.appendChild(checkbox);
+        lab.appendChild(el('span', null, String(opts.checkbox.label || '')));
+        box.appendChild(lab);
+      }
+
       // prompt 输入区（单行 input / 多行 textarea）
       let input = null;
       if (kind === 'prompt') {
@@ -76,10 +90,20 @@
       mask.appendChild(box);
 
       let settled = false;
+      const okValue = () => {
+        if (kind === 'prompt') return input.value;
+        if (checkbox) return { ok: true, checked: checkbox.checked };
+        return true;
+      };
+      const cancelValue = () => {
+        if (kind === 'prompt') return null;
+        if (checkbox) return { ok: false, checked: false };
+        return false;
+      };
       const danger = !!opts.danger && !!cancelBtn;
       const entry = {
-        ok: () => settle(kind === 'prompt' ? input.value : true),
-        cancel: () => settle(kind === 'prompt' ? null : false),
+        ok: () => settle(okValue()),
+        cancel: () => settle(cancelValue()),
       };
       let layer = null;
       function settle(value) {
@@ -131,6 +155,8 @@
 
   window.PWDialog = {
     confirm: (message, opts) => openDialog('confirm', message, opts),
+    // 带勾选框的确认（opts.checkbox = { label, checked }）：resolve { ok, checked }，取消/Esc = { ok:false, checked:false }
+    confirmCheck: (message, opts) => openDialog('confirm', message, opts),
     prompt: (message, opts) => openDialog('prompt', message, opts),
     alert: (message, opts) => openDialog('alert', message, opts),
   };

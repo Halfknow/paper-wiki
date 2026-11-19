@@ -861,9 +861,25 @@ body.is-resizing { cursor:col-resize; user-select:none; }
   box-shadow:none;
 }
 .sidebar-rail .rail-btn svg { display:block; }
+/* v3.63 图标规格统一：rail 内全部图标 16px，与展开态侧栏同尺寸——收起/展开切换时
+   设置、阅读架、视图入口的图标不再变大变小（CSS 盖过 svg 上的 width/height 属性；
+   展开↔收起按钮是同一枚 chevron 的镜像，同 16px）。 */
+.sidebar-rail svg { width:16px; height:16px; }
+/* 收起按钮（侧栏标题行）：与 rail 展开按钮的 chevron 同为 16px，方向互为镜像 */
+#btn-collapse svg { width:16px; height:16px; }
+/* rail 阅读架计数徽标：右上角小胶囊，空架不显示 */
+#btn-shelf-rail { position:relative; }
+#btn-shelf-rail .rail-badge {
+  position:absolute; top:3px; right:3px; min-width:15px; height:15px; padding:0 4px;
+  border-radius:8px; background:var(--accent); color:var(--on-accent);
+  font-size:var(--fs-xs); font-weight:700; line-height:15px; text-align:center;
+  pointer-events:none;
+}
+#btn-shelf-rail .rail-badge:empty { display:none; }
 /* 各一级视图的 rail 上下文（v3.19）：与侧栏 .side-ctx 同步显隐（showView 切 .view-hidden） */
 .rail-ctx { display:flex; flex-direction:column; align-items:center; gap:4px; width:100%; flex:0 0 auto; }
-/* 顶部展开按钮（原始样式）：面板图标，整体低调；hover 图标变 accent。 */
+/* 顶部展开按钮：与 #btn-collapse 同一枚 chevron 的水平镜像（‹ ↔ ›，v3.63），
+   几何与 .rail-btn 同规格（--ctl-lg 方形），图标光学位置与下方入口对齐；hover 才浮出填充。 */
 .sidebar-rail .rail-expand {
   border:0; background:transparent; cursor:pointer; padding:0; margin-bottom:4px;
   transition:background var(--dur-fast) ease, color var(--dur-fast) ease, border-color var(--dur-fast) ease;
@@ -2008,7 +2024,9 @@ body.fab-dragging { user-select:none; cursor:ns-resize; }
    复用全站行式语言（.set-section/.set-row/.sr-*，令牌见 :root「行式布局令牌」）。
    旧的 .info-grid 双列网格保留在下方——它把只读、可编辑、耗时动作混在同一种格子里，
    新页面已不用；留着是因为别处可能还有 .field 复用。 */
-.info-page { max-width:820px; }
+/* v3.63 全宽：总结 tab 的 .md 已于 v3.56 撤限宽，信息页同步——宽屏下行式/摘要铺满详情列，
+   切 tab 不再出现 820px↔全宽 的宽度跳变 */
+.info-page { max-width:none; }
 .info-page .set-section:first-child { margin-top:0; }
 /* 摘要：正文体量最大的一块，单独成块而不是挤进行式（行式是「标签↔值」的对读，长文不适合） */
 .info-abstract { margin-top:10px; }
@@ -4234,6 +4252,12 @@ html[data-theme="dark"] .ov-override-bar { background:rgba(217,119,6,.14); borde
 }
 .pwdlg-input { width:100%; margin-bottom:14px; }
 textarea.pwdlg-textarea { resize:vertical; min-height:84px; line-height:1.55; }
+/* confirmCheck 勾选框行：危险操作的附加选项（如删论文时是否连带删概念/公式） */
+.pwdlg-check {
+  display:flex; align-items:flex-start; gap:8px; margin:-4px 0 14px;
+  font-size:var(--fs-md); line-height:1.5; color:var(--muted); cursor:pointer; user-select:none;
+}
+.pwdlg-check input[type='checkbox'] { margin:0; accent-color:var(--accent); }
 .pwdlg-actions { display:flex; align-items:center; justify-content:flex-end; gap:8px; }
 
 /* 阅读器整篇公式抽取候选浮层（body 级 fixed 居中，列出候选供勾选 + 改名 + 入库） */

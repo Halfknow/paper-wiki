@@ -187,6 +187,12 @@ async function bootUi({ listItems, details, routes, chatReply, initialPath } = {
   // （如 search-ui.test.js 里 globalThis.prompt = () => '注意力论文'）。
   const dlgStub = {
     confirm: (msg, opts) => Promise.resolve((globalThis.confirm || (() => true))(msg, opts)),
+    // 带勾选框确认：自动确认，checked 回传 opts.checkbox.checked（测试可用它预置勾选态）
+    confirmCheck: (msg, opts) =>
+      Promise.resolve({
+        ok: (globalThis.confirm || (() => true))(msg, opts),
+        checked: !!(opts && opts.checkbox && opts.checkbox.checked),
+      }),
     prompt: (msg, opts) =>
       Promise.resolve(typeof globalThis.prompt === 'function' ? globalThis.prompt(msg, opts && opts.value) : null),
     alert: () => Promise.resolve(true),

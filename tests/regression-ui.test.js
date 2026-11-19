@@ -234,6 +234,35 @@ test('回归 拖选后 click 抑制：条目内有选区时点击不跳转（选
   assert.ok(ui.window.location.pathname.startsWith('/paper/'), '无选区：click 正常打开论文');
 });
 
+test('回归 删除论文带知识产出选项：默认保留概念/公式（keepKnowledge=1），勾选后改为连带删除（v3.63）', async () => {
+  resetDetail(); // p1 详情恢复（此前用例可能已删）
+  await openTab('info');
+  const btn = $('b-delete');
+  assert.ok(btn, '信息 tab 有删除按钮');
+  // 桩默认自动确认、checked 取 opts.checkbox.checked（默认 false → 保留知识）
+  btn.click();
+  await sleep(60);
+  const del1 = ui.backend.posts.filter((x) => x.method !== 'GET' && x.path.startsWith('/api/papers/p1')).pop();
+  assert.ok(del1, '发出删除请求');
+  assert.match(del1.path, /keepKnowledge=1/, '未勾选：知识条目保留（只解除关联）');
+  // 删除后详情清空，重新选回论文再测勾选分支
+  resetDetail();
+  ui.backend.posts.length = 0;
+  const prevConfirmCheck = ui.window.PWDialog.confirmCheck;
+  ui.window.PWDialog.confirmCheck = (msg, opts) =>
+    Promise.resolve({ ok: (globalThis.confirm || (() => true))(msg, opts), checked: true });
+  try {
+    await openTab('info');
+    $('b-delete').click();
+    await sleep(60);
+    const del2 = ui.backend.posts.filter((x) => x.method !== 'GET' && x.path.startsWith('/api/papers/p1')).pop();
+    assert.ok(del2, '勾选分支也发出删除请求');
+    assert.match(del2.path, /keepKnowledge=0/, '勾选：仅本篇贡献的概念/公式一并删除');
+  } finally {
+    ui.window.PWDialog.confirmCheck = prevConfirmCheck;
+  }
+});
+
 test('v3.65 多选三页同构（论文库）：Shift 范围选 / 全选↔取消全选 / Esc 退出', async () => {
   $('btn-pick').click();
   await sleep(30);

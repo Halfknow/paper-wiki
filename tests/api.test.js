@@ -804,6 +804,62 @@ test('POST /api/papers/bulk-delete 批量删 + 清理空 tags/topics + 孤立概
   fs.rmSync(tmp, { recursive: true, force: true });
 });
 
+test('DELETE /api/papers/:id?keepKnowledge=1 —— 知识条目只解除关联、不删孤立条目', async () => {
+  const tmp = fs.mkdtempSync(pathm.join(os.tmpdir(), 'pwkeep-'));
+  const pdfX = pathm.join(tmp, 'x.pdf');
+  const pdfY = pathm.join(tmp, 'y.pdf');
+  fs.writeFileSync(pdfX, 'X');
+  fs.writeFileSync(pdfY, 'Y');
+  // x/y 两篇：概念 c1 仅 x 引用（默认删除时应死、keep 时应活）；c2 双引用（两种模式都活、只解除 x）
+  // 公式 f1 仅 x、f2 双引用，同语义
+  const store = {
+    version: 2,
+    tags: [],
+    topics: [],
+    folders: [],
+    papers: {
+      x: { id: 'x', filename: 'x.pdf', filepath: pdfX, tags: [], topics: [], status: 'ready' },
+      y: { id: 'y', filename: 'y.pdf', filepath: pdfY, tags: [], topics: [], status: 'ready' },
+    },
+    concepts: [
+      { id: 'c1', term: '独有', paperIds: ['x'] },
+      { id: 'c2', term: '共享', paperIds: ['x', 'y'] },
+    ],
+    formulas: [
+      { id: 'f1', canonicalName: 'f-solo', latex: 'a=b', occurrences: [{ paperId: 'x' }], paperIds: ['x'] },
+      { id: 'f2', canonicalName: 'f-shared', latex: 'c=d', occurrences: [{ paperId: 'x' }, { paperId: 'y' }], paperIds: ['x', 'y'] },
+    ],
+  };
+  const ctx = baseCtx(store, async () => {}, { papersDir: tmp, config: { ai: {}, papersDir: tmp } });
+  const server = await startServer(createApiRouter(ctx).handle);
+  const port = server.address().port;
+
+  // keepKnowledge=1：条目全保留，仅解除关联
+  const r = await call(port, 'DELETE', '/api/papers/x?keepKnowledge=1');
+  assert.strictEqual(r.status, 200);
+  assert.strictEqual(r.json.data.conceptsRemoved, 0, 'keep 模式不删概念');
+  assert.strictEqual(r.json.data.formulasRemoved, 0, 'keep 模式不删公式');
+  assert.ok(!store.papers.x, '论文 x 删除');
+  const c1 = store.concepts.find((c) => c.id === 'c1');
+  const c2 = store.concepts.find((c) => c.id === 'c2');
+  assert.ok(c1 && c1.paperIds.length === 0, '独有概念保留（paperIds 清空）');
+  assert.ok(c2 && c2.paperIds.length === 1 && c2.paperIds[0] === 'y', '共享概念只解除 x 关联');
+  const f1 = store.formulas.find((f) => f.id === 'f1');
+  const f2 = store.formulas.find((f) => f.id === 'f2');
+  assert.ok(f1 && f1.occurrences.length === 0, '独有公式保留（occurrences 清空）');
+  assert.ok(f2 && f2.occurrences.length === 1 && f2.occurrences[0].paperId === 'y', '共享公式只解除 x 关联');
+
+  // 默认（无参）：旧语义——变空的条目删除
+  const r2 = await call(port, 'DELETE', '/api/papers/y');
+  assert.strictEqual(r2.status, 200);
+  assert.strictEqual(r2.json.data.conceptsRemoved, 2, '默认模式删掉 c1（空）与 c2（变空）');
+  assert.strictEqual(r2.json.data.formulasRemoved, 2, '默认模式删掉 f1（空）与 f2（变空）');
+  assert.strictEqual(store.concepts.length, 0);
+  assert.strictEqual(store.formulas.length, 0);
+  server.close();
+  fs.rmSync(tmp, { recursive: true, force: true });
+});
+
 test('POST /api/papers/:id/retag & /api/papers/retag —— 重新打标端点', async () => {
   let retagged = null;
   const store = {

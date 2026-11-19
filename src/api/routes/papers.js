@@ -179,23 +179,34 @@ function register(t, ctx) {
     return ok(res, detailView(p));
   });
 
-  // DELETE /api/papers/:id  —— 删论文条目 + PDF + 全文 + 清理概念/标签/主题（统一走 deletePapersCleanup）
-  t.delete('/api/papers/:id', async ({ res, params, spaceId, store, save }) => {
+  // DELETE /api/papers/:id?keepKnowledge=1  —— 删论文条目 + PDF + 全文 + 清理概念/标签/主题
+  //   （统一走 deletePapersCleanup；keepKnowledge=1 时概念/公式只解除关联、不删孤立条目）
+  t.delete('/api/papers/:id', async ({ res, q, params, spaceId, store, save }) => {
     const id = params.id;
     if (!store.papers[id]) return fail(res, 404, 'Not found');
-    const removed = deletePapersCleanup(store, [id], manager.resolveSpacePapersDir(spaceId));
+    const r = deletePapersCleanup(store, [id], manager.resolveSpacePapersDir(spaceId), {
+      keepKnowledge: q.keepKnowledge === '1' || q.keepKnowledge === 'true',
+    });
     await save(store);
-    return ok(res, { id: removed[0], status: 'deleted' });
+    return ok(res, {
+      id: r.ids[0],
+      status: 'deleted',
+      conceptsRemoved: r.conceptsRemoved,
+      formulasRemoved: r.formulasRemoved,
+    });
   });
 
-  // POST /api/papers/bulk-delete  { ids: [...] }  —— 多选批量删除（含空 tags/topics/概念清理）
+  // POST /api/papers/bulk-delete  { ids: [...], keepKnowledge? }  —— 多选批量删除（含空 tags/topics 清理）。
+  //   keepKnowledge=true：概念/公式只解除关联、不删孤立条目（与单删 ?keepKnowledge=1 同语义）
   t.post('/api/papers/bulk-delete', async ({ res, body, spaceId, store, save }) => {
     const op = JSON.parse(body || '{}');
     const ids = Array.isArray(op.ids) ? op.ids.filter((id) => typeof id === 'string' && store.papers[id]) : [];
     if (!ids.length) return fail(res, 400, 'no valid ids');
-    const removed = deletePapersCleanup(store, ids, manager.resolveSpacePapersDir(spaceId));
+    const r = deletePapersCleanup(store, ids, manager.resolveSpacePapersDir(spaceId), {
+      keepKnowledge: !!op.keepKnowledge,
+    });
     await save(store);
-    return ok(res, { deleted: removed.length, ids: removed });
+    return ok(res, { deleted: r.ids.length, ids: r.ids, conceptsRemoved: r.conceptsRemoved, formulasRemoved: r.formulasRemoved });
   });
 
   const h_api_papers_id_summarize = async ({ res, params, spaceId, store, save }) => {

@@ -4,6 +4,17 @@
 
 ## [Unpublished]
 
+### Added — 删除论文可选保留知识条目 + 收起侧栏阅读架入口 + 信息页全宽（v3.67）
+
+- **删除论文的知识产出选项**：概念/公式是空间级知识资产，包含人工命名、合并、plotHint 等治理投入。删除论文时**默认只解除关联**：条目即使不再被任何论文引用也保留，由用户在知识页自行清理。
+  - 确认框新增勾选项「同时删除仅由本篇贡献的概念/公式」，单删、批量删都有；其他论文共享的条目只解除关联。
+  - API：`DELETE /api/papers/:id?keepKnowledge=1`，`POST /api/papers/bulk-delete { ids, keepKnowledge }`，响应带 `conceptsRemoved / formulasRemoved`，toast 回报移除数。
+  - `deletePapersCleanup` 返回 `{ ids, conceptsRemoved, formulasRemoved }`。
+- **`PWDialog.confirmCheck(message, { checkbox: { label, checked } })`**：带勾选框的确认，resolve `{ ok, checked }`，取消或 Esc 时为 `{ ok:false, checked:false }`；新增 `.pwdlg-check` 样式。
+- **收起侧栏（rail）阅读架入口 `#btn-shelf-rail`**：点击 = 展开侧栏并打开阅读架列表（新增 `openShelfSidebar()`，幂等）；右上角计数徽标与 footer 计数同步，空架时隐藏。rail 内图标统一 16px；展开 / 收起按钮改为同一枚 chevron 的镜像。
+- **信息页全宽**（`.info-page { max-width:none }`）：与总结 tab 一致，切换 tab 时不再出现 820px 与全宽之间的宽度跳变。
+- **修复：重新抽取后计数卡在旧值**。`ensureKnowledgeLoaded(force)` 抽取成功后强制重拉概念/公式清单；抽取请求异常时改为 toast 报错，不再静默。
+
 ### Fixed — 紧凑视图论文标签显示不全（v3.66）
 
 - **根因**：P0 把紧凑 chip 的 `9px` 统一到 `--fs-xs`（11px，规范 §3.3 全站最小字号）后，一行 4 个在约 270px 内被挤窄；而 `.tag` 基座是 `inline-flex`，flex 容器里 `text-overflow:ellipsis` 不生效，文字被**硬切且无省略号**，「+N」也参与收缩被挤成「+」。

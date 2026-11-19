@@ -236,12 +236,15 @@ function mergeInto(store, tags) {
  *  - 删 PDF（限该空间 papersDir 内防越界）+ 全文文本
  *  - 删 store.papers[id]
  *  - 清理概念 paperIds（移除该论文引用）
- *  - 移除 paperIds 变空的孤立概念（不再被任何论文引用）
+ *  - 移除 paperIds 变空的孤立概念（不再被任何论文引用）——opts.keepKnowledge=true 时跳过：
+ *    概念/公式是空间级知识资产（含人工命名/合并/plotHint 等治理投入），删论文默认只解除关联、
+ *    条目即使不再被任何论文引用也保留，由用户在知识页自行清理
  *  - 重新聚合 store.tags/topics（从论文重建），自动清除计数归零的标签/主题
  *  papersDir 由调用方传入（来自 manager.resolveSpacePapersDir，统一收口，不再各自 path.resolve config.papersDir）。
  *  文件删除失败一律忽略（占用/缺失），仍删条目。
- *  返回实际删除的 id 列表（跳过不存在的）。 */
-function deletePapersCleanup(store, ids, papersDir) {
+ *  返回 { ids, conceptsRemoved, formulasRemoved }（ids=实际删除的 id，跳过不存在的）。 */
+function deletePapersCleanup(store, ids, papersDir, opts) {
+  const keepKnowledge = !!(opts && opts.keepKnowledge);
   const removed = [];
   for (const id of ids) {
     const p = store.papers[id];
@@ -261,15 +264,24 @@ function deletePapersCleanup(store, ids, papersDir) {
     delete store.papers[id];
     removed.push(id);
   }
-  // 清理概念 paperIds + 移除 paperIds 变空的孤立概念
+  // 清理概念 paperIds；keepKnowledge 时保留变空的条目（只解除关联）
+  const conceptsBefore = Array.isArray(store.concepts) ? store.concepts.length : 0;
   if (Array.isArray(store.concepts)) {
     for (const c of store.concepts) {
       if (Array.isArray(c.paperIds)) c.paperIds = c.paperIds.filter((x) => !removed.includes(x));
     }
-    store.concepts = store.concepts.filter((c) => Array.isArray(c.paperIds) && c.paperIds.length > 0);
+    if (!keepKnowledge) store.concepts = store.concepts.filter((c) => Array.isArray(c.paperIds) && c.paperIds.length > 0);
   }
-  // 清理公式 occurrences（occurrence 清空的条目整条移除，与概念同语义）
-  for (const id of removed) removePaperFromFormulas(store, id);
+  // 清理公式 occurrences（occurrence 清空的条目整条移除，与概念同语义；keepKnowledge 同样保留）
+  const formulasBefore = Array.isArray(store.formulas) ? store.formulas.length : 0;
+  if (keepKnowledge) {
+    for (const f of store.formulas || []) {
+      f.occurrences = (f.occurrences || []).filter((o) => !removed.includes(o.paperId));
+      f.paperIds = f.occurrences.map((o) => o.paperId);
+    }
+  } else {
+    for (const id of removed) removePaperFromFormulas(store, id);
+  }
   // 阅读架联动剔除（v3.21）：否则架子上残留死 id；GET 规整是兜底，删除时就地清掉是正道
   if (store.settings && Array.isArray(store.settings.readerShelf) && removed.length) {
     store.settings.readerShelf = store.settings.readerShelf.filter((x) => !removed.includes(x));
@@ -283,7 +295,11 @@ function deletePapersCleanup(store, ids, papersDir) {
   }
   store.tags = [...tagSet].sort();
   store.topics = [...topicSet].sort();
-  return removed;
+  return {
+    ids: removed,
+    conceptsRemoved: conceptsBefore - (store.concepts ? store.concepts.length : 0),
+    formulasRemoved: formulasBefore - (store.formulas ? store.formulas.length : 0),
+  };
 }
 
 module.exports = {

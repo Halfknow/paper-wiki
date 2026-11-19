@@ -168,7 +168,8 @@ test('deletePapersCleanup 联动剔除阅读架上的被删论文', () => {
     settings: { readerShelf: ['a', 'b', 'c'] },
   };
   const removed = deletePapersCleanup(store, ['b'], '/papers');
-  assert.deepStrictEqual(removed, ['b']);
+  // v3.63 返回 { ids, conceptsRemoved, formulasRemoved }（keepKnowledge 选项配套）
+  assert.deepStrictEqual(removed.ids, ['b']);
   assert.deepStrictEqual(store.settings.readerShelf, ['a', 'c'], '被删论文从架上就地剔除');
   // 无 readerShelf 设置的旧 store 不受影响（不凭空创建字段）
   const store2 = { papers: { a: paper('a') }, tags: [], topics: [], concepts: [], formulas: [], settings: {} };

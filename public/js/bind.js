@@ -29,7 +29,7 @@ import { closeSuggest, handleSuggestKeydown } from './search/suggest.js';
 import { bindChannelGrid, chEditModels, editingChannelId, renderChannels, set_chEditModels, set_editingChannelId } from './settings/channels.js';
 import { filterSettingsNav, normalizeWeights, renderWeightProp, resetAllSettings, resetSection, saveArxiv, saveDiscover, saveFormulaEngine, saveScan } from './settings/collect.js';
 import { currentPromptPane, initPromptStudios, showPromptIndex } from './settings/prompt-studio.js';
-import { closeShelfSidebar, initShelfSidebar } from './reader/shelf-sidebar.js';
+import { closeShelfSidebar, initShelfSidebar, openShelfSidebar } from './reader/shelf-sidebar.js';
 import { mountSettingDropdown, saveAiConfig } from './settings/settings.js';
 import { renderTaxonomy, taxBatchDelete, taxBatchMerge, taxState, taxSwitchKind, taxToggleSelectMode } from './settings/taxonomy.js';
 import { applyListWidth, bindListSplitter, refreshSystemHealth, setSidebarCollapsed } from './views/layout.js';
@@ -462,9 +462,16 @@ export function bind() {
   if (vc2) vc2.onclick = () => setDensity(true);
   if (vf2) vf2.onclick = () => setDensity(false);
 
-  // 侧栏收起 / 展开（记忆到 localStorage）
+  // 侧栏收起 / 展开（记忆到 localStorage）。两枚按钮是同一 chevron 的镜像（‹ 收起 / › 展开）。
   $('btn-collapse').onclick = () => setSidebarCollapsed(true);
   $('btn-expand').onclick = () => setSidebarCollapsed(false);
+  // rail 阅读架入口（v3.63）：rail 宽度放不下列表本体，点击 = 展开侧栏并打开阅读架列表
+  const shelfRail = $('btn-shelf-rail');
+  if (shelfRail)
+    shelfRail.onclick = () => {
+      setSidebarCollapsed(false);
+      openShelfSidebar();
+    };
   bindListSplitter();
   window.addEventListener('resize', () => applyListWidth(state.listWidth));
   $('btn-pick-cancel').onclick = () => togglePickMode(false);
@@ -521,18 +528,33 @@ export function bind() {
     togglePickMode(false);
     refresh();
   };
-  // 批量删除：确认后调 bulk-delete（后端会删文件 + 清理空 tags/topics/概念）。删除无需逐篇进度。
+  // 批量删除：确认后调 bulk-delete（后端会删文件 + 清理空 tags/topics）。删除无需逐篇进度。
+  // 勾选框语义同单删：勾选=同时删除仅由这些论文贡献的概念/公式，不勾=知识条目保留、只解除关联。
   $('btn-pick-delete').onclick = async () => {
     const ids = [...state.selected];
     if (!ids.length) { toast('请先选择论文', 'error'); return; }
-    if (!(await PWDialog.confirm(`删除已选的 ${ids.length} 篇论文？\n将同时删除本地 PDF 与全文文本，并清理仅被这些论文使用的标签/主题/概念。此操作不可恢复。`, { title: '批量删除论文', danger: true, okText: '删除' }))) return;
+    const r = await PWDialog.confirmCheck(
+      `删除已选的 ${ids.length} 篇论文？\n将同时删除本地 PDF 与全文文本，并清理仅被这些论文使用的标签/主题。此操作不可恢复。`,
+      {
+        title: '批量删除论文',
+        danger: true,
+        okText: '删除',
+        checkbox: { label: '同时删除仅由这些论文贡献的概念/公式（其他论文共享的条目只解除关联）', checked: false },
+      },
+    );
+    if (!r || !r.ok) return;
     setBulkBusy(true, '删除中…');
-    let r;
-    try { r = await POST('/api/papers/bulk-delete', { ids }); }
+    let res;
+    try { res = await POST('/api/papers/bulk-delete', { ids, keepKnowledge: !r.checked }); }
     catch (e) { setBulkBusy(false); toast('删除中断：' + (e && e.message ? e.message : '网络错误'), 'error'); refresh(); return; }
     setBulkBusy(false);
-    if (r.ok) { toast(`已删除 ${r.data.deleted} 篇`); togglePickMode(false); }
-    else toast(r.error || '删除失败', 'error');
+    if (res.ok) {
+      const c = res.data && res.data.conceptsRemoved;
+      const f = res.data && res.data.formulasRemoved;
+      toast(`已删除 ${res.data.deleted} 篇` + (c || f ? `（一并移除 ${c} 个概念、${f} 个公式）` : ''));
+      togglePickMode(false);
+    }
+    else toast(res.error || '删除失败', 'error');
     refresh();
   };
   // 批量抽取公式：逐篇循环拿真实进度（同 concepts）

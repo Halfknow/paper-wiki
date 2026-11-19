@@ -75,10 +75,10 @@ function progressText(p) {
 // 概念/公式页，这两个数组是空的、抽屉会静默关掉。故展开前先确保全局列表已加载，
 // 而不是单独拉 ?paper= 的子集——子集喂不饱抽屉里的「共现概念」等跨条目信息。
 let _kxLoading = false;
-async function ensureKnowledgeLoaded() {
+async function ensureKnowledgeLoaded(force = false) {
   if (_kxLoading) return;
-  const needC = !(state.concepts || []).length;
-  const needF = !(state.formulas || []).length;
+  const needC = force || !(state.concepts || []).length;
+  const needF = force || !(state.formulas || []).length;
   if (!needC && !needF) return;
   _kxLoading = true;
   try {
@@ -265,7 +265,7 @@ export function renderInfoTab(body, p) {
 
       <div class="set-rows set-rows-foot">
         <div class="set-row set-row-reset">
-          <div class="sr-main"><div class="sr-hint">删除论文，连同本地 PDF 与已抽取的全文一并移除，<b>不可恢复</b>。已贡献的概念/公式会保留在库中。</div></div>
+          <div class="sr-main"><div class="sr-hint">删除论文，连同本地 PDF 与已抽取的全文一并移除，<b>不可恢复</b>。概念/公式默认保留在库中，可在确认框勾选一并删除仅由本篇贡献的条目。</div></div>
           <div class="sr-ctl"><button class="btn ghost sm danger" id="b-delete" type="button">删除论文</button></div>
         </div>
       </div>
@@ -333,10 +333,22 @@ function wireInfoTab(body, p) {
     if (!b) return;
     b.onclick = async () => {
       setBusy(b, true, '抽取中…');
-      const r = await POST(url, { ids: [p.id] });
-      setBusy(b, false);
+      let r;
+      try {
+        r = await POST(url, { ids: [p.id] });
+      } catch (e) {
+        toast('抽取失败：' + (e && e.message), 'error');
+        return;
+      } finally {
+        setBusy(b, false);
+      }
       if (r.data && r.data.added != null) toast(`完成：处理 ${r.data.processed} 篇，新增 ${r.data.added} 个${unit}`);
       else toast(r.error || '抽取失败', 'error');
+      // 抽取改的是概念/公式侧的 paperIds 关联；state 里这两份清单是页面上次拉取的旧快照，
+      // 而 ensureKnowledgeLoaded 只在空数组时才拉——不强制重拉，本篇计数永远停在抽取前的值。
+      try {
+        await ensureKnowledgeLoaded(true);
+      } catch { /* 清单重拉失败时按旧快照展示 */ }
       try {
         const { data: fresh } = await jget('/api/papers/' + encodeURIComponent(p.id));
         if (fresh) { state.detail = fresh; renderDetail(); }
@@ -425,23 +437,32 @@ function wireInfoTab(body, p) {
   };
 
   // ---- 危险区 ----
+  // 知识产出选项：勾选=同时删除仅由本篇贡献的概念/公式（共享条目只解除关联）；
+  // 不勾（默认）=知识条目全部保留在库中，只解除与本篇的关联
   const del = $('b-delete');
   if (del) del.onclick = async () => {
-    const ok = await PWDialog.confirm(
+    const r = await PWDialog.confirmCheck(
       `删除论文「${p.title || p.filename}」？
 将同时删除本地 PDF 与全文文本，且不可恢复。`,
-      { title: '删除论文', danger: true, okText: '删除' },
+      {
+        title: '删除论文',
+        danger: true,
+        okText: '删除',
+        checkbox: { label: '同时删除仅由本篇贡献的概念/公式（其他论文共享的条目只解除关联）', checked: false },
+      },
     );
-    if (!ok) return;
+    if (!r || !r.ok) return;
     setBusy(del, true, '删除中…');
-    const r = await DEL('/api/papers/' + p.id);
+    const res = await DEL('/api/papers/' + p.id + '?keepKnowledge=' + (r.checked ? '0' : '1'));
     setBusy(del, false);
-    if (r.ok) {
-      toast('已删除');
+    if (res.ok) {
+      const c = res.data && res.data.conceptsRemoved;
+      const f = res.data && res.data.formulasRemoved;
+      toast(c || f ? `已删除（一并移除 ${c} 个概念、${f} 个公式）` : '已删除');
       state.detail = null;   // 清空详情，回到「从左侧选择一篇论文」
       renderDetail();
       refresh();
-    } else toast(r.error || '删除失败', 'error');
+    } else toast(res.error || '删除失败', 'error');
   };
 }
 
